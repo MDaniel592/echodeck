@@ -85,6 +85,7 @@ export function parseNumericId(raw: string | null): number | null {
 
 export function resolveMediaMimeType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase()
+  if (ext === ".mp3") return "audio/mpeg"
   if (ext === ".flac") return "audio/flac"
   if (ext === ".wav") return "audio/wav"
   if (ext === ".ogg" || ext === ".oga") return "audio/ogg"
@@ -166,6 +167,12 @@ function objectToXml(value: unknown, keyName?: string): string {
   }
 
   if (typeof value === "object") {
+    if (!keyName) {
+      return Object.entries(value as Record<string, unknown>)
+        .map(([key, val]) => objectToXml(val, key))
+        .join("")
+    }
+
     const record = value as Record<string, unknown>
     const attributes: Array<[string, string]> = []
     const children: Array<[string, unknown]> = []
@@ -180,9 +187,6 @@ function objectToXml(value: unknown, keyName?: string): string {
     }
 
     const childXml = children.map(([key, val]) => objectToXml(val, key)).join("")
-    if (!keyName) {
-      return childXml
-    }
 
     const attrText = attributes
       .map(([key, val]) => ` ${key}="${xmlEscape(val)}"`)

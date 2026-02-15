@@ -49,6 +49,7 @@ export async function PATCH(
     const disableRequested = typeof body?.disabled === "boolean" ? body.disabled : undefined
     const password = typeof body?.password === "string" ? body.password : undefined
     const rotateSubsonicToken = body?.rotateSubsonicToken === true
+    const revokeSessions = body?.revokeSessions === true
 
     const updates: {
       role?: "admin" | "user"
@@ -56,6 +57,7 @@ export async function PATCH(
       passwordHash?: string
       subsonicToken?: string
       subsonicPasswordEnc?: string | null
+      authTokenVersion?: { increment: number }
     } = {}
 
     if (role) {
@@ -94,6 +96,10 @@ export async function PATCH(
 
     if (rotateSubsonicToken) {
       updates.subsonicToken = crypto.randomBytes(24).toString("hex")
+    }
+
+    if (revokeSessions) {
+      updates.authTokenVersion = { increment: 1 }
     }
 
     if (Object.keys(updates).length === 0) {

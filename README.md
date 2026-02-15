@@ -50,6 +50,7 @@ On container start, the image runs `npm run setup` automatically so `yt-dlp` and
 |---|---|---|
 | `DATABASE_URL` | Yes | SQLite path (default: `file:./dev.db`) |
 | `JWT_SECRET` | Yes | Secret for signing auth tokens |
+| `SUBSONIC_PASSWORD_KEY` | No | Optional dedicated key for encrypted Subsonic password auth secret storage (falls back to `JWT_SECRET`) |
 | `TRUST_PROXY` | No | Set to `1` only behind a trusted reverse proxy (enables forwarded IP headers for login rate limiting) |
 | `DOWNLOAD_TASK_MAX_WORKERS` | No | Max concurrent detached download workers (default: `3`) |
 | `SETUP_SECRET` | Production | Required in production to protect first-user setup |
@@ -86,6 +87,7 @@ Run `npm run validate-env` to check your configuration.
 | `npm run start` | Start production server |
 | `npm test` | Run tests |
 | `npm run test:watch` | Run tests in watch mode |
+| `npm run subsonic:smoke` | Run Subsonic compatibility smoke checks (requires env vars) |
 | `npm run typecheck` | TypeScript type check |
 | `npm run lint` | ESLint |
 | `npm run setup` | Install/verify required downloader binaries |

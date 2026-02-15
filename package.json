@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "subsonic:smoke": "bash scripts/subsonic-smoke.sh",
     "setup": "tsx scripts/setup.ts",
     "artwork:refresh": "tsx scripts/refresh-lowres-covers.ts",
     "check-deps": "tsx scripts/check-deps.ts",
