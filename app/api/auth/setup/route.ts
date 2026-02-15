@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     // application-level guard.  We use a transaction that checks count
     // and creates in one atomic unit so two concurrent requests can't
     // both succeed.
-    let user: { id: number }
+    let user: { id: number; authTokenVersion: number }
     try {
       user = await prisma.$transaction(async (tx) => {
         const existingCount = await tx.user.count()
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
       throw error
     }
 
-    const token = createToken(user.id)
+    const token = createToken(user.id, user.authTokenVersion)
 
     const response = NextResponse.json({ success: true })
     response.cookies.set("auth_token", token, {

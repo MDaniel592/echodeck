@@ -96,6 +96,7 @@ Run `npm run validate-env` to check your configuration.
 | `npm run db:generate` | Regenerate Prisma client |
 | `npm run db:backfill-ownership` | Backfill legacy rows with missing ownership |
 | `npm run db:verify-ownership` | Fail if any rows still have missing ownership |
+| `npm run db:backfill-playlist-entries` | Backfill playlist join entries from legacy song playlist links |
 | `npm run db:ensure-subsonic-tokens` | Ensure each user has a Subsonic token |
 | `npm run db:studio` | Open Prisma Studio GUI |
 
@@ -106,6 +107,7 @@ Core app APIs:
 - `PATCH /api/songs/:id` supports playlist assignment and metadata edits
 - `GET/POST /api/playlists`
 - `GET/POST /api/users` and `PATCH /api/users/:id` (admin only)
+- `POST /api/auth/logout-all` (invalidate all existing sessions for current user)
 
 Playback state:
 - `GET/PUT /api/playback/session`
@@ -128,8 +130,9 @@ Subsonic-compatible endpoints:
 - `GET /api/subsonic/rest` (query command mode)
 - `GET /api/subsonic/rest/:command.view` (path command mode)
 - Supports auth via:
-`u` + `p` (plain or `enc:` hex), and `u` + `t` + `s` using each user’s Subsonic token
-- Includes: `ping`, `getLicense`, `getMusicFolders`, `getIndexes`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `stream`, `getCoverArt`, `getPlaylists`, `getPlaylist`, `search3`, `star`, `unstar`, `getStarred2`, `scrobble`, `getNowPlaying`, `getRandomSongs`, `getAlbumList2`
+`u` + `p` (plain or `enc:` hex), and standard `u` + `t` + `s`
+- Includes: `ping`, `getLicense`, `getOpenSubsonicExtensions`, `getMusicFolders`, `getIndexes`, `getArtists`, `getArtist`, `getArtistInfo`, `getArtistInfo2`, `getMusicDirectory`, `getAlbum`, `getAlbumInfo`, `getAlbumInfo2`, `getSong`, `stream`, `getCoverArt`, `getAvatar`, `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist`, `search`, `search2`, `search3`, `star`, `unstar`, `getStarred`, `getStarred2`, `scrobble`, `getNowPlaying`, `getRandomSongs`, `getAlbumList`, `getAlbumList2`, `getGenres`, `getSongsByGenre`, `getTopSongs`, `getLyrics`, `getLyricsBySongId`, `getSimilarSongs`, `getSimilarSongs2`, `getUser`, `getUsers`
+- Smoke test guide: `docs/subsonic-client-smoke-test.md`
 
 ## Security
 

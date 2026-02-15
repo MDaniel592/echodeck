@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { username },
-      select: { id: true, passwordHash: true, subsonicPasswordEnc: true, disabledAt: true },
+      select: { id: true, passwordHash: true, subsonicPasswordEnc: true, authTokenVersion: true, disabledAt: true },
     })
     if (!user) {
       return NextResponse.json(
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const token = createToken(user.id)
+    const token = createToken(user.id, user.authTokenVersion)
 
     const response = NextResponse.json({ success: true })
     response.cookies.set("auth_token", token, {

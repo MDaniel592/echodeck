@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest } from "next/server"
 import fs from "fs"
 import fsPromises from "fs/promises"
 import path from "path"
@@ -14,6 +14,15 @@ import {
   getPlaylistSongsForUser,
   replacePlaylistEntriesForUser,
 } from "../../../../lib/playlistEntries"
+import {
+  mapSubsonicSong as mapSong,
+  mapSubsonicUser,
+  parseByteRange,
+  parseIntParam,
+  parseNumericId,
+  resolveMediaMimeType as resolveMimeType,
+  subsonicResponse as response,
+} from "../../../../lib/subsonicAdapter"
 import {
   createSubsonicTokenFromPassword,
   decryptSubsonicPassword,
@@ -42,93 +51,6 @@ function getClientIdentifier(request: NextRequest): string {
     request.headers.get("x-real-ip") ||
     "proxied-client"
   )
-}
-
-function response(request: NextRequest, payload: Record<string, unknown>, status = "ok") {
-  const format = request.nextUrl.searchParams.get("f") || "json"
-  const root = {
-    status,
-    version: "1.16.1",
-    type: "EchoDeck",
-    openSubsonic: true,
-    serverVersion: "1.0.0",
-    ...payload,
-  }
-
-  if (format === "json") {
-    return NextResponse.json({
-      "subsonic-response": root,
-    })
-  }
-
-  if (format !== "xml") {
-    return NextResponse.json(
-      {
-        "subsonic-response": {
-          ...root,
-          error: { code: 0, message: "Unsupported format. Use json or xml." },
-        },
-      },
-      { status: 400 }
-    )
-  }
-
-  const attrs = `status="${xmlEscape(status)}" version="1.16.1" type="EchoDeck" openSubsonic="true" serverVersion="1.0.0" xmlns="http://subsonic.org/restapi"`
-  const xmlBody = objectToXml(payload)
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<subsonic-response ${attrs}>${xmlBody}</subsonic-response>`
-
-  return new Response(xml, {
-    headers: { "Content-Type": "application/xml; charset=utf-8" },
-  })
-}
-
-function xmlEscape(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;")
-}
-
-function objectToXml(value: unknown, keyName?: string): string {
-  if (value === null || value === undefined) return ""
-
-  if (Array.isArray(value)) {
-    return value.map((entry) => objectToXml(entry, keyName)).join("")
-  }
-
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>
-    const attributes: Array<[string, string]> = []
-    const children: Array<[string, unknown]> = []
-
-    for (const [key, val] of Object.entries(record)) {
-      if (val === null || val === undefined) continue
-      if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
-        attributes.push([key, String(val)])
-      } else {
-        children.push([key, val])
-      }
-    }
-
-    const childXml = children.map(([key, val]) => objectToXml(val, key)).join("")
-    if (!keyName) {
-      return childXml
-    }
-
-    const attrText = attributes
-      .map(([key, val]) => ` ${key}="${xmlEscape(val)}"`)
-      .join("")
-
-    if (!childXml) {
-      return `<${keyName}${attrText}/>`
-    }
-    return `<${keyName}${attrText}>${childXml}</${keyName}>`
-  }
-
-  if (!keyName) return ""
-  return `<${keyName}>${xmlEscape(String(value))}</${keyName}>`
 }
 
 function decodePassword(raw: string): string {
@@ -217,39 +139,6 @@ function commandFromRequest(request: NextRequest): string {
   return "ping"
 }
 
-function mapSong(song: {
-  id: number
-  title: string
-  artist: string | null
-  album: string | null
-  duration: number | null
-  trackNumber: number | null
-  year: number | null
-  genre: string | null
-  starredAt?: Date | null
-  playCount?: number
-  albumId?: number | null
-}) {
-  return {
-    id: String(song.id),
-    title: song.title,
-    artist: song.artist || undefined,
-    album: song.album || undefined,
-    albumId: song.albumId ? String(song.albumId) : undefined,
-    duration: song.duration || undefined,
-    track: song.trackNumber || undefined,
-    year: song.year || undefined,
-    genre: song.genre || undefined,
-    starred: song.starredAt ? song.starredAt.toISOString() : undefined,
-    playCount: song.playCount ?? undefined,
-  }
-}
-
-function parseIntParam(value: string | null, fallback: number): number {
-  const parsed = Number.parseInt(value || "", 10)
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback
-}
-
 async function buildSearchResult(
   userId: number,
   query: string,
@@ -313,26 +202,6 @@ function extractSongIds(request: NextRequest): number[] {
   return Array.from(new Set(parsed))
 }
 
-function resolveMimeType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase()
-  if (ext === ".flac") return "audio/flac"
-  if (ext === ".wav") return "audio/wav"
-  if (ext === ".ogg" || ext === ".oga") return "audio/ogg"
-  if (ext === ".opus") return "audio/opus"
-  if (ext === ".aac") return "audio/aac"
-  if (ext === ".m4a" || ext === ".mp4") return "audio/mp4"
-  if (ext === ".webm" || ext === ".weba") return "audio/webm"
-  if (ext === ".png") return "image/png"
-  if (ext === ".webp") return "image/webp"
-  if (ext === ".gif") return "image/gif"
-  return "image/jpeg"
-}
-
-function parseNumericId(raw: string | null): number | null {
-  const value = Number.parseInt(raw || "", 10)
-  return Number.isInteger(value) && value > 0 ? value : null
-}
-
 function canTranscodeToBitrate(songBitrate: number | null | undefined, maxBitRateKbps: number): boolean {
   if (!songBitrate || maxBitRateKbps <= 0) return false
   return songBitrate > maxBitRateKbps * 1000
@@ -367,60 +236,6 @@ function transcodeToMp3(filePath: string, maxBitRateKbps: number) {
     // keep stderr drained to avoid backpressure stalling ffmpeg
   })
   return proc
-}
-
-function parseByteRange(
-  rangeHeader: string,
-  fileSize: number
-): { start: number; end: number } | null {
-  if (fileSize <= 0) return null
-
-  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim())
-  if (!match) return null
-
-  const [, startPart, endPart] = match
-  if (!startPart && !endPart) return null
-
-  if (!startPart) {
-    const suffixLength = Number(endPart)
-    if (!Number.isInteger(suffixLength) || suffixLength <= 0) return null
-    const start = Math.max(fileSize - suffixLength, 0)
-    return { start, end: fileSize - 1 }
-  }
-
-  const start = Number(startPart)
-  if (!Number.isInteger(start) || start < 0 || start >= fileSize) return null
-
-  if (!endPart) {
-    return { start, end: fileSize - 1 }
-  }
-
-  const end = Number(endPart)
-  if (!Number.isInteger(end) || end < start) return null
-  return { start, end: Math.min(end, fileSize - 1) }
-}
-
-function mapSubsonicUser(row: {
-  username: string
-  role: "admin" | "user"
-}) {
-  const adminRole = row.role === "admin"
-  return {
-    username: row.username,
-    scrobblingEnabled: true,
-    adminRole,
-    settingsRole: adminRole,
-    downloadRole: true,
-    uploadRole: adminRole,
-    playlistRole: true,
-    coverArtRole: true,
-    commentRole: true,
-    podcastRole: adminRole,
-    streamRole: true,
-    jukeboxRole: false,
-    shareRole: adminRole,
-    videoConversionRole: false,
-  }
 }
 
 export async function GET(request: NextRequest) {

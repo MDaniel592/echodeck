@@ -31,9 +31,14 @@ export async function requireAuth(request: NextRequest): Promise<AuthedUser> {
 
   const user = await prisma.user.findUnique({
     where: { id: payload.userId },
-    select: { id: true, username: true, role: true, disabledAt: true },
+    select: { id: true, username: true, role: true, authTokenVersion: true, disabledAt: true },
   })
   if (!user || user.disabledAt) {
+    throw new AuthError("Unauthorized", 401)
+  }
+
+  const tokenVersion = Number.isInteger(payload.tokenVersion) ? payload.tokenVersion : 0
+  if (tokenVersion !== user.authTokenVersion) {
     throw new AuthError("Unauthorized", 401)
   }
 
