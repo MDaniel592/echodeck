@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react"
 import { queuePositionLabel } from "../../lib/playbackQueue"
 import DesktopQueuePanel from "./player/DesktopQueuePanel"
+import DesktopPlayerBar from "./player/DesktopPlayerBar"
 import MobileQueueSheet from "./player/MobileQueueSheet"
 import {
   formatTime,
@@ -14,7 +15,6 @@ import {
   RepeatIcon,
   ScrollingTitle,
   ShuffleIcon,
-  VolumeIcon,
 } from "./player/ui"
 import { useSeekBarHandlers } from "./player/useSeekBarHandlers"
 
@@ -1113,132 +1113,34 @@ export default function Player({
       className="fixed bottom-0 left-0 right-0 z-[70] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 sm:px-4 lg:px-6 pt-3 lg:pt-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
     >
       <audio ref={audioRef} />
-      <div className="max-w-6xl mx-auto flex flex-col gap-3 lg:gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] sm:items-center">
-        <div className="flex items-center gap-3 min-w-0 lg:gap-4">
-          <div className="w-12 h-12 rounded overflow-hidden bg-zinc-800 shrink-0 flex items-center justify-center lg:h-14 lg:w-14">
-            {coverSrc ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={coverSrc}
-                alt={`${song.title} cover`}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <span className="text-zinc-500 text-xs">♪</span>
-            )}
-          </div>
-          <div className="min-w-0">
-            <ScrollingTitle
-              text={song.title}
-              className="text-sm font-medium text-white lg:text-base"
-              speed={20}
-            />
-            <p className="text-xs text-zinc-500 truncate lg:text-sm">{song.artist || "Unknown"}</p>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2 lg:gap-2.5 sm:px-4">
-          <div className="flex items-center justify-center gap-2.5 lg:gap-3">
-            <button
-              type="button"
-              onClick={() => setShuffleEnabled((prev) => !prev)}
-              className={`h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center transition-all lg:h-12 lg:min-w-12 ${
-                shuffleEnabled
-                  ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-              }`}
-              title="Shuffle"
-              aria-label={shuffleEnabled ? "Disable shuffle" : "Enable shuffle"}
-            >
-              <ShuffleIcon className="h-[1.1rem] w-[1.1rem] lg:h-[1.45rem] lg:w-[1.45rem]" />
-            </button>
-            <button
-              type="button"
-              onClick={playPrev}
-              disabled={!canGoPrev}
-              className="h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center text-zinc-300 hover:text-white hover:bg-zinc-800 hover:scale-105 disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:scale-100 transition-all lg:h-12 lg:min-w-12"
-            >
-              <PrevIcon className="h-[1.4rem] w-[1.4rem] lg:h-[1.9rem] lg:w-[1.9rem]" />
-            </button>
-            <button
-              type="button"
-              onClick={togglePlay}
-              className="h-11 w-11 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-transform lg:h-14 lg:w-14"
-            >
-              <PlayPauseIcon playing={playing} large />
-            </button>
-            <button
-              type="button"
-              onClick={playNext}
-              disabled={!canGoNext}
-              className="h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center text-zinc-300 hover:text-white hover:bg-zinc-800 hover:scale-105 disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:scale-100 transition-all lg:h-12 lg:min-w-12"
-            >
-              <NextIcon className="h-[1.4rem] w-[1.4rem] lg:h-[1.9rem] lg:w-[1.9rem]" />
-            </button>
-            <button
-              type="button"
-              onClick={cycleRepeatMode}
-              className={`h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center transition-all lg:h-12 lg:min-w-12 ${
-                repeatMode !== "off"
-                  ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-              }`}
-              title={repeatTitle}
-              aria-label={repeatTitle}
-            >
-              <RepeatIcon mode={repeatMode} className="h-[1.1rem] w-[1.1rem] lg:h-[1.45rem] lg:w-[1.45rem]" />
-            </button>
-          </div>
-
-          <div className="w-full flex items-center gap-2 lg:gap-2.5">
-            <span className="text-[11px] text-zinc-500 w-9 text-right lg:w-10 lg:text-xs">{formatTime(currentTime)}</span>
-            <div
-              ref={desktopSeekBarRef}
-              className="flex-1 h-1.5 bg-zinc-700 rounded-full cursor-pointer group lg:h-2"
-              onClick={handleDesktopSeekClick}
-              onTouchStart={handleDesktopSeekTouchStart}
-              onTouchMove={handleDesktopSeekTouchMove}
-              onTouchEnd={handleDesktopSeekTouchEnd}
-              onTouchCancel={handleDesktopSeekTouchEnd}
-            >
-              <div
-                className="h-full bg-emerald-500 rounded-full relative group-hover:bg-emerald-400 transition-colors"
-                style={{ width: `${progress}%` }}
-              >
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity lg:h-3.5 lg:w-3.5" />
-              </div>
-            </div>
-            <span className="text-[11px] text-zinc-500 w-9 lg:w-10 lg:text-xs">{formatTime(duration)}</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto sm:justify-end lg:gap-3">
-          <VolumeIcon className="h-[1.05rem] w-[1.05rem] text-zinc-400 lg:h-[1.6rem] lg:w-[1.6rem]" />
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            onChange={changeVolume}
-            className="w-full sm:w-28 lg:w-36 accent-emerald-500"
-          />
-          <button
-            type="button"
-            onClick={toggleQueueSheet}
-            disabled={songs.length === 0}
-            className={`h-10 min-w-10 rounded-lg inline-flex items-center justify-center transition-colors lg:h-11 lg:min-w-11 ${
-              isQueueSheetOpen
-                ? "bg-zinc-800 text-white"
-                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-            } disabled:opacity-40 disabled:hover:text-zinc-400 disabled:hover:bg-transparent`}
-            aria-label={isQueueSheetOpen ? "Close queue" : "Open queue"}
-            aria-expanded={isQueueSheetOpen}
-          >
-            <QueueIcon />
-          </button>
-        </div>
-      </div>
+      <DesktopPlayerBar
+        song={song}
+        songsLength={songs.length}
+        playing={playing}
+        shuffleEnabled={shuffleEnabled}
+        repeatMode={repeatMode}
+        repeatTitle={repeatTitle}
+        canGoPrev={canGoPrev}
+        canGoNext={canGoNext}
+        currentTime={currentTime}
+        duration={duration}
+        progress={progress}
+        volume={volume}
+        isQueueSheetOpen={isQueueSheetOpen}
+        coverSrc={coverSrc}
+        onToggleShuffle={() => setShuffleEnabled((prev) => !prev)}
+        onPlayPrev={playPrev}
+        onTogglePlay={togglePlay}
+        onPlayNext={playNext}
+        onCycleRepeat={cycleRepeatMode}
+        onVolumeChange={changeVolume}
+        onToggleQueue={toggleQueueSheet}
+        desktopSeekBarRef={desktopSeekBarRef}
+        onDesktopSeekClick={handleDesktopSeekClick}
+        onDesktopSeekTouchStart={handleDesktopSeekTouchStart}
+        onDesktopSeekTouchMove={handleDesktopSeekTouchMove}
+        onDesktopSeekTouchEnd={handleDesktopSeekTouchEnd}
+      />
       {isQueueSheetOpen && (
         <DesktopQueuePanel
           songs={songs}
