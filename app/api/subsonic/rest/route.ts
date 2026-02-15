@@ -4,6 +4,7 @@ import fsPromises from "fs/promises"
 import path from "path"
 import prisma from "../../../../lib/prisma"
 import { verifyPassword } from "../../../../lib/auth"
+import { checkRateLimit } from "../../../../lib/rateLimit"
 import { sanitizeSong } from "../../../../lib/sanitize"
 import { resolveSafeDownloadPathForRead } from "../../../../lib/downloadPaths"
 import { nodeReadableToWebStream } from "../../../../lib/nodeReadableToWebStream"
@@ -11,6 +12,25 @@ import { nodeReadableToWebStream } from "../../../../lib/nodeReadableToWebStream
 type SubsonicUser = {
   id: number
   username: string
+}
+
+const SUBSONIC_MAX_ATTEMPTS_PER_ACCOUNT = 20
+const SUBSONIC_MAX_ATTEMPTS_PER_CLIENT = 80
+const SUBSONIC_WINDOW_MS = 15 * 60 * 1000
+const TRUST_PROXY = process.env.TRUST_PROXY === "1"
+
+function getClientIdentifier(request: NextRequest): string {
+  if (!TRUST_PROXY) {
+    const userAgent = request.headers.get("user-agent") || "unknown-agent"
+    const acceptLanguage = request.headers.get("accept-language") || "unknown-lang"
+    return `ua:${userAgent.slice(0, 120)}|lang:${acceptLanguage.slice(0, 64)}`
+  }
+
+  return (
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    "proxied-client"
+  )
 }
 
 function response(request: NextRequest, payload: Record<string, unknown>, status = "ok") {
@@ -52,6 +72,26 @@ async function authenticate(request: NextRequest): Promise<SubsonicUser | null> 
   const username = request.nextUrl.searchParams.get("u")?.trim() || ""
   const passwordRaw = request.nextUrl.searchParams.get("p") || ""
   if (!username || !passwordRaw) return null
+
+  const client = getClientIdentifier(request)
+  const perClientLimit = checkRateLimit(
+    `subsonic:client:${client}`,
+    SUBSONIC_MAX_ATTEMPTS_PER_CLIENT,
+    SUBSONIC_WINDOW_MS
+  )
+  if (!perClientLimit.allowed) {
+    return null
+  }
+
+  const accountKey = `subsonic:account:${username.toLowerCase()}:${client}`
+  const accountLimit = checkRateLimit(
+    accountKey,
+    SUBSONIC_MAX_ATTEMPTS_PER_ACCOUNT,
+    SUBSONIC_WINDOW_MS
+  )
+  if (!accountLimit.allowed) {
+    return null
+  }
 
   const user = await prisma.user.findUnique({
     where: { username },
