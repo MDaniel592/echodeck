@@ -1,4 +1,5 @@
-module.exports = {
+/** @type {import('@commitlint/types').UserConfig} */
+const config = {
   rules: {
     "type-enum": [
       2,
@@ -9,3 +10,5 @@ module.exports = {
     "type-empty": [2, "never"],
   },
 }
+
+export default config
