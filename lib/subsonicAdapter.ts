@@ -69,16 +69,16 @@ export function mapSubsonicSong(song: SubsonicSong) {
   return {
     id: String(song.id),
     title: normalizeSongTitle(song.title || "Unknown title"),
-    artist: song.artist || undefined,
-    album: song.album || undefined,
-    albumId: song.albumId ? String(song.albumId) : undefined,
+    artist: song.artist || "",
+    album: song.album || "",
+    albumId: song.albumId ? String(song.albumId) : "",
     coverArt: coverArtId,
-    duration: song.duration || undefined,
-    track: song.trackNumber || undefined,
-    year: song.year || undefined,
-    genre: song.genre || undefined,
+    duration: song.duration || 0,
+    track: song.trackNumber || 0,
+    year: song.year || 0,
+    genre: song.genre || "",
     starred: song.starredAt ? song.starredAt.toISOString() : undefined,
-    playCount: song.playCount ?? undefined,
+    playCount: song.playCount ?? 0,
   }
 }
 

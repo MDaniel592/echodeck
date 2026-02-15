@@ -448,8 +448,8 @@ export async function GET(request: NextRequest) {
           name: artist.name,
           album: artist.albums.map((album) => ({
             id: String(album.id),
-            name: album.title,
-            year: album.year || undefined,
+            name: album.title || "",
+            year: album.year || 0,
           })),
         },
       })
@@ -546,7 +546,7 @@ export async function GET(request: NextRequest) {
               parent: `ar-${artist.id}`,
               title: album.title,
               isDir: true,
-              year: album.year || undefined,
+              year: album.year || 0,
             })),
           },
         })
@@ -608,9 +608,9 @@ export async function GET(request: NextRequest) {
       return response(request, {
         album: {
           id: String(album.id),
-          name: album.title,
-          artist: album.artist?.name || album.albumArtist || undefined,
-          year: album.year || undefined,
+          name: album.title || "",
+          artist: album.artist?.name || album.albumArtist || "",
+          year: album.year || 0,
           song: album.songs.map(mapSong),
         },
       })
@@ -835,9 +835,9 @@ export async function GET(request: NextRequest) {
         albumList2: {
           album: albums.map((album) => ({
             id: String(album.id),
-            name: album.title,
-            artist: album.artist?.name || album.albumArtist || undefined,
-            year: album.year || undefined,
+            name: album.title || "",
+            artist: album.artist?.name || album.albumArtist || "",
+            year: album.year || 0,
           })),
         },
       })
@@ -871,9 +871,9 @@ export async function GET(request: NextRequest) {
         albumList: {
           album: albums.map((album) => ({
             id: String(album.id),
-            name: album.title,
-            artist: album.artist?.name || album.albumArtist || undefined,
-            year: album.year || undefined,
+            name: album.title || "",
+            artist: album.artist?.name || album.albumArtist || "",
+            year: album.year || 0,
           })),
         },
       })
@@ -1404,9 +1404,9 @@ export async function GET(request: NextRequest) {
           })),
           album: albums.map((album) => ({
             id: String(album.id),
-            name: album.title,
-            artist: album.artist?.name || album.albumArtist || undefined,
-            year: album.year || undefined,
+            name: album.title || "",
+            artist: album.artist?.name || album.albumArtist || "",
+            year: album.year || 0,
           })),
           song: songs.map(mapSong),
         },
@@ -1451,9 +1451,9 @@ export async function GET(request: NextRequest) {
           })),
           album: albums.map((album) => ({
             id: String(album.id),
-            name: album.title,
-            artist: album.artist?.name || album.albumArtist || undefined,
-            year: album.year || undefined,
+            name: album.title || "",
+            artist: album.artist?.name || album.albumArtist || "",
+            year: album.year || 0,
           })),
           song: songs.map(mapSong),
         },
@@ -1498,9 +1498,9 @@ export async function GET(request: NextRequest) {
           })),
           album: albums.map((album) => ({
             id: String(album.id),
-            name: album.title,
-            artist: album.artist?.name || album.albumArtist || undefined,
-            year: album.year || undefined,
+            name: album.title || "",
+            artist: album.artist?.name || album.albumArtist || "",
+            year: album.year || 0,
           })),
           song: songs.map(mapSong),
         },
