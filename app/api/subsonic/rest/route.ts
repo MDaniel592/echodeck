@@ -296,6 +296,30 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    if (cmd === "getInternetRadioStations") {
+      return response(request, {
+        internetRadioStations: {
+          internetRadioStation: [],
+        },
+      })
+    }
+
+    if (cmd === "getPodcasts") {
+      return response(request, {
+        podcasts: {
+          channel: [],
+        },
+      })
+    }
+
+    if (cmd === "getNewestPodcasts") {
+      return response(request, {
+        newestPodcasts: {
+          episode: [],
+        },
+      })
+    }
+
     const authResult = await authenticate(request)
     if (!authResult.ok) {
       if (authResult.rateLimited) {
@@ -1682,22 +1706,39 @@ export async function GET(request: NextRequest) {
     if (cmd === "getLyrics") {
       const artist = request.nextUrl.searchParams.get("artist")?.trim() || ""
       const title = request.nextUrl.searchParams.get("title")?.trim() || ""
-      if (!artist || !title) {
-        return response(request, { error: { code: 10, message: "Missing artist/title" } }, "failed")
+      if (!title) {
+        return response(request, {
+          lyrics: {
+            artist,
+            title: "",
+            value: "",
+          },
+        })
       }
 
-      const song = await prisma.song.findFirst({
-        where: {
-          userId: user.id,
-          artist: { equals: artist },
-          title: { equals: title },
-        },
-        select: { title: true, artist: true, lyrics: true },
-      })
+      const song = await prisma.song.findFirst(
+        artist
+          ? {
+              where: {
+                userId: user.id,
+                artist: { equals: artist },
+                title: { equals: title },
+              },
+              select: { title: true, artist: true, lyrics: true },
+            }
+          : {
+              where: {
+                userId: user.id,
+                title: { equals: title },
+              },
+              orderBy: { id: "asc" },
+              select: { title: true, artist: true, lyrics: true },
+            }
+      )
 
       return response(request, {
         lyrics: {
-          artist,
+          artist: artist || song?.artist || "",
           title,
           value: song?.lyrics || "",
         },
