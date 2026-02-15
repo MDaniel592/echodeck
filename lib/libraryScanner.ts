@@ -32,6 +32,55 @@ function inferArtistAndAlbum(filePath: string): { artist: string | null; album: 
   return { artist, album }
 }
 
+function inferTrackAndTitle(relativePath: string): { trackNumber: number | null; title: string } {
+  const base = path.basename(relativePath, path.extname(relativePath))
+  const normalized = base.replace(/[_]+/g, " ").trim()
+
+  const patterns = [
+    /^(\d{1,2})\s*[-.]\s*(.+)$/i,
+    /^track\s*(\d{1,2})\s*[-.]\s*(.+)$/i,
+    /^(\d{1,2})\s+(.+)$/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern)
+    if (match?.[1] && match?.[2]) {
+      const trackNumber = Number.parseInt(match[1], 10)
+      if (Number.isInteger(trackNumber) && trackNumber > 0) {
+        return {
+          trackNumber,
+          title: match[2].trim(),
+        }
+      }
+    }
+  }
+
+  return {
+    trackNumber: null,
+    title: toTitleFromFileName(relativePath),
+  }
+}
+
+function inferYear(albumName: string | null): number | null {
+  if (!albumName) return null
+  const match = albumName.match(/\b(19\d{2}|20\d{2}|2100)\b/)
+  if (!match?.[1]) return null
+  const parsed = Number.parseInt(match[1], 10)
+  return Number.isInteger(parsed) ? parsed : null
+}
+
+function inferDiscNumber(relativePath: string): number | null {
+  const parts = relativePath.split(path.sep).filter(Boolean)
+  for (const part of parts) {
+    const match = part.match(/\b(?:disc|cd)\s*(\d{1,2})\b/i)
+    if (match?.[1]) {
+      const discNumber = Number.parseInt(match[1], 10)
+      if (Number.isInteger(discNumber) && discNumber > 0) return discNumber
+    }
+  }
+  return null
+}
+
 async function listAudioFiles(rootPath: string): Promise<string[]> {
   const result: string[] = []
   const stack: string[] = [rootPath]
@@ -160,7 +209,11 @@ export async function runLibraryScan(
           const fileStat = await fs.stat(file)
           const destination = await ensureFileCopied(file, relativePath, userId, library.id)
           const inferred = inferArtistAndAlbum(relativePath)
-          const title = toTitleFromFileName(relativePath)
+          const inferredTrack = inferTrackAndTitle(relativePath)
+          const title = inferredTrack.title
+          const trackNumber = inferredTrack.trackNumber
+          const discNumber = inferDiscNumber(relativePath)
+          const year = inferYear(inferred.album)
           const format = path.extname(file).slice(1).toLowerCase() || "unknown"
 
           let artistId: number | null = null
@@ -223,6 +276,9 @@ export async function runLibraryScan(
                 artist: inferred.artist,
                 album: inferred.album,
                 albumArtist: inferred.artist,
+                year,
+                discNumber,
+                trackNumber,
                 artistId,
                 albumId,
                 filePath: destination,
@@ -242,6 +298,9 @@ export async function runLibraryScan(
                 artist: inferred.artist,
                 album: inferred.album,
                 albumArtist: inferred.artist,
+                year,
+                discNumber,
+                trackNumber,
                 artistId,
                 albumId,
                 source: "library",
