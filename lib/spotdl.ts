@@ -80,12 +80,15 @@ export interface SpotdlDownloadResult {
   filePath: string
   title: string
   artist: string | null
+  album: string | null
+  albumArtist: string | null
   duration: number | null
   fileSize: number | null
   format: "mp3" | "flac" | "wav" | "ogg"
   thumbnail: string | null
   sourceUrl: string | null
   quality: string | null
+  releaseDate: string | null
 }
 
 interface SpotifyTrack {
@@ -2053,12 +2056,15 @@ export async function downloadSpotify(
         filePath: downloaded.filePath,
         title: track.title,
         artist: artistLabel,
+        album: track.albumName,
+        albumArtist: artistLabel,
         duration: track.duration,
         fileSize: downloaded.fileSize,
         format,
         thumbnail: track.thumbnail || match.metadata.coverArt,
         sourceUrl: track.sourceUrl,
         quality: match.quality,
+        releaseDate: track.releaseDate,
       }
 
       onProgress(`[${index + 1}/${tracks.length}] Downloaded ${track.title}`)

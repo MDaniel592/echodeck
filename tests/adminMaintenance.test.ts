@@ -60,6 +60,9 @@ describe("adminMaintenance refresh_origin_metadata", () => {
     mocks.getVideoInfo.mockResolvedValue({
       title: "New Title",
       artist: "New Artist",
+      album: "New Album",
+      albumArtist: "New Artist",
+      year: 2020,
       duration: 200,
       thumbnail: "https://i.ytimg.com/new.jpg",
       formats: ["mp3"],
@@ -216,6 +219,7 @@ describe("adminMaintenance refresh_origin_metadata", () => {
 
     const calls = mocks.prisma.song.update.mock.calls.map((args) => args[0] as { data: Record<string, unknown> })
     expect(calls.some((call) => Object.prototype.hasOwnProperty.call(call.data, "title"))).toBe(true)
+    expect(calls.some((call) => call.data.year === 2020)).toBe(true)
     expect(calls.some((call) => Object.prototype.hasOwnProperty.call(call.data, "coverPath"))).toBe(true)
     expect(mocks.ensureArtistAlbumRefs).toHaveBeenCalledTimes(2)
 

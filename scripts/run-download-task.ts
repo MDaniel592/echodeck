@@ -25,6 +25,7 @@ const YOUTUBE_VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/
 const DOWNLOAD_CONCURRENCY = 4
 const DOWNLOAD_DELAY_MIN_MS = 1000
 const DOWNLOAD_DELAY_MAX_MS = 3000
+const VIDEO_INFO_TIMEOUT_MS = 15_000
 
 function extractVideoIdFromMixList(listId: string): string | null {
   if (!listId.startsWith("RD")) return null
@@ -101,6 +102,41 @@ function cleanupFileIfExists(filePath: string | null | undefined) {
   } catch {
     // Ignore best-effort cleanup failures.
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms)
+    promise
+      .then((value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+      .catch((error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+  })
+}
+
+function parseYearCandidate(value: string | null | undefined): number | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const yyyymmdd = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/)
+  if (yyyymmdd) {
+    const year = Number.parseInt(yyyymmdd[1], 10)
+    return year >= 1000 && year <= 9999 ? year : null
+  }
+  const yearOnly = trimmed.match(/^(\d{4})$/)
+  if (yearOnly) {
+    const year = Number.parseInt(yearOnly[1], 10)
+    return year >= 1000 && year <= 9999 ? year : null
+  }
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) return null
+  const year = parsed.getUTCFullYear()
+  return year >= 1000 && year <= 9999 ? year : null
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -204,6 +240,13 @@ async function runVideoTask(taskId: number) {
         await logEvent(taskId, "status", `${progressPrefix} Downloading: ${entry.title}`)
         shouldThrottle = true
 
+        let entryInfo: Awaited<ReturnType<typeof getVideoInfo>> | null = null
+        try {
+          entryInfo = await withTimeout(getVideoInfo(normalizedTrackUrl), VIDEO_INFO_TIMEOUT_MS)
+        } catch {
+          // Keep playlist entry metadata as fallback when source lookup is unavailable.
+        }
+
         const result = await downloadAudio(
           { url: normalizedTrackUrl, format, quality, bestAudioPreference },
           (message) => {
@@ -230,23 +273,24 @@ async function runVideoTask(taskId: number) {
           // ignore
         }
 
-        const thumbnail = result.thumbnail || entry.thumbnail
+        const thumbnail = result.thumbnail || entryInfo?.thumbnail || entry.thumbnail
         const refs = await ensureArtistAlbumRefs({
           userId,
-          artist: result.artist || entry.artist || null,
-          album: null,
-          albumArtist: result.artist || entry.artist || null,
-          year: null,
+          artist: result.artist || entryInfo?.artist || entry.artist || null,
+          album: entryInfo?.album || null,
+          albumArtist: result.artist || entryInfo?.albumArtist || entryInfo?.artist || entry.artist || null,
+          year: entryInfo?.year ?? null,
         })
         const songCreateData = {
           userId,
-          title: normalizeSongTitle(result.title || entry.title || "Unknown title"),
+          title: normalizeSongTitle(result.title || entryInfo?.title || entry.title || "Unknown title"),
           artist: refs.artist,
           album: refs.album,
           albumArtist: refs.albumArtist,
           artistId: refs.artistId,
           albumId: refs.albumId,
-          duration: result.duration ?? entry.duration,
+          year: entryInfo?.year ?? null,
+          duration: result.duration ?? entryInfo?.duration ?? entry.duration,
           format: result.format,
           quality: quality === "best" ? `source:${bestAudioPreference}` : `${quality}kbps`,
           source,
@@ -360,9 +404,9 @@ async function runVideoTask(taskId: number) {
   const refs = await ensureArtistAlbumRefs({
     userId,
     artist: result.artist || info.artist || null,
-    album: null,
-    albumArtist: result.artist || info.artist || null,
-    year: null,
+    album: info.album || null,
+    albumArtist: result.artist || info.albumArtist || info.artist || null,
+    year: info.year ?? null,
   })
   const songCreateData = {
     userId,
@@ -373,6 +417,7 @@ async function runVideoTask(taskId: number) {
     artistId: refs.artistId,
     albumId: refs.albumId,
     duration: result.duration || info.duration,
+    year: info.year ?? null,
     format: result.format,
     quality: quality === "best" ? `source:${bestAudioPreference}` : `${quality}kbps`,
     source,
@@ -503,9 +548,9 @@ async function runSpotifyTask(taskId: number) {
     const refs = await ensureArtistAlbumRefs({
       userId,
       artist: result.artist || null,
-      album: "Singles",
-      albumArtist: result.artist || null,
-      year: null,
+      album: result.album || "Singles",
+      albumArtist: result.albumArtist || result.artist || null,
+      year: parseYearCandidate(result.releaseDate),
     })
 
     const songSourceUrl = normalizedSourceUrl || result.sourceUrl || null
@@ -517,6 +562,7 @@ async function runSpotifyTask(taskId: number) {
       albumArtist: refs.albumArtist,
       artistId: refs.artistId,
       albumId: refs.albumId,
+      year: parseYearCandidate(result.releaseDate),
       duration: result.duration,
       format: result.format,
       quality: result.quality,

@@ -943,6 +943,7 @@ async function runRefreshOriginMetadata(
       let nextArtist = song.artist
       let nextAlbum = song.album
       let nextAlbumArtist = song.albumArtist
+      let nextYear = song.year
       let nextDuration = song.duration
       let nextThumbnail = song.thumbnail
 
@@ -954,6 +955,9 @@ async function runRefreshOriginMetadata(
         )
         nextTitle = normalizeSongTitle(info.title || song.title || "Unknown title")
         nextArtist = info.artist || song.artist
+        nextAlbum = info.album || nextAlbum
+        nextAlbumArtist = info.albumArtist || nextAlbumArtist
+        nextYear = info.year ?? nextYear
         nextDuration = info.duration ?? song.duration
         nextThumbnail = info.thumbnail || song.thumbnail
         if (!nextAlbum && nextArtist) nextAlbum = "Singles"
@@ -980,6 +984,7 @@ async function runRefreshOriginMetadata(
         nextArtist !== song.artist ||
         resolvedFields.album !== song.album ||
         resolvedFields.albumArtist !== song.albumArtist ||
+        nextYear !== song.year ||
         nextDuration !== song.duration ||
         nextThumbnail !== song.thumbnail
 
@@ -989,7 +994,7 @@ async function runRefreshOriginMetadata(
           artist: nextArtist,
           album: resolvedFields.album,
           albumArtist: resolvedFields.albumArtist,
-          year: song.year ?? null,
+          year: nextYear ?? null,
         })
 
         await prisma.song.update({
@@ -1001,6 +1006,7 @@ async function runRefreshOriginMetadata(
             albumArtist: refs.albumArtist,
             artistId: refs.artistId,
             albumId: refs.albumId,
+            year: nextYear ?? null,
             duration: nextDuration,
             thumbnail: nextThumbnail,
           },
