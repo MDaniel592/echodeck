@@ -44,3 +44,32 @@ jobs:
         env:
           JWT_SECRET: ci-test-secret-not-real
           DATABASE_URL: "file:./test.db"
+
+      - name: Start app for integration smoke
+        run: |
+          npm run start > /tmp/echodeck-app.log 2>&1 &
+          echo $! > /tmp/echodeck-app.pid
+        env:
+          JWT_SECRET: ci-test-secret-not-real
+          DATABASE_URL: "file:./itest.db"
+          NODE_ENV: production
+          SETUP_SECRET: ci-setup-secret-not-real
+          SKIP_SETUP: "1"
+
+      - name: Integration smoke test
+        run: npm run test:integration
+        env:
+          BASE_URL: "http://127.0.0.1:3000"
+          ITEST_TIMEOUT_MS: "180000"
+          ITEST_SETUP_SECRET: ci-setup-secret-not-real
+
+      - name: Show app logs on failure
+        if: failure()
+        run: tail -n 200 /tmp/echodeck-app.log || true
+
+      - name: Stop integration app
+        if: always()
+        run: |
+          if [ -f /tmp/echodeck-app.pid ]; then
+            kill "$(cat /tmp/echodeck-app.pid)" || true
+          fi
