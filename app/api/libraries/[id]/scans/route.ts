@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../../lib/prisma"
+import { isLibraryScanActive } from "../../../../../lib/libraryScanQueue"
 import { AuthError, requireAuth } from "../../../../../lib/requireAuth"
 
 export async function GET(
@@ -27,7 +28,10 @@ export async function GET(
       orderBy: { startedAt: "desc" },
       take: 50,
     })
-    return NextResponse.json(scans)
+    return NextResponse.json({
+      active: isLibraryScanActive(auth.userId, libraryId),
+      scans,
+    })
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status })

@@ -10,6 +10,7 @@ export async function GET(request: NextRequest) {
       orderBy: { name: "asc" },
       include: {
         paths: { orderBy: { path: "asc" } },
+        scanRuns: { orderBy: { startedAt: "desc" }, take: 1 },
         _count: { select: { songs: true } },
       },
     })

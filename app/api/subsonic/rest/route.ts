@@ -67,9 +67,6 @@ async function authenticate(request: NextRequest): Promise<SubsonicUser | null> 
 }
 
 function commandFromRequest(request: NextRequest): string {
-  const c = request.nextUrl.searchParams.get("c")
-  if (c) return c
-
   const raw = request.nextUrl.searchParams.get("command")
   if (raw) return raw
 
@@ -402,11 +399,15 @@ export async function GET(request: NextRequest) {
       const artistCount = parseIntParam(request.nextUrl.searchParams.get("artistCount"), 20)
       const albumCount = parseIntParam(request.nextUrl.searchParams.get("albumCount"), 20)
       const songCount = parseIntParam(request.nextUrl.searchParams.get("songCount"), 20)
+      const artistOffset = parseIntParam(request.nextUrl.searchParams.get("artistOffset"), 0)
+      const albumOffset = parseIntParam(request.nextUrl.searchParams.get("albumOffset"), 0)
+      const songOffset = parseIntParam(request.nextUrl.searchParams.get("songOffset"), 0)
 
       const [artists, albums, songs] = await Promise.all([
         prisma.artist.findMany({
           where: { userId: user.id, name: { contains: query } },
           orderBy: { name: "asc" },
+          skip: artistOffset,
           take: artistCount,
         }),
         prisma.album.findMany({
@@ -418,6 +419,7 @@ export async function GET(request: NextRequest) {
             ],
           },
           orderBy: [{ year: "desc" }, { title: "asc" }],
+          skip: albumOffset,
           take: albumCount,
           include: { artist: true },
         }),
@@ -431,6 +433,7 @@ export async function GET(request: NextRequest) {
             ],
           },
           orderBy: { createdAt: "desc" },
+          skip: songOffset,
           take: songCount,
         }),
       ])
@@ -498,6 +501,23 @@ export async function GET(request: NextRequest) {
       )
 
       return response(request, {})
+    }
+
+    if (cmd === "getStarred2") {
+      const songs = await prisma.song.findMany({
+        where: {
+          userId: user.id,
+          starredAt: { not: null },
+        },
+        orderBy: [{ starredAt: "desc" }, { id: "desc" }],
+        take: 500,
+      })
+
+      return response(request, {
+        starred2: {
+          song: songs.map(mapSong),
+        },
+      })
     }
 
     return response(request, { error: { code: 0, message: `Unsupported command: ${cmd}` } }, "failed")
