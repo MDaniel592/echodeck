@@ -246,6 +246,36 @@ function transcodeToMp3(filePath: string, maxBitRateKbps: number) {
   return proc
 }
 
+function transcodeImageToJpeg(filePath: string) {
+  const ffmpegDir = getFfmpegDir()
+  const ffmpegPath = path.join(ffmpegDir, "ffmpeg")
+  if (!fs.existsSync(ffmpegPath)) return null
+
+  const proc = spawn(
+    ffmpegPath,
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      filePath,
+      "-frames:v",
+      "1",
+      "-f",
+      "mjpeg",
+      "pipe:1",
+    ],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    }
+  )
+
+  proc.stderr.on("data", () => {
+    // keep stderr drained to avoid backpressure stalling ffmpeg
+  })
+  return proc
+}
+
 export async function GET(request: NextRequest) {
   try {
     const cmd = commandFromRequest(request)
@@ -1230,6 +1260,18 @@ export async function GET(request: NextRequest) {
         return new Response("Access denied", { status: 403 })
       }
 
+      if (path.extname(resolvedPath).toLowerCase() === ".webp") {
+        const transcoder = transcodeImageToJpeg(resolvedPath)
+        if (transcoder?.stdout) {
+          return new Response(nodeReadableToWebStream(transcoder.stdout), {
+            headers: {
+              "Content-Type": "image/jpeg",
+              "Cache-Control": "public, max-age=3600",
+            },
+          })
+        }
+      }
+
       const stat = await fsPromises.stat(resolvedPath)
       const stream = fs.createReadStream(resolvedPath)
       return new Response(nodeReadableToWebStream(stream), {
@@ -1275,6 +1317,18 @@ export async function GET(request: NextRequest) {
       const resolvedPath = resolveSafeDownloadPathForRead(coverPath)
       if (!resolvedPath) {
         return new Response("Access denied", { status: 403 })
+      }
+
+      if (path.extname(resolvedPath).toLowerCase() === ".webp") {
+        const transcoder = transcodeImageToJpeg(resolvedPath)
+        if (transcoder?.stdout) {
+          return new Response(nodeReadableToWebStream(transcoder.stdout), {
+            headers: {
+              "Content-Type": "image/jpeg",
+              "Cache-Control": "public, max-age=3600",
+            },
+          })
+        }
       }
 
       const stat = await fsPromises.stat(resolvedPath)
