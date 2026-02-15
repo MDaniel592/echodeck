@@ -24,6 +24,7 @@ type MaintenanceAction =
   | "fill_missing_covers"
   | "refresh_file_metadata"
   | "queue_redownload_candidates"
+  | "refresh_origin_metadata"
 
 type MaintenanceResult = {
   action: MaintenanceAction
@@ -66,6 +67,11 @@ const ACTIONS: Array<{ id: MaintenanceAction; label: string; description: string
     id: "queue_redownload_candidates",
     label: "Queue Re-download Candidates",
     description: "Queue download tasks for tracks with missing files or weak technical metadata.",
+  },
+  {
+    id: "refresh_origin_metadata",
+    label: "Refresh Origin Metadata",
+    description: "Fetch metadata/artwork from source URLs (YouTube/SoundCloud/Spotify) without audio re-download.",
   },
 ]
 

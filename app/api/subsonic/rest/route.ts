@@ -449,7 +449,7 @@ export async function GET(request: NextRequest) {
           album: artist.albums.map((album) => ({
             id: String(album.id),
             name: album.title || "",
-            year: album.year || 0,
+            year: album.year || 1970,
           })),
         },
       })
@@ -546,7 +546,7 @@ export async function GET(request: NextRequest) {
               parent: `ar-${artist.id}`,
               title: album.title,
               isDir: true,
-              year: album.year || 0,
+              year: album.year || 1970,
             })),
           },
         })
@@ -610,7 +610,7 @@ export async function GET(request: NextRequest) {
           id: String(album.id),
           name: album.title || "",
           artist: album.artist?.name || album.albumArtist || "",
-          year: album.year || 0,
+          year: album.year || 1970,
           song: album.songs.map(mapSong),
         },
       })
@@ -837,7 +837,7 @@ export async function GET(request: NextRequest) {
             id: String(album.id),
             name: album.title || "",
             artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 0,
+            year: album.year || 1970,
           })),
         },
       })
@@ -873,7 +873,7 @@ export async function GET(request: NextRequest) {
             id: String(album.id),
             name: album.title || "",
             artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 0,
+            year: album.year || 1970,
           })),
         },
       })
@@ -1406,7 +1406,7 @@ export async function GET(request: NextRequest) {
             id: String(album.id),
             name: album.title || "",
             artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 0,
+            year: album.year || 1970,
           })),
           song: songs.map(mapSong),
         },
@@ -1453,7 +1453,7 @@ export async function GET(request: NextRequest) {
             id: String(album.id),
             name: album.title || "",
             artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 0,
+            year: album.year || 1970,
           })),
           song: songs.map(mapSong),
         },
@@ -1500,7 +1500,7 @@ export async function GET(request: NextRequest) {
             id: String(album.id),
             name: album.title || "",
             artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 0,
+            year: album.year || 1970,
           })),
           song: songs.map(mapSong),
         },

@@ -75,7 +75,7 @@ export function mapSubsonicSong(song: SubsonicSong) {
     coverArt: coverArtId,
     duration: song.duration || 0,
     track: song.trackNumber || 0,
-    year: song.year || 0,
+    year: song.year || 1970,
     genre: song.genre || "",
     starred: song.starredAt ? song.starredAt.toISOString() : undefined,
     playCount: song.playCount ?? 0,

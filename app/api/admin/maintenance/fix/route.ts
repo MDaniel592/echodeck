@@ -13,6 +13,7 @@ const SUPPORTED_ACTIONS: MaintenanceAction[] = [
   "fill_missing_covers",
   "refresh_file_metadata",
   "queue_redownload_candidates",
+  "refresh_origin_metadata",
 ]
 
 function isSupportedAction(value: string): value is MaintenanceAction {

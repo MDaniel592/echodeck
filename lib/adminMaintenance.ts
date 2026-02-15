@@ -3,6 +3,9 @@ import fs from "fs/promises"
 import prisma from "./prisma"
 import { extractAudioMetadataFromFile } from "./audioMetadata"
 import { normalizeSongTitle } from "./songTitle"
+import { getVideoInfo } from "./ytdlp"
+import { downloadSongArtwork, getSpotifyThumbnail } from "./artwork"
+import { ensureArtistAlbumRefs } from "./artistAlbumRefs"
 import {
   drainQueuedTaskWorkers,
   enqueueDownloadTask,
@@ -19,6 +22,7 @@ export type MaintenanceAction =
   | "fill_missing_covers"
   | "refresh_file_metadata"
   | "queue_redownload_candidates"
+  | "refresh_origin_metadata"
 
 export type MaintenanceAudit = {
   songsTotal: number
@@ -694,6 +698,130 @@ async function runQueueRedownloadCandidates(
   }
 }
 
+async function runRefreshOriginMetadata(
+  userId: number,
+  dryRun: boolean
+): Promise<MaintenanceResult> {
+  const songs = await prisma.song.findMany({
+    where: {
+      userId,
+      sourceUrl: { not: null },
+      source: { in: ["youtube", "soundcloud", "spotify"] },
+    },
+    select: {
+      id: true,
+      source: true,
+      sourceUrl: true,
+      title: true,
+      artist: true,
+      album: true,
+      albumArtist: true,
+      year: true,
+      duration: true,
+      thumbnail: true,
+      coverPath: true,
+    },
+    orderBy: { id: "asc" },
+  })
+
+  let checkedSongs = 0
+  let updatedSongs = 0
+  let artworkUpdated = 0
+  let failedSongs = 0
+  let skippedSongs = 0
+
+  for (const song of songs) {
+    checkedSongs += 1
+    const sourceUrl = song.sourceUrl?.trim() || ""
+    if (!sourceUrl) {
+      skippedSongs += 1
+      continue
+    }
+
+    try {
+      let nextTitle = song.title
+      let nextArtist = song.artist
+      let nextAlbum = song.album
+      let nextAlbumArtist = song.albumArtist
+      let nextDuration = song.duration
+      let nextThumbnail = song.thumbnail
+
+      if (song.source === "youtube" || song.source === "soundcloud") {
+        const info = await getVideoInfo(sourceUrl)
+        nextTitle = normalizeSongTitle(info.title || song.title || "Unknown title")
+        nextArtist = info.artist || song.artist
+        nextDuration = info.duration ?? song.duration
+        nextThumbnail = info.thumbnail || song.thumbnail
+        if (!nextAlbum && nextArtist) nextAlbum = "Singles"
+        if (!nextAlbumArtist && nextArtist) nextAlbumArtist = nextArtist
+      } else if (song.source === "spotify") {
+        const thumb = await getSpotifyThumbnail(sourceUrl)
+        if (thumb) nextThumbnail = thumb
+        if (!nextAlbum && (nextArtist || song.artist)) nextAlbum = "Singles"
+        if (!nextAlbumArtist && (nextArtist || song.artist)) nextAlbumArtist = nextArtist || song.artist
+      }
+
+      const refs = await ensureArtistAlbumRefs({
+        userId,
+        artist: nextArtist,
+        album: nextAlbum,
+        albumArtist: nextAlbumArtist,
+        year: song.year ?? null,
+      })
+
+      const metadataChanged =
+        nextTitle !== song.title ||
+        nextArtist !== song.artist ||
+        refs.album !== song.album ||
+        refs.albumArtist !== song.albumArtist ||
+        nextDuration !== song.duration ||
+        nextThumbnail !== song.thumbnail
+
+      if (!dryRun && metadataChanged) {
+        await prisma.song.update({
+          where: { id: song.id },
+          data: {
+            title: nextTitle,
+            artist: nextArtist,
+            album: refs.album,
+            albumArtist: refs.albumArtist,
+            artistId: refs.artistId,
+            albumId: refs.albumId,
+            duration: nextDuration,
+            thumbnail: nextThumbnail,
+          },
+        })
+      }
+      if (metadataChanged) updatedSongs += 1
+
+      if (!dryRun && nextThumbnail) {
+        const coverPath = await downloadSongArtwork(song.id, nextThumbnail)
+        if (coverPath && coverPath !== song.coverPath) {
+          await prisma.song.update({
+            where: { id: song.id },
+            data: { coverPath },
+          })
+          artworkUpdated += 1
+        }
+      }
+    } catch {
+      failedSongs += 1
+    }
+  }
+
+  return {
+    action: "refresh_origin_metadata",
+    dryRun,
+    details: {
+      checkedSongs,
+      updatedSongs,
+      artworkUpdated,
+      failedSongs,
+      skippedSongs,
+    },
+  }
+}
+
 export async function runMaintenanceAction(
   userId: number,
   action: MaintenanceAction,
@@ -706,5 +834,6 @@ export async function runMaintenanceAction(
   if (action === "fill_missing_covers") return runFillMissingCovers(userId, dryRun)
   if (action === "refresh_file_metadata") return runRefreshFileMetadata(userId, dryRun)
   if (action === "queue_redownload_candidates") return runQueueRedownloadCandidates(userId, dryRun)
+  if (action === "refresh_origin_metadata") return runRefreshOriginMetadata(userId, dryRun)
   throw new Error(`Unsupported action: ${action}`)
 }
