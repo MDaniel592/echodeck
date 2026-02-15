@@ -14,6 +14,7 @@ import {
   getPlaylistSongsForUser,
   replacePlaylistEntriesForUser,
 } from "../../../../lib/playlistEntries"
+import { enqueueLibraryScan } from "../../../../lib/libraryScanQueue"
 import {
   mapSubsonicSong as mapSong,
   mapSubsonicUser,
@@ -262,6 +263,7 @@ export async function GET(request: NextRequest) {
     if (!user) {
       return response(request, { error: { code: 40, message: "Wrong username or password" } }, "failed")
     }
+    const subsonicDeviceId = `subsonic:${user.username}`
 
     if (cmd === "getUser") {
       const targetUsername = request.nextUrl.searchParams.get("username")?.trim() || user.username
@@ -598,6 +600,110 @@ export async function GET(request: NextRequest) {
             .map(mapSong),
         },
       })
+    }
+
+    if (cmd === "getPlayQueue") {
+      const session = await prisma.playbackSession.findUnique({
+        where: {
+          userId_deviceId: {
+            userId: user.id,
+            deviceId: subsonicDeviceId,
+          },
+        },
+        include: {
+          currentSong: true,
+          queueItems: {
+            orderBy: { sortOrder: "asc" },
+            include: { song: true },
+          },
+        },
+      })
+
+      return response(request, {
+        playQueue: {
+          current: session?.currentSongId ? String(session.currentSongId) : undefined,
+          position: session ? Math.max(0, Math.round(session.positionSec * 1000)) : 0,
+          changed: session?.updatedAt.toISOString(),
+          entry: session?.queueItems.map((item) => mapSong(item.song)) || [],
+        },
+      })
+    }
+
+    if (cmd === "savePlayQueue") {
+      const rawIds = request.nextUrl.searchParams.getAll("id")
+      const queueSongIds = rawIds
+        .map((raw) => Number.parseInt(raw, 10))
+        .filter((id): id is number => Number.isInteger(id) && id > 0)
+      const currentRaw = request.nextUrl.searchParams.get("current")
+      const currentSongId = currentRaw ? Number.parseInt(currentRaw, 10) : null
+      const positionRaw = request.nextUrl.searchParams.get("position")
+      const positionMs = positionRaw ? Number.parseInt(positionRaw, 10) : 0
+
+      const uniqueSongIds = Array.from(new Set(queueSongIds))
+      if (uniqueSongIds.length > 0) {
+        const songs = await prisma.song.findMany({
+          where: { userId: user.id, id: { in: uniqueSongIds } },
+          select: { id: true },
+        })
+        if (songs.length !== uniqueSongIds.length) {
+          return response(request, { error: { code: 70, message: "One or more songs were not found" } }, "failed")
+        }
+      }
+
+      if (currentSongId !== null && Number.isInteger(currentSongId) && currentSongId > 0) {
+        const currentSong = await prisma.song.findFirst({
+          where: { userId: user.id, id: currentSongId },
+          select: { id: true },
+        })
+        if (!currentSong) {
+          return response(request, { error: { code: 70, message: "Current song not found" } }, "failed")
+        }
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const session = await tx.playbackSession.upsert({
+          where: {
+            userId_deviceId: {
+              userId: user.id,
+              deviceId: subsonicDeviceId,
+            },
+          },
+          create: {
+            userId: user.id,
+            deviceId: subsonicDeviceId,
+            currentSongId:
+              currentSongId !== null && Number.isInteger(currentSongId) && currentSongId > 0
+                ? currentSongId
+                : null,
+            positionSec: Number.isInteger(positionMs) && positionMs > 0 ? positionMs / 1000 : 0,
+            isPlaying: false,
+          },
+          update: {
+            currentSongId:
+              currentSongId !== null && Number.isInteger(currentSongId) && currentSongId > 0
+                ? currentSongId
+                : null,
+            positionSec: Number.isInteger(positionMs) && positionMs > 0 ? positionMs / 1000 : 0,
+          },
+          select: { id: true },
+        })
+
+        await tx.playbackQueueItem.deleteMany({
+          where: { sessionId: session.id },
+        })
+
+        if (queueSongIds.length > 0) {
+          await tx.playbackQueueItem.createMany({
+            data: queueSongIds.map((songId, index) => ({
+              sessionId: session.id,
+              songId,
+              sortOrder: index,
+            })),
+          })
+        }
+      })
+
+      return response(request, {})
     }
 
     if (cmd === "getRandomSongs") {
@@ -1462,6 +1568,41 @@ export async function GET(request: NextRequest) {
                 },
               ]
             : [],
+        },
+      })
+    }
+
+    if (cmd === "startScan") {
+      const libraries = await prisma.library.findMany({
+        where: { userId: user.id },
+        select: { id: true },
+      })
+
+      let queued = 0
+      for (const library of libraries) {
+        const result = await enqueueLibraryScan(user.id, library.id)
+        if (result.accepted) queued += 1
+      }
+
+      return response(request, {
+        scanStatus: {
+          scanning: queued > 0,
+          count: queued,
+        },
+      })
+    }
+
+    if (cmd === "getScanStatus") {
+      const active = await prisma.libraryScanRun.count({
+        where: {
+          library: { userId: user.id },
+          status: { in: ["queued", "running"] },
+        },
+      })
+      return response(request, {
+        scanStatus: {
+          scanning: active > 0,
+          count: active,
         },
       })
     }

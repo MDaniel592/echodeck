@@ -133,7 +133,7 @@ Subsonic-compatible endpoints:
 - `GET /api/subsonic/rest/:command.view` (path command mode)
 - Supports auth via:
 `u` + `p` (plain or `enc:` hex), and standard `u` + `t` + `s`
-- Includes: `ping`, `getLicense`, `getOpenSubsonicExtensions`, `getMusicFolders`, `getIndexes`, `getArtists`, `getArtist`, `getArtistInfo`, `getArtistInfo2`, `getMusicDirectory`, `getAlbum`, `getAlbumInfo`, `getAlbumInfo2`, `getSong`, `stream`, `getCoverArt`, `getAvatar`, `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist`, `search`, `search2`, `search3`, `star`, `unstar`, `getStarred`, `getStarred2`, `scrobble`, `getNowPlaying`, `getRandomSongs`, `getAlbumList`, `getAlbumList2`, `getGenres`, `getSongsByGenre`, `getTopSongs`, `getLyrics`, `getLyricsBySongId`, `getSimilarSongs`, `getSimilarSongs2`, `getUser`, `getUsers`
+- Includes: `ping`, `getLicense`, `getOpenSubsonicExtensions`, `getMusicFolders`, `getIndexes`, `getArtists`, `getArtist`, `getArtistInfo`, `getArtistInfo2`, `getMusicDirectory`, `getAlbum`, `getAlbumInfo`, `getAlbumInfo2`, `getSong`, `stream`, `getCoverArt`, `getAvatar`, `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist`, `search`, `search2`, `search3`, `star`, `unstar`, `getStarred`, `getStarred2`, `scrobble`, `getNowPlaying`, `getPlayQueue`, `savePlayQueue`, `getRandomSongs`, `getAlbumList`, `getAlbumList2`, `getGenres`, `getSongsByGenre`, `getTopSongs`, `getLyrics`, `getLyricsBySongId`, `getSimilarSongs`, `getSimilarSongs2`, `startScan`, `getScanStatus`, `getUser`, `getUsers`
 - Smoke test guide: `docs/subsonic-client-smoke-test.md`
 
 ## Security
