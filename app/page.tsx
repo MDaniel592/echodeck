@@ -32,6 +32,7 @@ interface Playlist {
 }
 
 const QUEUE_STORAGE_KEY = "echodeck.queue.ids"
+const DEVICE_ID_STORAGE_KEY = "echodeck.device.id"
 
 function SearchIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
@@ -98,7 +99,9 @@ export default function Home() {
   const [selectedPlaylist, setSelectedPlaylist] = useState<string>("all")
   const [searchQuery, setSearchQuery] = useState("")
   const [loading, setLoading] = useState(true)
+  const [deviceId, setDeviceId] = useState<string | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const hydratedPlaybackRef = useRef(false)
 
   const songById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs])
 
@@ -113,6 +116,21 @@ export default function Home() {
       .filter((song): song is Song => Boolean(song)),
     [queueIds, songById]
   )
+
+  useEffect(() => {
+    try {
+      const existing = localStorage.getItem(DEVICE_ID_STORAGE_KEY)
+      if (existing && existing.trim()) {
+        setDeviceId(existing)
+        return
+      }
+      const generated = `web-${Math.random().toString(36).slice(2, 12)}`
+      localStorage.setItem(DEVICE_ID_STORAGE_KEY, generated)
+      setDeviceId(generated)
+    } catch {
+      setDeviceId("web-fallback")
+    }
+  }, [])
 
   useEffect(() => {
     try {
@@ -212,6 +230,90 @@ export default function Home() {
     fetchSongs()
     fetchPlaylists()
   }, [fetchSongs, fetchPlaylists])
+
+  useEffect(() => {
+    if (!deviceId || songs.length === 0 || hydratedPlaybackRef.current) return
+    const resolvedDeviceId = deviceId
+
+    async function hydratePlaybackSession() {
+      try {
+        const res = await fetch(`/api/playback/session?deviceId=${encodeURIComponent(resolvedDeviceId)}`, {
+          cache: "no-store",
+        })
+        if (!res.ok) return
+        const payload = await res.json() as {
+          session?: { currentSong?: { id: number } | null } | null
+          queue?: Array<{ song?: { id: number } }>
+        }
+        const queued = Array.isArray(payload.queue)
+          ? payload.queue
+              .map((item) => (Number.isInteger(item.song?.id) ? item.song!.id : null))
+              .filter((id): id is number => id !== null && songById.has(id))
+          : []
+
+        if (queued.length > 0) {
+          setQueueIds(queued)
+        }
+
+        const currentId = payload.session?.currentSong?.id
+        if (typeof currentId === "number" && Number.isInteger(currentId) && songById.has(currentId)) {
+          setCurrentSongId(currentId)
+        }
+      } catch (error) {
+        console.error("Failed to hydrate playback session:", error)
+      } finally {
+        hydratedPlaybackRef.current = true
+      }
+    }
+
+    void hydratePlaybackSession()
+  }, [deviceId, songs.length, songById])
+
+  useEffect(() => {
+    if (!deviceId || !hydratedPlaybackRef.current) return
+
+    async function syncQueue() {
+      try {
+        await fetch("/api/playback/queue", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deviceId,
+            songIds: queueIds,
+          }),
+        })
+      } catch (error) {
+        console.error("Failed to sync playback queue:", error)
+      }
+    }
+
+    void syncQueue()
+  }, [deviceId, queueIds])
+
+  useEffect(() => {
+    if (!deviceId || !hydratedPlaybackRef.current) return
+
+    async function syncSession() {
+      try {
+        await fetch("/api/playback/session", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deviceId,
+            currentSongId,
+            positionSec: 0,
+            isPlaying: false,
+            repeatMode: "off",
+            shuffle: false,
+          }),
+        })
+      } catch (error) {
+        console.error("Failed to sync playback session:", error)
+      }
+    }
+
+    void syncSession()
+  }, [deviceId, currentSongId])
 
   async function handleDeleteMany(ids: number[]) {
     const uniqueIds = Array.from(new Set(ids))

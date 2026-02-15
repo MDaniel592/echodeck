@@ -19,6 +19,9 @@ export async function GET(request: NextRequest) {
     // Filtering
     const search = searchParams.get("search")?.trim() || undefined
     const source = searchParams.get("source") || undefined
+    const albumId = searchParams.get("albumId")
+    const year = searchParams.get("year")
+    const genre = searchParams.get("genre")?.trim() || undefined
     const playlistId = searchParams.get("playlistId")
     const sortBy = searchParams.get("sortBy") || "createdAt"
     const sortOrder = searchParams.get("sortOrder") === "asc" ? "asc" : "desc"
@@ -36,6 +39,28 @@ export async function GET(request: NextRequest) {
       where.source = source
     }
 
+    if (albumId !== null && albumId !== undefined) {
+      if (albumId === "none") {
+        where.albumId = null
+      } else {
+        const parsed = Number.parseInt(albumId, 10)
+        if (Number.isInteger(parsed) && parsed > 0) {
+          where.albumId = parsed
+        }
+      }
+    }
+
+    if (year) {
+      const parsedYear = Number.parseInt(year, 10)
+      if (Number.isInteger(parsedYear) && parsedYear > 0) {
+        where.year = parsedYear
+      }
+    }
+
+    if (genre) {
+      where.genre = { contains: genre }
+    }
+
     if (playlistId !== null && playlistId !== undefined) {
       if (playlistId === "none") {
         where.playlistId = null
@@ -47,7 +72,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const validSortFields = new Set(["createdAt", "title", "artist", "source"])
+    const validSortFields = new Set(["createdAt", "title", "artist", "source", "year", "genre", "album"])
     const orderField = validSortFields.has(sortBy) ? sortBy : "createdAt"
 
     const [songs, total] = await Promise.all([

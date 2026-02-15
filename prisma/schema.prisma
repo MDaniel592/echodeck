@@ -18,15 +18,35 @@ model Song {
   user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   artist    String?
+  album     String?
+  albumArtist String?
+  trackNumber Int?
+  discNumber Int?
+  year      Int?
+  genre     String?
+  isrc      String?
+  lyrics    String?
+  bitrate   Int?
+  sampleRate Int?
+  channels  Int?
   duration  Int?
   format    String
   quality   String?
   source    String
   sourceUrl String?
   filePath  String
+  relativePath String?
+  fileMtime DateTime?
+  fileHash  String?
   coverPath String?
   thumbnail String?
   fileSize  Int?
+  artistId  Int?
+  artistRef Artist?  @relation(fields: [artistId], references: [id], onDelete: SetNull)
+  albumId   Int?
+  albumRef  Album?   @relation(fields: [albumId], references: [id], onDelete: SetNull)
+  libraryId Int?
+  library   Library? @relation(fields: [libraryId], references: [id], onDelete: SetNull)
   playlistId Int?
   playlist   Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
   downloadTaskId Int?
@@ -43,6 +63,10 @@ model Song {
   @@index([artist])
   @@index([userId, createdAt])
   @@index([userId, playlistId])
+  @@index([userId, albumId, discNumber, trackNumber])
+  @@index([artistId])
+  @@index([albumId])
+  @@index([libraryId])
 }
 
 model User {
@@ -57,6 +81,9 @@ model User {
   downloadTasks DownloadTask[]
   downloadTaskEvents DownloadTaskEvent[]
   playbackSessions PlaybackSession[]
+  libraries    Library[]
+  artists      Artist[]
+  albums       Album[]
 }
 
 model Playlist {
@@ -149,4 +176,74 @@ model PlaybackQueueItem {
 
   @@unique([sessionId, sortOrder])
   @@index([sessionId, songId])
+}
+
+model Artist {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  sortName  String?
+  mbid      String?
+  createdAt DateTime @default(now())
+  albums    Album[]
+  songs     Song[]
+
+  @@unique([userId, name])
+  @@index([name])
+}
+
+model Album {
+  id          Int      @id @default(autoincrement())
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  artistId    Int?
+  artist      Artist?  @relation(fields: [artistId], references: [id], onDelete: SetNull)
+  albumArtist String?
+  year        Int?
+  coverPath   String?
+  createdAt   DateTime @default(now())
+  songs       Song[]
+
+  @@unique([userId, title, albumArtist])
+  @@index([artistId, title])
+}
+
+model Library {
+  id          Int       @id @default(autoincrement())
+  userId      Int?
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  createdAt   DateTime  @default(now())
+  songs       Song[]
+  paths       LibraryPath[]
+  scanRuns    LibraryScanRun[]
+
+  @@unique([userId, name])
+}
+
+model LibraryPath {
+  id            Int      @id @default(autoincrement())
+  libraryId     Int
+  library       Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  path          String
+  enabled       Boolean  @default(true)
+  lastScannedAt DateTime?
+  createdAt     DateTime @default(now())
+
+  @@unique([libraryId, path])
+}
+
+model LibraryScanRun {
+  id         Int      @id @default(autoincrement())
+  libraryId  Int
+  library    Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  status     String   @default("running")
+  startedAt  DateTime @default(now())
+  finishedAt DateTime?
+  statsJson  String?
+  error      String?
+
+  @@index([libraryId, startedAt])
 }
