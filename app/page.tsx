@@ -81,7 +81,7 @@ export default function Home() {
   const [queueIds, setQueueIds] = useState<number[]>([])
   const [activeTab, setActiveTab] = useState<"player" | "download" | "manage" | "repair">("player")
   const [scopeMode, setScopeMode] = useState<ScopeMode>("all")
-  const [viewMode, setViewMode] = useState<ViewMode>("list")
+  const [viewMode, setViewMode] = useState<ViewMode>("grid")
   const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null)
   const [selectedPlaylist, setSelectedPlaylist] = useState<string>("all")
   const [searchQuery, setSearchQuery] = useState("")
