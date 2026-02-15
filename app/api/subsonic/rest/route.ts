@@ -68,7 +68,7 @@ function response(request: NextRequest, payload: Record<string, unknown>, status
     )
   }
 
-  const attrs = `status="${xmlEscape(status)}" version="1.16.1" type="EchoDeck" serverVersion="1.0.0"`
+  const attrs = `status="${xmlEscape(status)}" version="1.16.1" type="EchoDeck" serverVersion="1.0.0" xmlns="http://subsonic.org/restapi"`
   const xmlBody = objectToXml(payload)
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<subsonic-response ${attrs}>${xmlBody}</subsonic-response>`
 
@@ -94,11 +94,32 @@ function objectToXml(value: unknown, keyName?: string): string {
   }
 
   if (typeof value === "object") {
-    const objectEntries = Object.entries(value as Record<string, unknown>)
-      .map(([key, val]) => objectToXml(val, key))
+    const record = value as Record<string, unknown>
+    const attributes: Array<[string, string]> = []
+    const children: Array<[string, unknown]> = []
+
+    for (const [key, val] of Object.entries(record)) {
+      if (val === null || val === undefined) continue
+      if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+        attributes.push([key, String(val)])
+      } else {
+        children.push([key, val])
+      }
+    }
+
+    const childXml = children.map(([key, val]) => objectToXml(val, key)).join("")
+    if (!keyName) {
+      return childXml
+    }
+
+    const attrText = attributes
+      .map(([key, val]) => ` ${key}="${xmlEscape(val)}"`)
       .join("")
-    if (!keyName) return objectEntries
-    return `<${keyName}>${objectEntries}</${keyName}>`
+
+    if (!childXml) {
+      return `<${keyName}${attrText}/>`
+    }
+    return `<${keyName}${attrText}>${childXml}</${keyName}>`
   }
 
   if (!keyName) return ""
@@ -216,6 +237,13 @@ function extractSongIds(request: NextRequest): number[] {
 
 function resolveMimeType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase()
+  if (ext === ".flac") return "audio/flac"
+  if (ext === ".wav") return "audio/wav"
+  if (ext === ".ogg" || ext === ".oga") return "audio/ogg"
+  if (ext === ".opus") return "audio/opus"
+  if (ext === ".aac") return "audio/aac"
+  if (ext === ".m4a" || ext === ".mp4") return "audio/mp4"
+  if (ext === ".webm" || ext === ".weba") return "audio/webm"
   if (ext === ".png") return "image/png"
   if (ext === ".webp") return "image/webp"
   if (ext === ".gif") return "image/gif"
@@ -261,6 +289,37 @@ function transcodeToMp3(filePath: string, maxBitRateKbps: number) {
     // keep stderr drained to avoid backpressure stalling ffmpeg
   })
   return proc
+}
+
+function parseByteRange(
+  rangeHeader: string,
+  fileSize: number
+): { start: number; end: number } | null {
+  if (fileSize <= 0) return null
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim())
+  if (!match) return null
+
+  const [, startPart, endPart] = match
+  if (!startPart && !endPart) return null
+
+  if (!startPart) {
+    const suffixLength = Number(endPart)
+    if (!Number.isInteger(suffixLength) || suffixLength <= 0) return null
+    const start = Math.max(fileSize - suffixLength, 0)
+    return { start, end: fileSize - 1 }
+  }
+
+  const start = Number(startPart)
+  if (!Number.isInteger(start) || start < 0 || start >= fileSize) return null
+
+  if (!endPart) {
+    return { start, end: fileSize - 1 }
+  }
+
+  const end = Number(endPart)
+  if (!Number.isInteger(end) || end < start) return null
+  return { start, end: Math.min(end, fileSize - 1) }
 }
 
 export async function GET(request: NextRequest) {
@@ -623,6 +682,42 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    if (cmd === "getAlbumList") {
+      const type = (request.nextUrl.searchParams.get("type") || "newest").toLowerCase()
+      const size = Math.min(500, Math.max(1, parseIntParam(request.nextUrl.searchParams.get("size"), 50)))
+      const offset = Math.max(0, parseIntParam(request.nextUrl.searchParams.get("offset"), 0))
+
+      let orderBy: Array<{ createdAt?: "asc" | "desc"; year?: "asc" | "desc"; title?: "asc" | "desc" }>
+      if (type === "alphabeticalbyname") {
+        orderBy = [{ title: "asc" }]
+      } else if (type === "byyear") {
+        orderBy = [{ year: "desc" }, { title: "asc" }]
+      } else {
+        orderBy = [{ createdAt: "desc" }]
+      }
+
+      const albums = await prisma.album.findMany({
+        where: { userId: user.id },
+        orderBy,
+        skip: offset,
+        take: size,
+        include: {
+          artist: { select: { id: true, name: true } },
+        },
+      })
+
+      return response(request, {
+        albumList: {
+          album: albums.map((album) => ({
+            id: String(album.id),
+            name: album.title,
+            artist: album.artist?.name || album.albumArtist || undefined,
+            year: album.year || undefined,
+          })),
+        },
+      })
+    }
+
     if (cmd === "getPlaylist") {
       const id = Number.parseInt(request.nextUrl.searchParams.get("id") || "", 10)
       if (!Number.isInteger(id) || id <= 0) {
@@ -762,6 +857,50 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    if (cmd === "getSongsByGenre") {
+      const genre = request.nextUrl.searchParams.get("genre")?.trim() || ""
+      const count = Math.min(500, Math.max(1, parseIntParam(request.nextUrl.searchParams.get("count"), 50)))
+      const offset = Math.max(0, parseIntParam(request.nextUrl.searchParams.get("offset"), 0))
+      if (!genre) {
+        return response(request, { error: { code: 10, message: "Missing genre" } }, "failed")
+      }
+
+      const songs = await prisma.song.findMany({
+        where: { userId: user.id, genre: { equals: genre } },
+        orderBy: [{ artist: "asc" }, { album: "asc" }, { discNumber: "asc" }, { trackNumber: "asc" }],
+        skip: offset,
+        take: count,
+      })
+
+      return response(request, {
+        songsByGenre: {
+          song: songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "getTopSongs") {
+      const artistName = request.nextUrl.searchParams.get("artist")?.trim() || ""
+      if (!artistName) {
+        return response(request, { error: { code: 10, message: "Missing artist" } }, "failed")
+      }
+
+      const songs = await prisma.song.findMany({
+        where: {
+          userId: user.id,
+          artist: { equals: artistName },
+        },
+        orderBy: [{ playCount: "desc" }, { lastPlayedAt: "desc" }, { createdAt: "desc" }],
+        take: 50,
+      })
+
+      return response(request, {
+        topSongs: {
+          song: songs.map(mapSong),
+        },
+      })
+    }
+
     if (cmd === "getAlbumInfo2") {
       const id = Number.parseInt(request.nextUrl.searchParams.get("id") || "", 10)
       if (!Number.isInteger(id) || id <= 0) {
@@ -795,6 +934,32 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    if (cmd === "getArtistInfo") {
+      const id = parseNumericId(request.nextUrl.searchParams.get("id"))
+      if (!id) {
+        return response(request, { error: { code: 10, message: "Missing artist id" } }, "failed")
+      }
+
+      const artist = await prisma.artist.findFirst({
+        where: { id, userId: user.id },
+      })
+      if (!artist) {
+        return response(request, { error: { code: 70, message: "Artist not found" } }, "failed")
+      }
+
+      return response(request, {
+        artistInfo: {
+          biography: "",
+          musicBrainzId: artist.mbid || "",
+          lastFmUrl: "",
+          smallImageUrl: `/api/subsonic/rest/getCoverArt.view?id=ar-${artist.id}`,
+          mediumImageUrl: `/api/subsonic/rest/getCoverArt.view?id=ar-${artist.id}`,
+          largeImageUrl: `/api/subsonic/rest/getCoverArt.view?id=ar-${artist.id}`,
+          similarArtist: [],
+        },
+      })
+    }
+
     if (cmd === "stream") {
       const id = Number.parseInt(request.nextUrl.searchParams.get("id") || "", 10)
       if (!Number.isInteger(id) || id <= 0) {
@@ -813,6 +978,43 @@ export async function GET(request: NextRequest) {
         return new Response("Access denied", { status: 403 })
       }
 
+      let stat: Awaited<ReturnType<typeof fsPromises.stat>>
+      try {
+        stat = await fsPromises.stat(resolvedPath)
+      } catch {
+        return new Response("File not found", { status: 404 })
+      }
+
+      const fileSize = stat.size
+      const contentType = resolveMimeType(resolvedPath)
+      const range = request.headers.get("range")
+      if (range) {
+        const parsedRange = parseByteRange(range, fileSize)
+        if (!parsedRange) {
+          return new Response(null, {
+            status: 416,
+            headers: {
+              "Content-Range": `bytes */${fileSize}`,
+              "Accept-Ranges": "bytes",
+              "Content-Type": contentType,
+            },
+          })
+        }
+
+        const { start, end } = parsedRange
+        const chunkSize = end - start + 1
+        const stream = fs.createReadStream(resolvedPath, { start, end })
+        return new Response(nodeReadableToWebStream(stream), {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+            "Accept-Ranges": "bytes",
+            "Content-Length": String(chunkSize),
+            "Content-Type": contentType,
+          },
+        })
+      }
+
       const maxBitRate = parseIntParam(request.nextUrl.searchParams.get("maxBitRate"), 0)
       if (canTranscodeToBitrate(song.bitrate, maxBitRate)) {
         const transcoder = transcodeToMp3(resolvedPath, maxBitRate)
@@ -826,12 +1028,11 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      const stat = await fsPromises.stat(resolvedPath)
       const stream = fs.createReadStream(resolvedPath)
       return new Response(nodeReadableToWebStream(stream), {
         headers: {
-          "Content-Type": "audio/mpeg",
-          "Content-Length": String(stat.size),
+          "Content-Type": contentType,
+          "Content-Length": String(fileSize),
           "Accept-Ranges": "bytes",
         },
       })
@@ -1062,6 +1263,31 @@ export async function GET(request: NextRequest) {
                 },
               ]
             : [],
+        },
+      })
+    }
+
+    if (cmd === "getLyrics") {
+      const artist = request.nextUrl.searchParams.get("artist")?.trim() || ""
+      const title = request.nextUrl.searchParams.get("title")?.trim() || ""
+      if (!artist || !title) {
+        return response(request, { error: { code: 10, message: "Missing artist/title" } }, "failed")
+      }
+
+      const song = await prisma.song.findFirst({
+        where: {
+          userId: user.id,
+          artist: { equals: artist },
+          title: { equals: title },
+        },
+        select: { title: true, artist: true, lyrics: true },
+      })
+
+      return response(request, {
+        lyrics: {
+          artist,
+          title,
+          value: song?.lyrics || "",
         },
       })
     }
