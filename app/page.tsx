@@ -556,6 +556,14 @@ export default function Home() {
               {songs.length} {songs.length === 1 ? "track" : "tracks"}
             </span>
 
+            <button
+              type="button"
+              onClick={() => router.push("/library")}
+              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-zinc-800 px-3 text-xs text-zinc-300 hover:bg-zinc-900 md:text-sm"
+            >
+              Manage
+            </button>
+
             {/* Logout */}
             <button
               type="button"
