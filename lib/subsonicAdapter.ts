@@ -8,6 +8,7 @@ type SubsonicSong = {
   artist: string | null
   album: string | null
   coverPath?: string | null
+  artistId?: number | null
   duration: number | null
   trackNumber: number | null
   year: number | null
@@ -15,6 +16,7 @@ type SubsonicSong = {
   starredAt?: Date | null
   playCount?: number
   albumId?: number | null
+  createdAt?: Date | null
 }
 
 export function subsonicResponse(
@@ -68,15 +70,19 @@ export function mapSubsonicSong(song: SubsonicSong) {
 
   return {
     id: String(song.id),
+    isDir: false,
+    type: "music",
     title: normalizeSongTitle(song.title || "Unknown title"),
     artist: song.artist || "",
     album: song.album || "",
     albumId: song.albumId ? String(song.albumId) : "",
+    artistId: song.artistId ? String(song.artistId) : "",
     coverArt: coverArtId,
     duration: song.duration || 0,
     track: song.trackNumber || 0,
     year: song.year || 1970,
     genre: song.genre || "",
+    created: song.createdAt ? song.createdAt.toISOString() : undefined,
     starred: song.starredAt ? song.starredAt.toISOString() : undefined,
     playCount: song.playCount ?? 0,
   }

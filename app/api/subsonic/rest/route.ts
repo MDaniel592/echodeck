@@ -35,6 +35,19 @@ type SubsonicUser = {
   username: string
 }
 
+type SubsonicAlbum = {
+  id: number
+  title: string | null
+  albumArtist: string | null
+  year: number | null
+  coverPath: string | null
+  createdAt: Date
+  artist?: {
+    id: number
+    name: string
+  } | null
+}
+
 type AuthResult =
   | { ok: true; user: SubsonicUser }
   | { ok: false; rateLimited: false }
@@ -208,6 +221,18 @@ function extractSongIds(request: NextRequest): number[] {
     .map((raw) => Number.parseInt(raw, 10))
     .filter((id): id is number => Number.isInteger(id) && id > 0)
   return Array.from(new Set(parsed))
+}
+
+function mapAlbum(album: SubsonicAlbum) {
+  return {
+    id: String(album.id),
+    name: album.title || "",
+    artist: album.artist?.name || album.albumArtist || "",
+    artistId: album.artist?.id ? String(album.artist.id) : "",
+    year: album.year || 1970,
+    created: album.createdAt.toISOString(),
+    coverArt: `al-${album.id}`,
+  }
 }
 
 function canTranscodeToBitrate(songBitrate: number | null | undefined, maxBitRateKbps: number): boolean {
@@ -446,11 +471,7 @@ export async function GET(request: NextRequest) {
         artist: {
           id: String(artist.id),
           name: artist.name,
-          album: artist.albums.map((album) => ({
-            id: String(album.id),
-            name: album.title || "",
-            year: album.year || 1970,
-          })),
+          album: artist.albums.map(mapAlbum),
         },
       })
     }
@@ -544,9 +565,10 @@ export async function GET(request: NextRequest) {
             child: artist.albums.map((album) => ({
               id: `al-${album.id}`,
               parent: `ar-${artist.id}`,
-              title: album.title,
+              title: album.title || "",
               isDir: true,
               year: album.year || 1970,
+              created: album.createdAt.toISOString(),
             })),
           },
         })
@@ -607,10 +629,7 @@ export async function GET(request: NextRequest) {
 
       return response(request, {
         album: {
-          id: String(album.id),
-          name: album.title || "",
-          artist: album.artist?.name || album.albumArtist || "",
-          year: album.year || 1970,
+          ...mapAlbum(album),
           song: album.songs.map(mapSong),
         },
       })
@@ -833,12 +852,7 @@ export async function GET(request: NextRequest) {
 
       return response(request, {
         albumList2: {
-          album: albums.map((album) => ({
-            id: String(album.id),
-            name: album.title || "",
-            artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 1970,
-          })),
+          album: albums.map(mapAlbum),
         },
       })
     }
@@ -869,12 +883,7 @@ export async function GET(request: NextRequest) {
 
       return response(request, {
         albumList: {
-          album: albums.map((album) => ({
-            id: String(album.id),
-            name: album.title || "",
-            artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 1970,
-          })),
+          album: albums.map(mapAlbum),
         },
       })
     }
@@ -1402,12 +1411,7 @@ export async function GET(request: NextRequest) {
             id: String(artist.id),
             name: artist.name,
           })),
-          album: albums.map((album) => ({
-            id: String(album.id),
-            name: album.title || "",
-            artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 1970,
-          })),
+          album: albums.map(mapAlbum),
           song: songs.map(mapSong),
         },
       })
@@ -1449,12 +1453,7 @@ export async function GET(request: NextRequest) {
             id: String(artist.id),
             name: artist.name,
           })),
-          album: albums.map((album) => ({
-            id: String(album.id),
-            name: album.title || "",
-            artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 1970,
-          })),
+          album: albums.map(mapAlbum),
           song: songs.map(mapSong),
         },
       })
@@ -1496,12 +1495,7 @@ export async function GET(request: NextRequest) {
             id: String(artist.id),
             name: artist.name,
           })),
-          album: albums.map((album) => ({
-            id: String(album.id),
-            name: album.title || "",
-            artist: album.artist?.name || album.albumArtist || "",
-            year: album.year || 1970,
-          })),
+          album: albums.map(mapAlbum),
           song: songs.map(mapSong),
         },
       })

@@ -12,23 +12,30 @@ import {
 
 describe("subsonicAdapter", () => {
   it("maps songs to subsonic shape", () => {
+    const createdAt = new Date("2020-01-02T03:04:05.000Z")
     const mapped = mapSubsonicSong({
       id: 42,
       title: "Track",
       artist: "Artist",
       album: "Album",
+      artistId: 9,
       duration: 100,
       trackNumber: 3,
       year: 2024,
       genre: "Rock",
       albumId: 7,
+      createdAt,
       playCount: 2,
     })
 
     expect(mapped.id).toBe("42")
+    expect(mapped.isDir).toBe(false)
+    expect(mapped.type).toBe("music")
     expect(mapped.albumId).toBe("7")
+    expect(mapped.artistId).toBe("9")
     expect(mapped.coverArt).toBe("al-7")
     expect(mapped.track).toBe(3)
+    expect(mapped.created).toBe(createdAt.toISOString())
   })
 
   it("maps users to subsonic permission shape", () => {
