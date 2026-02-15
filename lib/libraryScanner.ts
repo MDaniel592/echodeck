@@ -3,6 +3,7 @@ import path from "path"
 import crypto from "crypto"
 import prisma from "./prisma"
 import { extractAudioMetadataFromFile } from "./audioMetadata"
+import { normalizeSongTitle } from "./songTitle"
 
 const AUDIO_EXTENSIONS = new Set([
   ".mp3",
@@ -22,7 +23,7 @@ const DOWNLOADS_ROOT = path.join(process.cwd(), "downloads")
 
 function toTitleFromFileName(filePath: string): string {
   const base = path.basename(filePath, path.extname(filePath))
-  return base.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim() || "Unknown title"
+  return normalizeSongTitle(base)
 }
 
 function inferArtistAndAlbum(filePath: string): { artist: string | null; album: string | null } {
@@ -228,7 +229,7 @@ export async function runLibraryScan(
           const extracted = await extractAudioMetadataFromFile(file)
           const inferred = inferArtistAndAlbum(relativePath)
           const inferredTrack = inferTrackAndTitle(relativePath)
-          const title = extracted.title || inferredTrack.title
+          const title = normalizeSongTitle(extracted.title || inferredTrack.title || "Unknown title")
           const artistName = extracted.artist || inferred.artist
           const albumName = extracted.album || inferred.album
           const albumArtist = extracted.albumArtist || artistName

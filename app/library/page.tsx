@@ -62,9 +62,20 @@ export default function LibraryManagementPage() {
       const artistsPayload = await artistsRes.json().catch(() => ({ artists: [] }))
       const albumsPayload = await albumsRes.json().catch(() => ({ albums: [] }))
 
-      setLibraries(Array.isArray(librariesPayload) ? librariesPayload : [])
+      const nextLibraries = Array.isArray(librariesPayload) ? librariesPayload : []
+      setLibraries(nextLibraries)
       setArtists(Array.isArray(artistsPayload?.artists) ? artistsPayload.artists : [])
       setAlbums(Array.isArray(albumsPayload?.albums) ? albumsPayload.albums : [])
+
+      const nextScanState: Record<number, string> = {}
+      for (const library of nextLibraries) {
+        const latest = library.scanRuns?.[0]
+        if (!latest) continue
+        if (latest.status === "queued" || latest.status === "running") {
+          nextScanState[library.id] = latest.status
+        }
+      }
+      setScanState(nextScanState)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load library metadata")
     }
@@ -72,6 +83,13 @@ export default function LibraryManagementPage() {
 
   useEffect(() => {
     void fetchAll()
+  }, [fetchAll])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchAll()
+    }, 7000)
+    return () => clearInterval(interval)
   }, [fetchAll])
 
   async function handleCreateLibrary() {

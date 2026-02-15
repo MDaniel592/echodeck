@@ -2,6 +2,7 @@ import path from "path"
 import fs from "fs/promises"
 import prisma from "./prisma"
 import { extractAudioMetadataFromFile } from "./audioMetadata"
+import { normalizeSongTitle } from "./songTitle"
 import {
   drainQueuedTaskWorkers,
   enqueueDownloadTask,
@@ -46,7 +47,7 @@ function normalizeImportBasename(filePath: string): string {
 
 function sanitizeTitleFromFilename(filePath: string, title: string): string {
   const fromPath = path.basename(filePath).replace(/\.[^.]+$/, "")
-  const candidate = (fromPath || title).replace(MALFORMED_PREFIX, "").trim()
+  const candidate = normalizeSongTitle((fromPath || title).replace(MALFORMED_PREFIX, "").trim(), title)
   return candidate || title
 }
 

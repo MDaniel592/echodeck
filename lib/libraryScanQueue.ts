@@ -75,7 +75,7 @@ export async function drainLibraryScanQueue(): Promise<number> {
 
       const queuedRuns = await prisma.libraryScanRun.findMany({
         where: { status: "queued" },
-        orderBy: { startedAt: "asc" },
+        orderBy: { id: "asc" },
         take: available,
         select: {
           id: true,

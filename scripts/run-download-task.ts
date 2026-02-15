@@ -11,6 +11,8 @@ import {
   normalizeBestAudioPreference,
   updateTaskHeartbeat,
 } from "../lib/downloadTasks"
+import { ensureArtistAlbumRefs } from "../lib/artistAlbumRefs"
+import { normalizeSongTitle } from "../lib/songTitle"
 import { runWithConcurrency } from "../lib/asyncPool"
 import { waitRandomDelay } from "../lib/downloadThrottle"
 import { downloadSpotify } from "../lib/spotdl"
@@ -229,10 +231,21 @@ async function runVideoTask(taskId: number) {
         }
 
         const thumbnail = result.thumbnail || entry.thumbnail
+        const refs = await ensureArtistAlbumRefs({
+          userId,
+          artist: result.artist || entry.artist || null,
+          album: null,
+          albumArtist: result.artist || entry.artist || null,
+          year: null,
+        })
         const songCreateData = {
           userId,
-          title: result.title || entry.title,
-          artist: result.artist || entry.artist,
+          title: normalizeSongTitle(result.title || entry.title || "Unknown title"),
+          artist: refs.artist,
+          album: refs.album,
+          albumArtist: refs.albumArtist,
+          artistId: refs.artistId,
+          albumId: refs.albumId,
           duration: result.duration ?? entry.duration,
           format: result.format,
           quality: quality === "best" ? `source:${bestAudioPreference}` : `${quality}kbps`,
@@ -344,10 +357,21 @@ async function runVideoTask(taskId: number) {
   }
 
   const thumbnail = result.thumbnail || info.thumbnail
+  const refs = await ensureArtistAlbumRefs({
+    userId,
+    artist: result.artist || info.artist || null,
+    album: null,
+    albumArtist: result.artist || info.artist || null,
+    year: null,
+  })
   const songCreateData = {
     userId,
-    title: result.title || info.title,
-    artist: result.artist || info.artist,
+    title: normalizeSongTitle(result.title || info.title || "Unknown title"),
+    artist: refs.artist,
+    album: refs.album,
+    albumArtist: refs.albumArtist,
+    artistId: refs.artistId,
+    albumId: refs.albumId,
     duration: result.duration || info.duration,
     format: result.format,
     quality: quality === "best" ? `source:${bestAudioPreference}` : `${quality}kbps`,
@@ -476,12 +500,23 @@ async function runSpotifyTask(taskId: number) {
 
     const thumbnail = result.thumbnail || spotifyThumbnail
     const normalizedSourceUrl = normalizeSpotifyTrackUrl(result.sourceUrl)
+    const refs = await ensureArtistAlbumRefs({
+      userId,
+      artist: result.artist || null,
+      album: "Singles",
+      albumArtist: result.artist || null,
+      year: null,
+    })
 
     const songSourceUrl = normalizedSourceUrl || result.sourceUrl || null
     const songCreateData = {
       userId,
-      title: result.title,
-      artist: result.artist,
+      title: normalizeSongTitle(result.title || "Unknown title"),
+      artist: refs.artist,
+      album: refs.album,
+      albumArtist: refs.albumArtist,
+      artistId: refs.artistId,
+      albumId: refs.albumId,
       duration: result.duration,
       format: result.format,
       quality: result.quality,

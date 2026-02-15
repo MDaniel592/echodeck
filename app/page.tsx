@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import DownloadForm from "./components/DownloadForm"
 import SongList from "./components/SongList"
 import Player from "./components/Player"
+import { normalizeSongTitle } from "../lib/songTitle"
 
 interface Song {
   id: number
@@ -205,7 +206,10 @@ export default function Home() {
       }
 
       if (fetchedAnyPage) {
-        setSongs(allSongs)
+        setSongs(allSongs.map((song) => ({
+          ...song,
+          title: normalizeSongTitle(song.title || "Unknown title"),
+        })))
       }
     } catch (err) {
       console.error("Failed to fetch songs:", err)

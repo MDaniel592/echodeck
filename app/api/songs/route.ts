@@ -3,6 +3,22 @@ import prisma from "../../../lib/prisma"
 import { AuthError, requireAuth } from "../../../lib/requireAuth"
 import { sanitizeSong } from "../../../lib/sanitize"
 
+function songPriority(song: {
+  source: string
+  artist: string | null
+  album: string | null
+  title: string
+  id: number
+}): number {
+  let score = 0
+  if (song.source !== "library") score += 4
+  if (song.artist && song.artist.trim()) score += 2
+  if (song.album && song.album.trim()) score += 1
+  if (song.title && !/^\d{5,}/.test(song.title.trim())) score += 1
+  score += Math.min(song.id, 10_000) / 100_000
+  return score
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
@@ -85,12 +101,27 @@ export async function GET(request: NextRequest) {
       prisma.song.count({ where }),
     ])
 
+    const bestByPath = new Map<string, (typeof songs)[number]>()
+    for (const song of songs) {
+      const key = song.filePath.trim().toLowerCase()
+      const current = bestByPath.get(key)
+      if (!current) {
+        bestByPath.set(key, song)
+        continue
+      }
+      if (songPriority(song) > songPriority(current)) {
+        bestByPath.set(key, song)
+      }
+    }
+    const dedupedSongs = Array.from(bestByPath.values())
+
     return NextResponse.json({
-      songs: songs.map(sanitizeSong),
+      songs: dedupedSongs.map(sanitizeSong),
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
+      dedupedInPage: songs.length - dedupedSongs.length,
     })
   } catch (error) {
     if (error instanceof AuthError) {

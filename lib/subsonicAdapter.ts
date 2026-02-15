@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import path from "path"
+import { normalizeSongTitle } from "./songTitle"
 
 type SubsonicSong = {
   id: number
@@ -60,7 +61,7 @@ export function subsonicResponse(
 export function mapSubsonicSong(song: SubsonicSong) {
   return {
     id: String(song.id),
-    title: song.title,
+    title: normalizeSongTitle(song.title || "Unknown title"),
     artist: song.artist || undefined,
     album: song.album || undefined,
     albumId: song.albumId ? String(song.albumId) : undefined,
