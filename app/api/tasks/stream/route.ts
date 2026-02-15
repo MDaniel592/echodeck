@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server"
 import prisma from "../../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../../lib/requireAuth"
 import { redactSensitiveText } from "../../../../lib/sanitize"
 
 export const runtime = "nodejs"
@@ -23,7 +24,7 @@ function getMaxClients(): number {
   return parsePositiveInt(process.env.TASK_SSE_MAX_CLIENTS, DEFAULT_SSE_MAX_CLIENTS)
 }
 
-async function getTasksSnapshot(request: NextRequest) {
+async function getTasksSnapshot(request: NextRequest, userId: number) {
   const searchParams = request.nextUrl.searchParams
 
   const parsedLimit = Number.parseInt(searchParams.get("limit") || "", 10)
@@ -35,7 +36,7 @@ async function getTasksSnapshot(request: NextRequest) {
   const status = searchParams.get("status") || undefined
   const source = searchParams.get("source") || undefined
 
-  const where: Record<string, unknown> = {}
+  const where: Record<string, unknown> = { userId }
   if (status) where.status = status
   if (source) where.source = source
 
@@ -71,6 +72,17 @@ async function getTasksSnapshot(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  let userId = 0
+  try {
+    const auth = await requireAuth(request)
+    userId = auth.userId
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return new Response(error.message, { status: error.status })
+    }
+    return new Response("Unauthorized", { status: 401 })
+  }
+
   if (activeClients >= getMaxClients()) {
     return new Response("Too many live task stream clients", { status: 503 })
   }
@@ -99,7 +111,7 @@ export async function GET(request: NextRequest) {
       const pushSnapshot = async () => {
         if (closed) return
         try {
-          const snapshot = await getTasksSnapshot(request)
+          const snapshot = await getTasksSnapshot(request, userId)
           const payload = JSON.stringify(snapshot)
           if (payload === lastPayload) return
           lastPayload = payload

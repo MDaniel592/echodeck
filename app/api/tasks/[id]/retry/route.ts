@@ -6,12 +6,24 @@ import {
   startDownloadTaskWorker,
   isTerminalTaskStatus,
 } from "../../../../../lib/downloadTasks"
+import { AuthError, requireAuth } from "../../../../../lib/requireAuth"
 import { redactSensitiveText } from "../../../../../lib/sanitize"
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let userId = 0
+  try {
+    const auth = await requireAuth(request)
+    userId = auth.userId
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
   const { id } = await params
   const taskId = Number.parseInt(id, 10)
   if (!Number.isInteger(taskId) || taskId <= 0) {
@@ -19,8 +31,8 @@ export async function POST(
   }
 
   try {
-    const task = await prisma.downloadTask.findUnique({
-      where: { id: taskId },
+    const task = await prisma.downloadTask.findFirst({
+      where: { id: taskId, userId },
       select: {
         id: true,
         status: true,
@@ -45,6 +57,7 @@ export async function POST(
     }
 
     const newTask = await enqueueDownloadTask({
+      userId,
       source: task.source as "youtube" | "soundcloud" | "spotify",
       sourceUrl: task.sourceUrl,
       format: task.format as "mp3" | "flac" | "wav" | "ogg",
@@ -53,7 +66,7 @@ export async function POST(
       playlistId: task.playlistId,
     })
 
-    await appendTaskEvent(newTask.id, "info", `Retried from task #${taskId}.`)
+    await appendTaskEvent(userId, newTask.id, "info", `Retried from task #${taskId}.`)
 
     try {
       await startDownloadTaskWorker(newTask.id)
@@ -68,7 +81,7 @@ export async function POST(
           workerPid: null,
         },
       })
-      await appendTaskEvent(newTask.id, "error", message)
+      await appendTaskEvent(userId, newTask.id, "error", message)
       return NextResponse.json({ error: message }, { status: 500 })
     }
 

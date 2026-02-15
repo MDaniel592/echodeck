@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
           throw new SetupAlreadyCompleteError()
         }
         return tx.user.create({
-          data: { username, passwordHash },
+          data: { username, passwordHash, role: "admin" },
         })
       })
     } catch (error) {

@@ -3,6 +3,7 @@ import fs from "fs"
 import fsPromises from "fs/promises"
 import path from "path"
 import prisma from "../../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../../lib/requireAuth"
 import { resolveSafeDownloadPathForRead } from "../../../../lib/downloadPaths"
 import { nodeReadableToWebStream } from "../../../../lib/nodeReadableToWebStream"
 
@@ -19,14 +20,15 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireAuth(request)
     const { id } = await params
     const songId = Number.parseInt(id, 10)
     if (!Number.isInteger(songId) || songId <= 0) {
       return NextResponse.json({ error: "Invalid ID" }, { status: 400 })
     }
 
-    const song = await prisma.song.findUnique({
-      where: { id: songId },
+    const song = await prisma.song.findFirst({
+      where: { id: songId, userId: auth.userId },
       select: { coverPath: true },
     })
 
@@ -60,6 +62,9 @@ export async function GET(
       },
     })
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     console.error("Error streaming cover:", error)
     return NextResponse.json(
       { error: "Failed to load cover" },

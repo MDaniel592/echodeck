@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../../lib/requireAuth"
 import { sanitizeSong } from "../../../../lib/sanitize"
 import fs from "fs/promises"
 import { resolveSafeDownloadPathForDelete } from "../../../../lib/downloadPaths"
@@ -9,6 +10,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireAuth(request)
     const { id } = await params
     const songId = Number.parseInt(id, 10)
     if (!Number.isInteger(songId) || songId <= 0) {
@@ -26,25 +28,35 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid playlist ID" }, { status: 400 })
     }
 
-    const song = await prisma.song.findUnique({ where: { id: songId } })
+    const song = await prisma.song.findFirst({ where: { id: songId, userId: auth.userId } })
     if (!song) {
       return NextResponse.json({ error: "Song not found" }, { status: 404 })
     }
 
     if (playlistId !== null) {
-      const playlist = await prisma.playlist.findUnique({ where: { id: playlistId } })
+      const playlist = await prisma.playlist.findFirst({ where: { id: playlistId, userId: auth.userId } })
       if (!playlist) {
         return NextResponse.json({ error: "Playlist not found" }, { status: 404 })
       }
     }
 
-    const updatedSong = await prisma.song.update({
-      where: { id: songId },
+    const updatedCount = await prisma.song.updateMany({
+      where: { id: songId, userId: auth.userId },
       data: { playlistId },
     })
+    if (updatedCount.count === 0) {
+      return NextResponse.json({ error: "Song not found" }, { status: 404 })
+    }
+    const updatedSong = await prisma.song.findFirst({ where: { id: songId, userId: auth.userId } })
+    if (!updatedSong) {
+      return NextResponse.json({ error: "Song not found" }, { status: 404 })
+    }
 
     return NextResponse.json(sanitizeSong(updatedSong))
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     console.error("Error updating song:", error)
     return NextResponse.json(
       { error: "Failed to update song" },
@@ -58,13 +70,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireAuth(request)
     const { id } = await params
     const songId = Number.parseInt(id, 10)
     if (!Number.isInteger(songId) || songId <= 0) {
       return NextResponse.json({ error: "Invalid ID" }, { status: 400 })
     }
 
-    const song = await prisma.song.findUnique({ where: { id: songId } })
+    const song = await prisma.song.findFirst({ where: { id: songId, userId: auth.userId } })
     if (!song) {
       return NextResponse.json({ error: "Song not found" }, { status: 404 })
     }
@@ -87,10 +100,13 @@ export async function DELETE(
     }
 
     // Delete from database
-    await prisma.song.delete({ where: { id: songId } })
+    await prisma.song.deleteMany({ where: { id: songId, userId: auth.userId } })
 
     return NextResponse.json({ success: true })
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     console.error("Error deleting song:", error)
     return NextResponse.json(
       { error: "Failed to delete song" },

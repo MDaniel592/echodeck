@@ -49,11 +49,12 @@ export function normalizeSpotifyTrackUrl(sourceUrl: string | null): string | nul
   }
 }
 
-export async function findReusableSongBySourceUrl(source: string, sourceUrl: string | null) {
+export async function findReusableSongBySourceUrl(userId: number, source: string, sourceUrl: string | null) {
   if (!sourceUrl) return null
 
   const candidates = await prisma.song.findMany({
     where: {
+      userId,
       source,
       sourceUrl,
     },

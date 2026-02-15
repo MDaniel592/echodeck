@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../../lib/requireAuth"
 import { resolveSafeDownloadPathForRead } from "../../../../lib/downloadPaths"
 import { nodeReadableToWebStream } from "../../../../lib/nodeReadableToWebStream"
 import fs from "fs"
@@ -69,13 +70,14 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireAuth(request)
     const { id } = await params
     const songId = Number.parseInt(id, 10)
     if (!Number.isInteger(songId) || songId <= 0) {
       return NextResponse.json({ error: "Invalid ID" }, { status: 400 })
     }
 
-    const song = await prisma.song.findUnique({ where: { id: songId } })
+    const song = await prisma.song.findFirst({ where: { id: songId, userId: auth.userId } })
     if (!song) {
       return NextResponse.json({ error: "Song not found" }, { status: 404 })
     }
@@ -138,6 +140,9 @@ export async function GET(
       },
     })
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     console.error("Error streaming:", error)
     return NextResponse.json(
       { error: "Failed to stream audio" },

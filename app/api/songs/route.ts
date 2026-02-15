@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../lib/requireAuth"
 import { sanitizeSong } from "../../../lib/sanitize"
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
     const searchParams = request.nextUrl.searchParams
 
     // Pagination
@@ -21,7 +23,7 @@ export async function GET(request: NextRequest) {
     const sortBy = searchParams.get("sortBy") || "createdAt"
     const sortOrder = searchParams.get("sortOrder") === "asc" ? "asc" : "desc"
 
-    const where: Record<string, unknown> = {}
+    const where: Record<string, unknown> = { userId: auth.userId }
 
     if (search) {
       where.OR = [
@@ -66,6 +68,9 @@ export async function GET(request: NextRequest) {
       totalPages: Math.ceil(total / limit),
     })
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     console.error("Error fetching songs:", error)
     return NextResponse.json(
       { error: "Failed to fetch songs" },

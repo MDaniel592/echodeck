@@ -9,9 +9,21 @@ import {
   startDownloadTaskWorker,
 } from "../../../../lib/downloadTasks"
 import prisma from "../../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../../lib/requireAuth"
 import { redactSensitiveText } from "../../../../lib/sanitize"
 
 export async function POST(request: NextRequest) {
+  let userId = 0
+  try {
+    const auth = await requireAuth(request)
+    userId = auth.userId
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
   let body: Record<string, unknown> = {}
   try {
     const parsedBody: unknown = await request.json()
@@ -48,6 +60,7 @@ export async function POST(request: NextRequest) {
   let playlistSelection: Awaited<ReturnType<typeof resolveTaskPlaylistSelection>>
   try {
     playlistSelection = await resolveTaskPlaylistSelection({
+      userId,
       playlistId: body.playlistId,
       playlistName: body.playlistName,
     })
@@ -63,6 +76,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const task = await enqueueDownloadTask({
+      userId,
       source: "spotify",
       sourceUrl: parsed.toString(),
       format,
@@ -73,7 +87,7 @@ export async function POST(request: NextRequest) {
       const message = playlistSelection.created
         ? `Created playlist "${playlistSelection.playlistName}" for this task.`
         : `Assigned task to playlist "${playlistSelection.playlistName}".`
-      await appendTaskEvent(task.id, "info", message)
+      await appendTaskEvent(userId, task.id, "info", message)
     }
 
     try {
@@ -89,7 +103,7 @@ export async function POST(request: NextRequest) {
           workerPid: null,
         },
       })
-      await appendTaskEvent(task.id, "error", message)
+      await appendTaskEvent(userId, task.id, "error", message)
       return NextResponse.json({ error: message }, { status: 500 })
     }
 

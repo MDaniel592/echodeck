@@ -7,8 +7,15 @@ datasource db {
   provider = "sqlite"
 }
 
+enum UserRole {
+  admin
+  user
+}
+
 model Song {
   id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   artist    String?
   duration  Int?
@@ -24,33 +31,50 @@ model Song {
   playlist   Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
   downloadTaskId Int?
   downloadTask DownloadTask? @relation(fields: [downloadTaskId], references: [id], onDelete: SetNull)
+  playbackSessionsCurrent PlaybackSession[] @relation("CurrentPlaybackSong")
+  playbackQueueItems PlaybackQueueItem[] @relation("QueueSong")
   createdAt DateTime @default(now())
 
-  @@unique([source, sourceUrl])
+  @@unique([userId, source, sourceUrl])
   @@index([playlistId])
   @@index([source])
   @@index([createdAt])
   @@index([title])
   @@index([artist])
+  @@index([userId, createdAt])
+  @@index([userId, playlistId])
 }
 
 model User {
   id           Int      @id @default(autoincrement())
   username     String   @unique
   passwordHash String
+  role         UserRole @default(admin)
+  disabledAt   DateTime?
   createdAt    DateTime @default(now())
+  songs        Song[]
+  playlists    Playlist[]
+  downloadTasks DownloadTask[]
+  downloadTaskEvents DownloadTaskEvent[]
+  playbackSessions PlaybackSession[]
 }
 
 model Playlist {
   id        Int      @id @default(autoincrement())
-  name      String   @unique
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
   createdAt DateTime @default(now())
   songs     Song[]
   downloadTasks DownloadTask[]
+
+  @@unique([userId, name])
 }
 
 model DownloadTask {
   id                  Int                 @id @default(autoincrement())
+  userId              Int?
+  user                User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
   source              String
   sourceUrl           String
   format              String
@@ -77,10 +101,13 @@ model DownloadTask {
 
   @@index([status])
   @@index([createdAt])
+  @@index([userId, status, createdAt])
 }
 
 model DownloadTaskEvent {
   id        Int          @id @default(autoincrement())
+  userId    Int?
+  user      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
   taskId    Int
   task      DownloadTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
   level     String
@@ -89,4 +116,37 @@ model DownloadTaskEvent {
   createdAt DateTime     @default(now())
 
   @@index([taskId])
+  @@index([userId, taskId, createdAt])
+}
+
+model PlaybackSession {
+  id            Int                 @id @default(autoincrement())
+  userId        Int
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId      String
+  currentSongId Int?
+  currentSong   Song?               @relation("CurrentPlaybackSong", fields: [currentSongId], references: [id], onDelete: SetNull)
+  positionSec   Float               @default(0)
+  isPlaying     Boolean             @default(false)
+  repeatMode    String              @default("off")
+  shuffle       Boolean             @default(false)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  queueItems    PlaybackQueueItem[]
+
+  @@unique([userId, deviceId])
+  @@index([userId, updatedAt])
+}
+
+model PlaybackQueueItem {
+  id         Int             @id @default(autoincrement())
+  sessionId  Int
+  session    PlaybackSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  songId     Int
+  song       Song            @relation("QueueSong", fields: [songId], references: [id], onDelete: Cascade)
+  sortOrder  Int
+  createdAt  DateTime        @default(now())
+
+  @@unique([sessionId, sortOrder])
+  @@index([sessionId, songId])
 }

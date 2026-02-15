@@ -71,11 +71,20 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const user = await prisma.user.findUnique({ where: { username } })
+    const user = await prisma.user.findUnique({
+      where: { username },
+      select: { id: true, passwordHash: true, disabledAt: true },
+    })
     if (!user) {
       return NextResponse.json(
         { error: "Invalid username or password" },
         { status: 401 }
+      )
+    }
+    if (user.disabledAt) {
+      return NextResponse.json(
+        { error: "Account is disabled" },
+        { status: 403 }
       )
     }
 
