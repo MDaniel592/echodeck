@@ -25,3 +25,7 @@ jobs:
         uses: wagoid/commitlint-github-action@v6
         with:
           configFile: commitlint.config.cjs
+          # This branch contains legacy commits before commitlint was introduced.
+          # Limit PR linting to the newest commits so we can enforce policy going forward
+          # without rewriting old branch history.
+          commitDepth: 5
