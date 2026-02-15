@@ -47,14 +47,25 @@ export async function POST(request: NextRequest) {
     const [moved] = reordered.splice(fromIndex, 1)
     reordered.splice(toIndex, 0, moved)
 
-    await prisma.$transaction(
-      reordered.map((item, index) =>
-        prisma.playbackQueueItem.update({
+    await prisma.$transaction(async (tx) => {
+      // Avoid transient unique collisions on @@unique([sessionId, sortOrder]) by
+      // staging all rows to a non-overlapping temporary range first.
+      const tempOffset = reordered.length + 1
+
+      for (const [index, item] of reordered.entries()) {
+        await tx.playbackQueueItem.update({
+          where: { id: item.id },
+          data: { sortOrder: index + tempOffset },
+        })
+      }
+
+      for (const [index, item] of reordered.entries()) {
+        await tx.playbackQueueItem.update({
           where: { id: item.id },
           data: { sortOrder: index },
         })
-      )
-    )
+      }
+    })
 
     return NextResponse.json({ success: true, length: reordered.length })
   } catch (error) {

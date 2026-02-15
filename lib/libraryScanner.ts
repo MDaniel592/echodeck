@@ -21,6 +21,18 @@ const AUDIO_EXTENSIONS = new Set([
 const MAX_FILES_PER_SCAN = 10_000
 const DOWNLOADS_ROOT = path.join(process.cwd(), "downloads")
 
+export function buildLibrarySourceUrl(
+  libraryId: number,
+  libraryPathId: number,
+  relativePath: string
+): string {
+  return `library:${libraryId}:${libraryPathId}:${relativePath}`
+}
+
+function buildLegacyLibrarySourceUrl(libraryId: number, relativePath: string): string {
+  return `library:${libraryId}:${relativePath}`
+}
+
 function toTitleFromFileName(filePath: string): string {
   const base = path.basename(filePath, path.extname(filePath))
   return normalizeSongTitle(base)
@@ -215,12 +227,13 @@ export async function runLibraryScan(
             continue
           }
 
-          const sourceUrl = `library:${library.id}:${relativePath}`
+          const sourceUrl = buildLibrarySourceUrl(library.id, libraryPath.id, relativePath)
+          const legacySourceUrl = buildLegacyLibrarySourceUrl(library.id, relativePath)
           const existing = await prisma.song.findFirst({
             where: {
               userId,
               source: "library",
-              sourceUrl,
+              OR: [{ sourceUrl }, { sourceUrl: legacySourceUrl }],
             },
           })
 
@@ -262,7 +275,8 @@ export async function runLibraryScan(
 
           let albumId: number | null = null
           if (albumName) {
-            const normalized = `${albumName.toLowerCase()}::${(albumArtist || "").toLowerCase()}`
+            const normalizedAlbumArtist = albumArtist || ""
+            const normalized = `${albumName.toLowerCase()}::${normalizedAlbumArtist.toLowerCase()}`
             if (albumCache.has(normalized)) {
               albumId = albumCache.get(normalized) ?? null
             } else {
@@ -271,7 +285,7 @@ export async function runLibraryScan(
                   userId_title_albumArtist: {
                     userId,
                     title: albumName,
-                    albumArtist: albumArtist || "",
+                    albumArtist: normalizedAlbumArtist,
                   },
                 },
                 update: {
@@ -281,7 +295,7 @@ export async function runLibraryScan(
                 create: {
                   userId,
                   title: albumName,
-                  albumArtist,
+                  albumArtist: normalizedAlbumArtist,
                   artistId,
                   year,
                 },
@@ -312,6 +326,7 @@ export async function runLibraryScan(
                 trackNumber,
                 artistId,
                 albumId,
+                sourceUrl,
                 filePath: destination,
                 relativePath,
                 fileMtime: fileStat.mtime,
@@ -354,7 +369,7 @@ export async function runLibraryScan(
                 libraryId: library.id,
                 fileHash: crypto
                   .createHash("sha1")
-                  .update(`${fileStat.size}:${fileStat.mtimeMs}:${relativePath}`)
+                  .update(`${fileStat.size}:${fileStat.mtimeMs}:${libraryPath.id}:${relativePath}`)
                   .digest("hex"),
               },
             })

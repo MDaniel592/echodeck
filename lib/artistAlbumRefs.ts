@@ -43,12 +43,13 @@ export async function ensureArtistAlbumRefs(input: {
   }
 
   if (resolvedAlbum) {
+    const normalizedAlbumArtist = resolvedAlbumArtist || ""
     const album = await prisma.album.upsert({
       where: {
         userId_title_albumArtist: {
           userId: input.userId,
           title: resolvedAlbum,
-          albumArtist: resolvedAlbumArtist || "",
+          albumArtist: normalizedAlbumArtist,
         },
       },
       update: {
@@ -58,7 +59,7 @@ export async function ensureArtistAlbumRefs(input: {
       create: {
         userId: input.userId,
         title: resolvedAlbum,
-        albumArtist: resolvedAlbumArtist,
+        albumArtist: normalizedAlbumArtist,
         artistId,
         year: input.year ?? null,
       },
