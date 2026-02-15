@@ -1,10 +1,16 @@
 import { NextRequest } from "next/server"
+import { GET as rootGet } from "../route"
 
 function extractCommand(segments: string[] | undefined): string | null {
   if (!segments || segments.length === 0) return null
-  const first = segments[0] || ""
-  if (!first) return null
-  return first.replace(/\.view$/i, "")
+  const normalized = segments.filter(Boolean)
+  if (normalized.length === 0) return null
+
+  // Some clients call `/rest/<command>` while others call `/<command>.view`.
+  const head = normalized[0].toLowerCase()
+  const candidate = head === "rest" && normalized.length > 1 ? normalized[1] : normalized[0]
+  if (!candidate) return null
+  return candidate.replace(/\.view$/i, "")
 }
 
 export async function GET(
@@ -20,6 +26,6 @@ export async function GET(
   const target = new URL("/api/subsonic/rest", request.url)
   target.search = request.nextUrl.search
   target.searchParams.set("command", extracted)
-
-  return Response.redirect(target, 307)
+  const forwarded = new NextRequest(target, request)
+  return rootGet(forwarded)
 }
