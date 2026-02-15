@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import fs from "fs"
 import fsPromises from "fs/promises"
+import path from "path"
 import prisma from "../../../../lib/prisma"
 import { verifyPassword } from "../../../../lib/auth"
 import { sanitizeSong } from "../../../../lib/sanitize"
@@ -84,17 +85,47 @@ function mapSong(song: {
   trackNumber: number | null
   year: number | null
   genre: string | null
+  starredAt?: Date | null
+  playCount?: number
+  albumId?: number | null
 }) {
   return {
     id: String(song.id),
     title: song.title,
     artist: song.artist || undefined,
     album: song.album || undefined,
+    albumId: song.albumId ? String(song.albumId) : undefined,
     duration: song.duration || undefined,
     track: song.trackNumber || undefined,
     year: song.year || undefined,
     genre: song.genre || undefined,
+    starred: song.starredAt ? song.starredAt.toISOString() : undefined,
+    playCount: song.playCount ?? undefined,
   }
+}
+
+function parseIntParam(value: string | null, fallback: number): number {
+  const parsed = Number.parseInt(value || "", 10)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+function extractSongIds(request: NextRequest): number[] {
+  const values = [
+    ...request.nextUrl.searchParams.getAll("id"),
+    ...request.nextUrl.searchParams.getAll("songId"),
+  ]
+  const parsed = values
+    .map((raw) => Number.parseInt(raw, 10))
+    .filter((id): id is number => Number.isInteger(id) && id > 0)
+  return Array.from(new Set(parsed))
+}
+
+function resolveMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase()
+  if (ext === ".png") return "image/png"
+  if (ext === ".webp") return "image/webp"
+  if (ext === ".gif") return "image/gif"
+  return "image/jpeg"
 }
 
 export async function GET(request: NextRequest) {
@@ -291,6 +322,182 @@ export async function GET(request: NextRequest) {
           "Accept-Ranges": "bytes",
         },
       })
+    }
+
+    if (cmd === "getCoverArt") {
+      const rawId = request.nextUrl.searchParams.get("id") || ""
+      if (!rawId) {
+        return new Response("Missing cover id", { status: 400 })
+      }
+
+      let coverPath: string | null = null
+      const numericId = Number.parseInt(rawId.replace(/^(al|ar)-/, ""), 10)
+
+      if (rawId.startsWith("al-") && Number.isInteger(numericId) && numericId > 0) {
+        const album = await prisma.album.findFirst({
+          where: { id: numericId, userId: user.id },
+          select: { coverPath: true },
+        })
+        coverPath = album?.coverPath || null
+        if (!coverPath) {
+          const song = await prisma.song.findFirst({
+            where: { userId: user.id, albumId: numericId, coverPath: { not: null } },
+            select: { coverPath: true },
+          })
+          coverPath = song?.coverPath || null
+        }
+      } else if (rawId.startsWith("ar-") && Number.isInteger(numericId) && numericId > 0) {
+        const song = await prisma.song.findFirst({
+          where: { userId: user.id, artistId: numericId, coverPath: { not: null } },
+          select: { coverPath: true },
+        })
+        coverPath = song?.coverPath || null
+      } else if (Number.isInteger(numericId) && numericId > 0) {
+        const song = await prisma.song.findFirst({
+          where: { id: numericId, userId: user.id },
+          select: { coverPath: true, albumId: true },
+        })
+        coverPath = song?.coverPath || null
+        if (!coverPath && song?.albumId) {
+          const albumSong = await prisma.song.findFirst({
+            where: { userId: user.id, albumId: song.albumId, coverPath: { not: null } },
+            select: { coverPath: true },
+          })
+          coverPath = albumSong?.coverPath || null
+        }
+      }
+
+      if (!coverPath) {
+        return new Response("Cover not found", { status: 404 })
+      }
+
+      const resolvedPath = resolveSafeDownloadPathForRead(coverPath)
+      if (!resolvedPath) {
+        return new Response("Access denied", { status: 403 })
+      }
+
+      const stat = await fsPromises.stat(resolvedPath)
+      const stream = fs.createReadStream(resolvedPath)
+      return new Response(nodeReadableToWebStream(stream), {
+        headers: {
+          "Content-Type": resolveMimeType(resolvedPath),
+          "Content-Length": String(stat.size),
+          "Cache-Control": "public, max-age=3600",
+        },
+      })
+    }
+
+    if (cmd === "search3") {
+      const query = request.nextUrl.searchParams.get("query")?.trim() || ""
+      if (!query) {
+        return response(request, {
+          searchResult3: {
+            artist: [],
+            album: [],
+            song: [],
+          },
+        })
+      }
+
+      const artistCount = parseIntParam(request.nextUrl.searchParams.get("artistCount"), 20)
+      const albumCount = parseIntParam(request.nextUrl.searchParams.get("albumCount"), 20)
+      const songCount = parseIntParam(request.nextUrl.searchParams.get("songCount"), 20)
+
+      const [artists, albums, songs] = await Promise.all([
+        prisma.artist.findMany({
+          where: { userId: user.id, name: { contains: query } },
+          orderBy: { name: "asc" },
+          take: artistCount,
+        }),
+        prisma.album.findMany({
+          where: {
+            userId: user.id,
+            OR: [
+              { title: { contains: query } },
+              { albumArtist: { contains: query } },
+            ],
+          },
+          orderBy: [{ year: "desc" }, { title: "asc" }],
+          take: albumCount,
+          include: { artist: true },
+        }),
+        prisma.song.findMany({
+          where: {
+            userId: user.id,
+            OR: [
+              { title: { contains: query } },
+              { artist: { contains: query } },
+              { album: { contains: query } },
+            ],
+          },
+          orderBy: { createdAt: "desc" },
+          take: songCount,
+        }),
+      ])
+
+      return response(request, {
+        searchResult3: {
+          artist: artists.map((artist) => ({
+            id: String(artist.id),
+            name: artist.name,
+          })),
+          album: albums.map((album) => ({
+            id: String(album.id),
+            name: album.title,
+            artist: album.artist?.name || album.albumArtist || undefined,
+            year: album.year || undefined,
+          })),
+          song: songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "star" || cmd === "unstar") {
+      const songIds = extractSongIds(request)
+      if (songIds.length === 0) {
+        return response(request, { error: { code: 10, message: "Missing song id(s)" } }, "failed")
+      }
+
+      await prisma.song.updateMany({
+        where: {
+          userId: user.id,
+          id: { in: songIds },
+        },
+        data: {
+          starredAt: cmd === "star" ? new Date() : null,
+        },
+      })
+
+      return response(request, {})
+    }
+
+    if (cmd === "scrobble") {
+      const songIds = extractSongIds(request)
+      if (songIds.length === 0) {
+        return response(request, { error: { code: 10, message: "Missing song id(s)" } }, "failed")
+      }
+
+      const submission = request.nextUrl.searchParams.get("submission") === "true"
+      const timeRaw = request.nextUrl.searchParams.get("time")
+      const timeMillis = Number.parseInt(timeRaw || "", 10)
+      const playedAt = Number.isInteger(timeMillis) && timeMillis > 0 ? new Date(timeMillis) : new Date()
+
+      await Promise.all(
+        songIds.map((songId) =>
+          prisma.song.updateMany({
+            where: {
+              userId: user.id,
+              id: songId,
+            },
+            data: {
+              lastPlayedAt: playedAt,
+              ...(submission ? { playCount: { increment: 1 } } : {}),
+            },
+          })
+        )
+      )
+
+      return response(request, {})
     }
 
     return response(request, { error: { code: 0, message: `Unsupported command: ${cmd}` } }, "failed")

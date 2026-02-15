@@ -83,7 +83,15 @@ export type LibraryScanStats = {
   errors: number
 }
 
-export async function runLibraryScan(userId: number, libraryId: number): Promise<LibraryScanStats> {
+type RunLibraryScanOptions = {
+  scanRunId?: number
+}
+
+export async function runLibraryScan(
+  userId: number,
+  libraryId: number,
+  options: RunLibraryScanOptions = {}
+): Promise<LibraryScanStats> {
   const library = await prisma.library.findFirst({
     where: { id: libraryId, userId },
     include: { paths: { where: { enabled: true } } },
@@ -92,12 +100,23 @@ export async function runLibraryScan(userId: number, libraryId: number): Promise
     throw new Error("Library not found")
   }
 
-  const scanRun = await prisma.libraryScanRun.create({
-    data: {
-      libraryId: library.id,
-      status: "running",
-    },
-  })
+  const scanRun = options.scanRunId
+    ? await prisma.libraryScanRun.update({
+        where: { id: options.scanRunId },
+        data: {
+          status: "running",
+          startedAt: new Date(),
+          finishedAt: null,
+          statsJson: null,
+          error: null,
+        },
+      })
+    : await prisma.libraryScanRun.create({
+        data: {
+          libraryId: library.id,
+          status: "running",
+        },
+      })
 
   const stats: LibraryScanStats = {
     scannedFiles: 0,

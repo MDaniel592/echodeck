@@ -90,6 +90,7 @@ Run `npm run validate-env` to check your configuration.
 | `npm run validate-env` | Verify required env vars |
 | `npm run db:push` | Sync Prisma schema to database |
 | `npm run db:backfill-ownership` | Backfill legacy rows with missing ownership |
+| `npm run db:verify-ownership` | Fail if any rows still have missing ownership |
 | `npm run db:studio` | Open Prisma Studio GUI |
 
 ## Security

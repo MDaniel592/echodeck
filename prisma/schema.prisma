@@ -14,8 +14,8 @@ enum UserRole {
 
 model Song {
   id        Int      @id @default(autoincrement())
-  userId    Int?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   artist    String?
   album     String?
@@ -26,6 +26,9 @@ model Song {
   genre     String?
   isrc      String?
   lyrics    String?
+  starredAt DateTime?
+  playCount Int      @default(0)
+  lastPlayedAt DateTime?
   bitrate   Int?
   sampleRate Int?
   channels  Int?
@@ -88,8 +91,8 @@ model User {
 
 model Playlist {
   id        Int      @id @default(autoincrement())
-  userId    Int?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   createdAt DateTime @default(now())
   songs     Song[]
@@ -100,8 +103,8 @@ model Playlist {
 
 model DownloadTask {
   id                  Int                 @id @default(autoincrement())
-  userId              Int?
-  user                User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId              Int
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   source              String
   sourceUrl           String
   format              String
@@ -133,8 +136,8 @@ model DownloadTask {
 
 model DownloadTaskEvent {
   id        Int          @id @default(autoincrement())
-  userId    Int?
-  user      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   taskId    Int
   task      DownloadTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
   level     String
@@ -180,8 +183,8 @@ model PlaybackQueueItem {
 
 model Artist {
   id        Int      @id @default(autoincrement())
-  userId    Int?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   sortName  String?
   mbid      String?
@@ -195,8 +198,8 @@ model Artist {
 
 model Album {
   id          Int      @id @default(autoincrement())
-  userId      Int?
-  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title       String
   artistId    Int?
   artist      Artist?  @relation(fields: [artistId], references: [id], onDelete: SetNull)
@@ -212,8 +215,8 @@ model Album {
 
 model Library {
   id          Int       @id @default(autoincrement())
-  userId      Int?
-  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name        String
   createdAt   DateTime  @default(now())
   songs       Song[]

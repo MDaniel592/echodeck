@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../../lib/prisma"
+import { enqueueLibraryScan, isLibraryScanActive } from "../../../../../lib/libraryScanQueue"
 import { runLibraryScan } from "../../../../../lib/libraryScanner"
 import { AuthError, requireAuth } from "../../../../../lib/requireAuth"
 
@@ -23,8 +24,33 @@ export async function POST(
       return NextResponse.json({ error: "Library not found" }, { status: 404 })
     }
 
-    const stats = await runLibraryScan(auth.userId, libraryId)
-    return NextResponse.json({ success: true, stats })
+    const mode = request.nextUrl.searchParams.get("mode") || "async"
+    if (mode === "sync") {
+      const stats = await runLibraryScan(auth.userId, libraryId)
+      return NextResponse.json({ success: true, mode: "sync", stats })
+    }
+
+    if (isLibraryScanActive(auth.userId, libraryId)) {
+      return NextResponse.json(
+        { error: "A scan is already running for this library." },
+        { status: 409 }
+      )
+    }
+
+    const queued = await enqueueLibraryScan(auth.userId, libraryId)
+    if (!queued.accepted) {
+      return NextResponse.json({ error: queued.reason || "Could not queue scan" }, { status: 409 })
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        mode: "async",
+        scanRunId: queued.scanRunId,
+        status: "queued",
+      },
+      { status: 202 }
+    )
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status })

@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "predev": "npm run db:push && npm run db:backfill-ownership",
+    "predev": "npm run db:backfill-ownership && npm run db:push && npm run db:backfill-ownership && npm run db:verify-ownership",
     "dev": "next dev",
     "build": "next build",
-    "prestart": "npm run db:push && npm run db:backfill-ownership",
+    "prestart": "npm run db:backfill-ownership && npm run db:push && npm run db:backfill-ownership && npm run db:verify-ownership",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
@@ -18,6 +18,7 @@
     "validate-env": "tsx scripts/validate-env.ts",
     "db:push": "prisma db push",
     "db:backfill-ownership": "node --import tsx scripts/backfill-ownership.ts",
+    "db:verify-ownership": "node --import tsx scripts/verify-ownership.ts",
     "db:studio": "prisma studio",
     "postinstall": "tsx scripts/setup.ts"
   },

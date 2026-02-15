@@ -11,7 +11,8 @@ async function main() {
   console.log(
     `Ownership backfill complete for user ${result.userId}: ` +
       `songs=${result.songsUpdated}, playlists=${result.playlistsUpdated}, ` +
-      `tasks=${result.tasksUpdated}, taskEvents=${result.taskEventsUpdated}`
+      `tasks=${result.tasksUpdated}, taskEvents=${result.taskEventsUpdated}, ` +
+      `artists=${result.artistsUpdated}, albums=${result.albumsUpdated}, libraries=${result.librariesUpdated}`
   )
 }
 

@@ -11,11 +11,23 @@ export async function register() {
     try {
       const { backfillOwnershipToBootstrapUser } = await import("./lib/ownershipBackfill")
       const result = await backfillOwnershipToBootstrapUser()
-      if (result.userId && (result.songsUpdated || result.playlistsUpdated || result.tasksUpdated || result.taskEventsUpdated)) {
+      if (
+        result.userId &&
+        (
+          result.songsUpdated ||
+          result.playlistsUpdated ||
+          result.tasksUpdated ||
+          result.taskEventsUpdated ||
+          result.artistsUpdated ||
+          result.albumsUpdated ||
+          result.librariesUpdated
+        )
+      ) {
         console.log(
           `Ownership backfill applied for user ${result.userId}: ` +
             `songs=${result.songsUpdated}, playlists=${result.playlistsUpdated}, ` +
-            `tasks=${result.tasksUpdated}, taskEvents=${result.taskEventsUpdated}`
+            `tasks=${result.tasksUpdated}, taskEvents=${result.taskEventsUpdated}, ` +
+            `artists=${result.artistsUpdated}, albums=${result.albumsUpdated}, libraries=${result.librariesUpdated}`
         )
       }
     } catch (error) {
@@ -34,6 +46,15 @@ export async function register() {
       const started = await drainQueuedTaskWorkers()
       if (started > 0) {
         console.log(`Started ${started} queued download task worker(s) at startup.`)
+      }
+
+      const { recoverLibraryScanQueue } = await import("./lib/libraryScanQueue")
+      const scanRecovery = await recoverLibraryScanQueue()
+      if (scanRecovery.failedRunning > 0) {
+        console.log(`Marked ${scanRecovery.failedRunning} interrupted library scan(s) as failed.`)
+      }
+      if (scanRecovery.queuedStarted > 0) {
+        console.log(`Started ${scanRecovery.queuedStarted} queued library scan(s) at startup.`)
       }
     } catch (error) {
       console.error("Failed to recover stale tasks at startup:", error)
