@@ -10,6 +10,9 @@
 - Publish multi-arch Docker images to GHCR.
 - Attach source `.tar.gz` + `.sha256` assets to the GitHub Release.
 
+If a release PR is not created, check that at least one releasable commit type
+(`feat` or `fix`) has landed on `main` since the previous release.
+
 ## Pre-merge quality gate
 Run locally (or ensure CI passes):
 
