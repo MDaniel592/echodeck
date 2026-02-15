@@ -1,11 +1,23 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../../lib/prisma"
 import { appendTaskEvent, drainQueuedTaskWorkers } from "../../../../../lib/downloadTasks"
+import { AuthError, requireAuth } from "../../../../../lib/requireAuth"
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let userId = 0
+  try {
+    const auth = await requireAuth(request)
+    userId = auth.userId
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
   const { id } = await params
   const taskId = Number.parseInt(id, 10)
   if (!Number.isInteger(taskId) || taskId <= 0) {
@@ -13,8 +25,8 @@ export async function POST(
   }
 
   try {
-    const task = await prisma.downloadTask.findUnique({
-      where: { id: taskId },
+    const task = await prisma.downloadTask.findFirst({
+      where: { id: taskId, userId },
       select: { id: true, status: true, workerPid: true, heartbeatAt: true },
     })
 
@@ -44,8 +56,8 @@ export async function POST(
       }
     }
 
-    await prisma.downloadTask.update({
-      where: { id: taskId },
+    await prisma.downloadTask.updateMany({
+      where: { id: taskId, userId },
       data: {
         status: "failed",
         errorMessage: "Cancelled by user.",
@@ -54,7 +66,7 @@ export async function POST(
       },
     })
 
-    await appendTaskEvent(taskId, "status", "Task cancelled by user.")
+    await appendTaskEvent(userId, taskId, "status", "Task cancelled by user.")
     await drainQueuedTaskWorkers()
 
     return NextResponse.json({ success: true })

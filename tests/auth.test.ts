@@ -5,7 +5,7 @@ vi.mock("jsonwebtoken", () => ({
   default: {
     sign: vi.fn(() => "mock-token"),
     verify: vi.fn((token: string) => {
-      if (token === "valid-token") return { userId: 1 }
+      if (token === "valid-token") return { userId: 1, tokenVersion: 2 }
       throw new Error("invalid token")
     }),
   },
@@ -68,7 +68,7 @@ describe("auth", () => {
     vi.stubEnv("JWT_SECRET", "test-secret")
     const { verifyToken } = await import("../lib/auth")
     const result = verifyToken("valid-token")
-    expect(result).toEqual({ userId: 1 })
+    expect(result).toEqual({ userId: 1, tokenVersion: 2 })
   })
 
   it("verifyToken returns null for invalid token", async () => {

@@ -1,10 +1,22 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../../lib/requireAuth"
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let userId = 0
+  try {
+    const auth = await requireAuth(request)
+    userId = auth.userId
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
   const { id } = await params
   const taskId = Number.parseInt(id, 10)
   if (!Number.isInteger(taskId) || taskId <= 0) {
@@ -24,8 +36,8 @@ export async function GET(
     : 200
 
   try {
-    const task = await prisma.downloadTask.findUnique({
-      where: { id: taskId },
+    const task = await prisma.downloadTask.findFirst({
+      where: { id: taskId, userId },
       include: {
         playlist: {
           select: { id: true, name: true },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../../../lib/requireAuth"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -22,7 +23,7 @@ function getMaxClients(): number {
   return parsePositiveInt(process.env.TASK_DETAIL_SSE_MAX_CLIENTS, DEFAULT_SSE_MAX_CLIENTS)
 }
 
-async function getTaskDetailSnapshot(taskId: number, request: NextRequest) {
+async function getTaskDetailSnapshot(taskId: number, request: NextRequest, userId: number) {
   const eventLimitParam = request.nextUrl.searchParams.get("eventLimit")
   const parsedEventLimit = Number.parseInt(eventLimitParam || "", 10)
   const eventLimit = Number.isInteger(parsedEventLimit)
@@ -35,8 +36,8 @@ async function getTaskDetailSnapshot(taskId: number, request: NextRequest) {
     ? Math.min(Math.max(parsedSongLimit, 1), 500)
     : 200
 
-  const task = await prisma.downloadTask.findUnique({
-    where: { id: taskId },
+  const task = await prisma.downloadTask.findFirst({
+    where: { id: taskId, userId },
     include: {
       playlist: {
         select: { id: true, name: true },
@@ -66,6 +67,17 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let userId = 0
+  try {
+    const auth = await requireAuth(request)
+    userId = auth.userId
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
   if (activeClients >= getMaxClients()) {
     return new Response("Too many live task detail stream clients", { status: 503 })
   }
@@ -76,7 +88,7 @@ export async function GET(
     return NextResponse.json({ error: "Invalid task ID" }, { status: 400 })
   }
 
-  const initial = await getTaskDetailSnapshot(taskId, request)
+  const initial = await getTaskDetailSnapshot(taskId, request, userId)
   if (!initial) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 })
   }
@@ -105,7 +117,7 @@ export async function GET(
       const pushSnapshot = async () => {
         if (closed) return
         try {
-          const snapshot = await getTaskDetailSnapshot(taskId, request)
+          const snapshot = await getTaskDetailSnapshot(taskId, request, userId)
           if (!snapshot) {
             controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: "Task not found" })}\n\n`))
             close()

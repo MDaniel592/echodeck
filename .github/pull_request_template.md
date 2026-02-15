@@ -15,6 +15,7 @@ Briefly describe the change and why it is needed.
 - [ ] `npm run lint`
 - [ ] `npm run typecheck`
 - [ ] `npm test`
+- [ ] `npm run test:integration`
 - [ ] `npm run build`
 
 ## Security and compliance checks
@@ -27,3 +28,9 @@ Briefly describe the change and why it is needed.
 ## Screenshots or logs
 
 If UI or runtime behavior changed, include evidence.
+
+## Release readiness (for `main`)
+
+- [ ] Changelog/release notes drafted (see `.github/release-template.md`)
+- [ ] Docker/runtime impact reviewed (`Dockerfile`, `docker-compose.yml`, env vars)
+- [ ] Backward compatibility and migration notes captured

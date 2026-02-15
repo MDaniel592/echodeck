@@ -33,13 +33,13 @@ export async function verifyPassword(
   return bcrypt.compare(password, hash)
 }
 
-export function createToken(userId: number): string {
-  return jwt.sign({ userId }, getJwtSecret(), { expiresIn: "7d" })
+export function createToken(userId: number, tokenVersion = 0): string {
+  return jwt.sign({ userId, tokenVersion }, getJwtSecret(), { expiresIn: "7d" })
 }
 
-export function verifyToken(token: string): { userId: number } | null {
+export function verifyToken(token: string): { userId: number; tokenVersion?: number } | null {
   try {
-    const payload = jwt.verify(token, getJwtSecret()) as { userId: number }
+    const payload = jwt.verify(token, getJwtSecret()) as { userId: number; tokenVersion?: number }
     return payload
   } catch {
     return null

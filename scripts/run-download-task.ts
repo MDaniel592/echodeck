@@ -11,17 +11,21 @@ import {
   normalizeBestAudioPreference,
   updateTaskHeartbeat,
 } from "../lib/downloadTasks"
+import { ensureArtistAlbumRefs } from "../lib/artistAlbumRefs"
+import { normalizeSongTitle } from "../lib/songTitle"
 import { runWithConcurrency } from "../lib/asyncPool"
 import { waitRandomDelay } from "../lib/downloadThrottle"
 import { downloadSpotify } from "../lib/spotdl"
 import { downloadAudio, getPlaylistInfo, getVideoInfo } from "../lib/ytdlp"
 import { redactSensitiveText } from "../lib/sanitize"
 import { findReusableSongBySourceUrl, normalizeSoundCloudUrl, normalizeSpotifyTrackUrl } from "../lib/songDedup"
+import { assignSongToPlaylistForUser } from "../lib/playlistEntries"
 
 const YOUTUBE_VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/
 const DOWNLOAD_CONCURRENCY = 4
 const DOWNLOAD_DELAY_MIN_MS = 1000
 const DOWNLOAD_DELAY_MAX_MS = 3000
+const VIDEO_INFO_TIMEOUT_MS = 15_000
 
 function extractVideoIdFromMixList(listId: string): string | null {
   if (!listId.startsWith("RD")) return null
@@ -100,6 +104,41 @@ function cleanupFileIfExists(filePath: string | null | undefined) {
   }
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms)
+    promise
+      .then((value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+      .catch((error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+  })
+}
+
+function parseYearCandidate(value: string | null | undefined): number | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const yyyymmdd = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/)
+  if (yyyymmdd) {
+    const year = Number.parseInt(yyyymmdd[1], 10)
+    return year >= 1000 && year <= 9999 ? year : null
+  }
+  const yearOnly = trimmed.match(/^(\d{4})$/)
+  if (yearOnly) {
+    const year = Number.parseInt(yearOnly[1], 10)
+    return year >= 1000 && year <= 9999 ? year : null
+  }
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) return null
+  const year = parsed.getUTCFullYear()
+  return year >= 1000 && year <= 9999 ? year : null
+}
+
 function isUniqueConstraintError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "P2002")
 }
@@ -123,23 +162,33 @@ async function updateTaskCounts(
 }
 
 async function assignSongToTaskPlaylistIfNeeded(
+  userId: number,
   song: { id: number; playlistId: number | null },
   taskPlaylistId: number | null
 ) {
-  if (taskPlaylistId === null || song.playlistId === taskPlaylistId) {
+  if (taskPlaylistId === null) {
     return
   }
 
-  await prisma.song.update({
-    where: { id: song.id },
-    data: { playlistId: taskPlaylistId },
-  })
+  if (song.playlistId === taskPlaylistId) {
+    const existing = await prisma.playlistSong.findFirst({
+      where: { playlistId: taskPlaylistId, songId: song.id },
+      select: { id: true },
+    })
+    if (existing) {
+      return
+    }
+  }
+
+  await assignSongToPlaylistForUser(userId, song.id, taskPlaylistId)
 }
 
 async function runVideoTask(taskId: number) {
   const task = await prisma.downloadTask.findUnique({ where: { id: taskId } })
   if (!task) return
+  if (!task.userId) throw new Error("Task has no owner")
 
+  const userId = task.userId
   const source = task.source
   const quality = normalizeQuality(task.quality)
   const format = normalizeFormat(task.format)
@@ -177,9 +226,9 @@ async function runVideoTask(taskId: number) {
       let shouldThrottle = false
 
       try {
-        const reusableSong = await findReusableSongBySourceUrl(source, normalizedTrackUrl)
+        const reusableSong = await findReusableSongBySourceUrl(userId, source, normalizedTrackUrl)
         if (reusableSong) {
-          await assignSongToTaskPlaylistIfNeeded(reusableSong, taskPlaylistId)
+          await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
           await logEvent(taskId, "status", `${progressPrefix} Already in library: ${reusableSong.title}`)
           await logEvent(taskId, "track", `${progressPrefix} Reused: ${reusableSong.title}`, {
             songId: reusableSong.id,
@@ -191,6 +240,13 @@ async function runVideoTask(taskId: number) {
         await logEvent(taskId, "status", `${progressPrefix} Downloading: ${entry.title}`)
         shouldThrottle = true
 
+        let entryInfo: Awaited<ReturnType<typeof getVideoInfo>> | null = null
+        try {
+          entryInfo = await withTimeout(getVideoInfo(normalizedTrackUrl), VIDEO_INFO_TIMEOUT_MS)
+        } catch {
+          // Keep playlist entry metadata as fallback when source lookup is unavailable.
+        }
+
         const result = await downloadAudio(
           { url: normalizedTrackUrl, format, quality, bestAudioPreference },
           (message) => {
@@ -198,9 +254,9 @@ async function runVideoTask(taskId: number) {
           }
         )
 
-        const existingAfterDownload = await findReusableSongBySourceUrl(source, normalizedTrackUrl)
+        const existingAfterDownload = await findReusableSongBySourceUrl(userId, source, normalizedTrackUrl)
         if (existingAfterDownload) {
-          await assignSongToTaskPlaylistIfNeeded(existingAfterDownload, taskPlaylistId)
+          await assignSongToTaskPlaylistIfNeeded(userId, existingAfterDownload, taskPlaylistId)
           cleanupFileIfExists(result.filePath)
           await logEvent(taskId, "track", `${progressPrefix} Reused: ${existingAfterDownload.title}`, {
             songId: existingAfterDownload.id,
@@ -217,11 +273,24 @@ async function runVideoTask(taskId: number) {
           // ignore
         }
 
-        const thumbnail = result.thumbnail || entry.thumbnail
+        const thumbnail = result.thumbnail || entryInfo?.thumbnail || entry.thumbnail
+        const refs = await ensureArtistAlbumRefs({
+          userId,
+          artist: result.artist || entryInfo?.artist || entry.artist || null,
+          album: entryInfo?.album || null,
+          albumArtist: result.artist || entryInfo?.albumArtist || entryInfo?.artist || entry.artist || null,
+          year: entryInfo?.year ?? null,
+        })
         const songCreateData = {
-          title: result.title || entry.title,
-          artist: result.artist || entry.artist,
-          duration: result.duration ?? entry.duration,
+          userId,
+          title: normalizeSongTitle(result.title || entryInfo?.title || entry.title || "Unknown title"),
+          artist: refs.artist,
+          album: refs.album,
+          albumArtist: refs.albumArtist,
+          artistId: refs.artistId,
+          albumId: refs.albumId,
+          year: entryInfo?.year ?? null,
+          duration: result.duration ?? entryInfo?.duration ?? entry.duration,
           format: result.format,
           quality: quality === "best" ? `source:${bestAudioPreference}` : `${quality}kbps`,
           source,
@@ -236,9 +305,9 @@ async function runVideoTask(taskId: number) {
 
         const createdSong = await prisma.song.create({ data: songCreateData }).catch(async (error) => {
           if (isUniqueConstraintError(error)) {
-            const concurrentSong = await findReusableSongBySourceUrl(source, normalizedTrackUrl)
+            const concurrentSong = await findReusableSongBySourceUrl(userId, source, normalizedTrackUrl)
             if (concurrentSong) {
-              await assignSongToTaskPlaylistIfNeeded(concurrentSong, taskPlaylistId)
+              await assignSongToTaskPlaylistIfNeeded(userId, concurrentSong, taskPlaylistId)
               cleanupFileIfExists(result.filePath)
               await logEvent(taskId, "track", `${progressPrefix} Reused: ${concurrentSong.title}`, {
                 songId: concurrentSong.id,
@@ -253,6 +322,8 @@ async function runVideoTask(taskId: number) {
         if (!createdSong) {
           return
         }
+
+        await assignSongToTaskPlaylistIfNeeded(userId, createdSong, taskPlaylistId)
 
         let song = createdSong
 
@@ -291,9 +362,9 @@ async function runVideoTask(taskId: number) {
     data: { isPlaylist: false, totalItems: 1 },
   })
 
-  const reusableSong = await findReusableSongBySourceUrl(source, normalizedUrl)
+  const reusableSong = await findReusableSongBySourceUrl(userId, source, normalizedUrl)
   if (reusableSong) {
-    await assignSongToTaskPlaylistIfNeeded(reusableSong, taskPlaylistId)
+    await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
     await logEvent(taskId, "status", "Song already downloaded. Reusing existing file.")
     await logEvent(taskId, "track", `Reused: ${reusableSong.title}`, { songId: reusableSong.id })
     await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -312,9 +383,9 @@ async function runVideoTask(taskId: number) {
     }
   )
 
-  const existingAfterDownload = await findReusableSongBySourceUrl(source, normalizedUrl)
+  const existingAfterDownload = await findReusableSongBySourceUrl(userId, source, normalizedUrl)
   if (existingAfterDownload) {
-    await assignSongToTaskPlaylistIfNeeded(existingAfterDownload, taskPlaylistId)
+    await assignSongToTaskPlaylistIfNeeded(userId, existingAfterDownload, taskPlaylistId)
     cleanupFileIfExists(result.filePath)
     await logEvent(taskId, "track", `Reused: ${existingAfterDownload.title}`, { songId: existingAfterDownload.id })
     await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -330,10 +401,23 @@ async function runVideoTask(taskId: number) {
   }
 
   const thumbnail = result.thumbnail || info.thumbnail
+  const refs = await ensureArtistAlbumRefs({
+    userId,
+    artist: result.artist || info.artist || null,
+    album: info.album || null,
+    albumArtist: result.artist || info.albumArtist || info.artist || null,
+    year: info.year ?? null,
+  })
   const songCreateData = {
-    title: result.title || info.title,
-    artist: result.artist || info.artist,
+    userId,
+    title: normalizeSongTitle(result.title || info.title || "Unknown title"),
+    artist: refs.artist,
+    album: refs.album,
+    albumArtist: refs.albumArtist,
+    artistId: refs.artistId,
+    albumId: refs.albumId,
     duration: result.duration || info.duration,
+    year: info.year ?? null,
     format: result.format,
     quality: quality === "best" ? `source:${bestAudioPreference}` : `${quality}kbps`,
     source,
@@ -348,9 +432,9 @@ async function runVideoTask(taskId: number) {
 
   const createdSong = await prisma.song.create({ data: songCreateData }).catch(async (error) => {
     if (isUniqueConstraintError(error)) {
-      const concurrentSong = await findReusableSongBySourceUrl(source, normalizedUrl)
+      const concurrentSong = await findReusableSongBySourceUrl(userId, source, normalizedUrl)
       if (concurrentSong) {
-        await assignSongToTaskPlaylistIfNeeded(concurrentSong, taskPlaylistId)
+        await assignSongToTaskPlaylistIfNeeded(userId, concurrentSong, taskPlaylistId)
         cleanupFileIfExists(result.filePath)
         await logEvent(taskId, "track", `Reused: ${concurrentSong.title}`, { songId: concurrentSong.id })
         await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -363,6 +447,8 @@ async function runVideoTask(taskId: number) {
   if (!createdSong) {
     return
   }
+
+  await assignSongToTaskPlaylistIfNeeded(userId, createdSong, taskPlaylistId)
 
   let song = createdSong
 
@@ -381,7 +467,9 @@ async function runVideoTask(taskId: number) {
 async function runSpotifyTask(taskId: number) {
   const task = await prisma.downloadTask.findUnique({ where: { id: taskId } })
   if (!task) return
+  if (!task.userId) throw new Error("Task has no owner")
 
+  const userId = task.userId
   const format = normalizeFormat(task.format)
   const taskPlaylistId = task.playlistId
   const spotifyThumbnail = await getSpotifyThumbnail(task.sourceUrl)
@@ -397,7 +485,7 @@ async function runSpotifyTask(taskId: number) {
       return normalizedCache.get(normalized) ?? null
     }
 
-    const reusable = await findReusableSongBySourceUrl("spotify", normalized)
+    const reusable = await findReusableSongBySourceUrl(userId, "spotify", normalized)
     normalizedCache.set(normalized, reusable)
     return reusable
   }
@@ -420,7 +508,7 @@ async function runSpotifyTask(taskId: number) {
           return true
         }
 
-        await assignSongToTaskPlaylistIfNeeded(reusableSong, taskPlaylistId)
+        await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
         const progressPrefix = `[${context.index + 1}/${context.total}]`
         await logEvent(taskId, "status", `${progressPrefix} Already downloaded: ${reusableSong.title}`)
         await logEvent(taskId, "track", `${progressPrefix} Reused: ${reusableSong.title}`, {
@@ -448,7 +536,7 @@ async function runSpotifyTask(taskId: number) {
   for (const result of results) {
     const reusableSong = await findReusableBySpotifyUrl(result.sourceUrl)
     if (reusableSong) {
-      await assignSongToTaskPlaylistIfNeeded(reusableSong, taskPlaylistId)
+      await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
       cleanupFileIfExists(result.filePath)
       await logEvent(taskId, "track", `Reused: ${reusableSong.title}`, { songId: reusableSong.id })
       await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -457,11 +545,24 @@ async function runSpotifyTask(taskId: number) {
 
     const thumbnail = result.thumbnail || spotifyThumbnail
     const normalizedSourceUrl = normalizeSpotifyTrackUrl(result.sourceUrl)
+    const refs = await ensureArtistAlbumRefs({
+      userId,
+      artist: result.artist || null,
+      album: result.album || "Singles",
+      albumArtist: result.albumArtist || result.artist || null,
+      year: parseYearCandidate(result.releaseDate),
+    })
 
     const songSourceUrl = normalizedSourceUrl || result.sourceUrl || null
     const songCreateData = {
-      title: result.title,
-      artist: result.artist,
+      userId,
+      title: normalizeSongTitle(result.title || "Unknown title"),
+      artist: refs.artist,
+      album: refs.album,
+      albumArtist: refs.albumArtist,
+      artistId: refs.artistId,
+      albumId: refs.albumId,
+      year: parseYearCandidate(result.releaseDate),
       duration: result.duration,
       format: result.format,
       quality: result.quality,
@@ -479,7 +580,7 @@ async function runSpotifyTask(taskId: number) {
       if (isUniqueConstraintError(error)) {
         const concurrentSong = await findReusableBySpotifyUrl(songSourceUrl)
         if (concurrentSong) {
-          await assignSongToTaskPlaylistIfNeeded(concurrentSong, taskPlaylistId)
+          await assignSongToTaskPlaylistIfNeeded(userId, concurrentSong, taskPlaylistId)
           cleanupFileIfExists(result.filePath)
           await logEvent(taskId, "track", `Reused: ${concurrentSong.title}`, { songId: concurrentSong.id })
           await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -492,6 +593,8 @@ async function runSpotifyTask(taskId: number) {
     if (!createdSong) {
       continue
     }
+
+    await assignSongToTaskPlaylistIfNeeded(userId, createdSong, taskPlaylistId)
 
     let song = createdSong
 
@@ -524,16 +627,17 @@ async function runSpotifyTask(taskId: number) {
 }
 
 let eventCounter = 0
+let activeTaskUserId = 0
 async function logEvent(
   taskId: number,
   level: "status" | "progress" | "track" | "error" | "info",
   message: string,
   payload?: unknown
 ) {
-  await appendTaskEvent(taskId, level, message, payload)
+  await appendTaskEvent(activeTaskUserId, taskId, level, message, payload)
   eventCounter += 1
   if (eventCounter % 40 === 0) {
-    await trimTaskEvents(taskId)
+    await trimTaskEvents(activeTaskUserId, taskId)
   }
 }
 
@@ -579,7 +683,7 @@ async function markTaskCompleted(taskId: number) {
 async function runTask(taskId: number) {
   const task = await prisma.downloadTask.findUnique({
     where: { id: taskId },
-    select: { id: true, source: true, status: true, startedAt: true },
+    select: { id: true, source: true, status: true, startedAt: true, userId: true },
   })
 
   if (!task) {
@@ -603,7 +707,12 @@ async function runTask(taskId: number) {
   if (claimed.count === 0) {
     return
   }
+  if (!task.userId) {
+    await markTaskFailed(taskId, "Task has no owner.")
+    return
+  }
 
+  activeTaskUserId = task.userId
   await logEvent(taskId, "status", `Worker started (PID ${process.pid}).`)
 
   // Periodic heartbeat so stale-task recovery knows we're alive

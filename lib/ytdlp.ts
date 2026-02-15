@@ -8,6 +8,9 @@ const DOWNLOADS_DIR = path.join(process.cwd(), "downloads")
 export interface VideoInfo {
   title: string
   artist: string | null
+  album: string | null
+  albumArtist: string | null
+  year: number | null
   duration: number | null
   thumbnail: string | null
   formats: string[]
@@ -66,6 +69,12 @@ interface ParsedVideoInfo {
   title?: string
   artist?: string
   uploader?: string
+  album?: string
+  album_artist?: string
+  release_year?: number | string
+  release_date?: string
+  upload_date?: string
+  timestamp?: number
   duration?: number
   thumbnail?: string
   thumbnails?: ThumbnailCandidate[]
@@ -98,6 +107,54 @@ function codecPreferenceScore(codec: string | null | undefined, preference: "aut
 
 function numeric(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
+function parseYearValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const year = Math.trunc(value)
+    return year >= 1000 && year <= 9999 ? year : null
+  }
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  // ytdlp date fields often use YYYYMMDD format.
+  const yyyymmdd = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/)
+  if (yyyymmdd) {
+    const year = Number.parseInt(yyyymmdd[1], 10)
+    return year >= 1000 && year <= 9999 ? year : null
+  }
+
+  const yearOnly = trimmed.match(/^(\d{4})$/)
+  if (yearOnly) {
+    const year = Number.parseInt(yearOnly[1], 10)
+    return year >= 1000 && year <= 9999 ? year : null
+  }
+
+  const parsedDate = new Date(trimmed)
+  if (!Number.isNaN(parsedDate.getTime())) {
+    const year = parsedDate.getUTCFullYear()
+    return year >= 1000 && year <= 9999 ? year : null
+  }
+
+  return null
+}
+
+function parseTimestampYear(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null
+  const parsedDate = new Date(value * 1000)
+  if (Number.isNaN(parsedDate.getTime())) return null
+  const year = parsedDate.getUTCFullYear()
+  return year >= 1000 && year <= 9999 ? year : null
+}
+
+function inferYearFromParsedInfo(info: ParsedVideoInfo): number | null {
+  return (
+    parseYearValue(info.release_year) ||
+    parseYearValue(info.release_date) ||
+    parseYearValue(info.upload_date) ||
+    parseTimestampYear(info.timestamp)
+  )
 }
 
 async function getPreferredAudioFormatId(
@@ -466,6 +523,9 @@ export async function getVideoInfo(url: string): Promise<VideoInfo> {
   return {
     title: primaryInfo.title || "Unknown",
     artist: primaryInfo.artist || primaryInfo.uploader || null,
+    album: primaryInfo.album || null,
+    albumArtist: primaryInfo.album_artist || primaryInfo.artist || primaryInfo.uploader || null,
+    year: inferYearFromParsedInfo(primaryInfo),
     duration: primaryInfo.duration ? Math.round(primaryInfo.duration) : null,
     thumbnail: pickBestThumbnail(thumbnailCandidates),
     formats: ["mp3", "flac", "wav", "ogg"],

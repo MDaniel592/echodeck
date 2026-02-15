@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../lib/requireAuth"
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
     const playlists = await prisma.playlist.findMany({
+      where: { userId: auth.userId },
       orderBy: { name: "asc" },
       include: { _count: { select: { songs: true } } },
     })
@@ -20,6 +23,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
     const body = await request.json()
     const name = typeof body?.name === "string" ? body.name.trim() : ""
 
@@ -32,12 +36,15 @@ export async function POST(request: NextRequest) {
     }
 
     const playlist = await prisma.playlist.create({
-      data: { name },
+      data: { userId: auth.userId, name },
       include: { _count: { select: { songs: true } } },
     })
 
     return NextResponse.json(playlist, { status: 201 })
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
       return NextResponse.json({ error: "Playlist already exists" }, { status: 409 })
     }

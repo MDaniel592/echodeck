@@ -1,5 +1,5 @@
 services:
-  music-player:
+  echodeck:
     build:
       context: .
       dockerfile: Dockerfile
@@ -15,10 +15,10 @@ services:
       SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
       SPOTIFY_AUTH_TOKEN: ${SPOTIFY_AUTH_TOKEN:-}
     volumes:
-      - music_player_data:/app/data
-      - music_player_downloads:/app/downloads
+      - echodeck_data:/app/data
+      - echodeck_downloads:/app/downloads
     restart: unless-stopped
 
 volumes:
-  music_player_data:
-  music_player_downloads:
+  echodeck_data:
+  echodeck_downloads:

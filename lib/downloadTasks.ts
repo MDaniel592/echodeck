@@ -60,6 +60,7 @@ export function normalizeBestAudioPreference(input: unknown): "auto" | "opus" | 
 }
 
 export async function resolveTaskPlaylistSelection(input: {
+  userId: number
   playlistId?: unknown
   playlistName?: unknown
 }): Promise<{ playlistId: number | null; playlistName: string | null; created: boolean }> {
@@ -81,8 +82,8 @@ export async function resolveTaskPlaylistSelection(input: {
       throw new PlaylistSelectionError("Invalid playlist selection.")
     }
 
-    const playlist = await prisma.playlist.findUnique({
-      where: { id: parsedId },
+    const playlist = await prisma.playlist.findFirst({
+      where: { id: parsedId, userId: input.userId },
       select: { id: true, name: true },
     })
     if (!playlist) {
@@ -101,7 +102,12 @@ export async function resolveTaskPlaylistSelection(input: {
   }
 
   const existing = await prisma.playlist.findUnique({
-    where: { name: playlistName },
+    where: {
+      userId_name: {
+        userId: input.userId,
+        name: playlistName,
+      },
+    },
     select: { id: true, name: true },
   })
   if (existing) {
@@ -110,14 +116,19 @@ export async function resolveTaskPlaylistSelection(input: {
 
   try {
     const createdPlaylist = await prisma.playlist.create({
-      data: { name: playlistName },
+      data: { userId: input.userId, name: playlistName },
       select: { id: true, name: true },
     })
     return { playlistId: createdPlaylist.id, playlistName: createdPlaylist.name, created: true }
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
       const conflictPlaylist = await prisma.playlist.findUnique({
-        where: { name: playlistName },
+        where: {
+          userId_name: {
+            userId: input.userId,
+            name: playlistName,
+          },
+        },
         select: { id: true, name: true },
       })
       if (conflictPlaylist) {
@@ -129,6 +140,7 @@ export async function resolveTaskPlaylistSelection(input: {
 }
 
 export async function appendTaskEvent(
+  userId: number,
   taskId: number,
   level: "status" | "progress" | "track" | "error" | "info",
   message: string,
@@ -148,6 +160,7 @@ export async function appendTaskEvent(
 
   await prisma.downloadTaskEvent.create({
     data: {
+      userId,
       taskId,
       level,
       message: safeMessage,
@@ -156,12 +169,12 @@ export async function appendTaskEvent(
   })
 }
 
-export async function trimTaskEvents(taskId: number, maxEvents = 1500) {
-  const count = await prisma.downloadTaskEvent.count({ where: { taskId } })
+export async function trimTaskEvents(userId: number, taskId: number, maxEvents = 1500) {
+  const count = await prisma.downloadTaskEvent.count({ where: { userId, taskId } })
   if (count <= maxEvents) return
 
   const toDelete = await prisma.downloadTaskEvent.findMany({
-    where: { taskId },
+    where: { userId, taskId },
     orderBy: { id: "asc" },
     take: count - maxEvents,
     select: { id: true },
@@ -175,6 +188,7 @@ export async function trimTaskEvents(taskId: number, maxEvents = 1500) {
 }
 
 export async function enqueueDownloadTask(input: {
+  userId: number
   source: DownloadTaskSource
   sourceUrl: string
   format: "mp3" | "flac" | "wav" | "ogg"
@@ -184,6 +198,7 @@ export async function enqueueDownloadTask(input: {
 }) {
   const task = await prisma.downloadTask.create({
     data: {
+      userId: input.userId,
       source: input.source,
       sourceUrl: input.sourceUrl,
       format: input.format,
@@ -199,7 +214,7 @@ export async function enqueueDownloadTask(input: {
     },
   })
 
-  await appendTaskEvent(task.id, "status", "Task queued.")
+  await appendTaskEvent(input.userId, task.id, "status", "Task queued.")
   return task
 }
 
@@ -238,6 +253,14 @@ async function claimQueuedTaskForSpawn(taskId: number): Promise<boolean> {
 }
 
 async function spawnWorkerForClaimedTask(taskId: number) {
+  const task = await prisma.downloadTask.findUnique({
+    where: { id: taskId },
+    select: { userId: true },
+  })
+  if (!task || !task.userId) {
+    throw new Error("Task not found while spawning worker")
+  }
+
   const tsxPath = path.join(
     process.cwd(),
     "node_modules",
@@ -270,6 +293,7 @@ async function spawnWorkerForClaimedTask(taskId: number) {
   })
 
   await appendTaskEvent(
+    task.userId,
     taskId,
     "status",
     workerPid ? `Background worker started (PID ${workerPid}).` : "Background worker started."
@@ -278,6 +302,12 @@ async function spawnWorkerForClaimedTask(taskId: number) {
 
 async function markTaskSpawnFailure(taskId: number, error: unknown) {
   const message = redactSensitiveText(error instanceof Error ? error.message : "Failed to start worker")
+  const task = await prisma.downloadTask.findUnique({
+    where: { id: taskId },
+    select: { userId: true },
+  })
+  if (!task?.userId) return
+
   await prisma.downloadTask.update({
     where: { id: taskId },
     data: {
@@ -287,7 +317,7 @@ async function markTaskSpawnFailure(taskId: number, error: unknown) {
       workerPid: null,
     },
   })
-  await appendTaskEvent(taskId, "error", message)
+  await appendTaskEvent(task.userId, taskId, "error", message)
 }
 
 export async function drainQueuedTaskWorkers(): Promise<number> {
@@ -324,8 +354,15 @@ export async function startDownloadTaskWorker(taskId: number): Promise<boolean> 
   const maxWorkers = getMaxConcurrentWorkers()
   const activeWorkers = await getActiveWorkerCount()
 
+  const task = await prisma.downloadTask.findUnique({
+    where: { id: taskId },
+    select: { userId: true },
+  })
+  if (!task?.userId) return false
+
   if (activeWorkers >= maxWorkers) {
     await appendTaskEvent(
+      task.userId,
       taskId,
       "status",
       `Task queued: waiting for worker slot (${activeWorkers}/${maxWorkers} active).`
@@ -369,7 +406,7 @@ const STALE_HEARTBEAT_MS = 5 * 60 * 1000 // 5 minutes without heartbeat = stale
 export async function recoverStaleTasks(): Promise<number> {
   const runningTasks = await prisma.downloadTask.findMany({
     where: { status: "running" },
-    select: { id: true, workerPid: true, heartbeatAt: true, startedAt: true },
+    select: { id: true, userId: true, workerPid: true, heartbeatAt: true, startedAt: true },
   })
 
   let recovered = 0
@@ -409,7 +446,9 @@ export async function recoverStaleTasks(): Promise<number> {
           workerPid: null,
         },
       })
-      await appendTaskEvent(task.id, "error", "Task recovered: worker process died or stopped responding.")
+      if (task.userId) {
+        await appendTaskEvent(task.userId, task.id, "error", "Task recovered: worker process died or stopped responding.")
+      }
       recovered++
     }
   }

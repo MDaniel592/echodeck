@@ -80,12 +80,15 @@ export interface SpotdlDownloadResult {
   filePath: string
   title: string
   artist: string | null
+  album: string | null
+  albumArtist: string | null
   duration: number | null
   fileSize: number | null
   format: "mp3" | "flac" | "wav" | "ogg"
   thumbnail: string | null
   sourceUrl: string | null
   quality: string | null
+  releaseDate: string | null
 }
 
 interface SpotifyTrack {
@@ -486,7 +489,7 @@ async function spotifyFetchJson<T>(pathOrUrl: string, token: string): Promise<T>
     {
       headers: {
         Authorization: `Bearer ${token}`,
-        "User-Agent": "music-player/1.0",
+        "User-Agent": "echodeck/1.0",
       },
     },
     20000
@@ -625,7 +628,7 @@ async function getSpotifyAccessToken(): Promise<string> {
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
             Authorization: `Basic ${auth}`,
-            "User-Agent": "music-player/1.0",
+            "User-Agent": "echodeck/1.0",
           },
           body: new URLSearchParams({
             grant_type: "client_credentials",
@@ -1142,7 +1145,7 @@ async function pollLucidaDownloadUrl(service: ProviderName, jobId: string): Prom
       `${LUCIDA_BASE_URL}/${service}/status/${encodeURIComponent(jobId)}`,
       {
         headers: {
-          "User-Agent": "music-player/1.0",
+          "User-Agent": "echodeck/1.0",
         },
       },
       15000
@@ -1186,7 +1189,7 @@ async function requestLucidaDownloadUrl(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "User-Agent": "music-player/1.0",
+        "User-Agent": "echodeck/1.0",
       },
       body: JSON.stringify({ query }),
     },
@@ -1234,7 +1237,7 @@ async function searchDeezer(track: SpotifyTrack): Promise<ProviderMatch | null> 
     `https://api.deezer.com/search?q=${encodeURIComponent(query)}`,
     {
       headers: {
-        "User-Agent": "music-player/1.0",
+        "User-Agent": "echodeck/1.0",
       },
     },
     20000
@@ -1326,7 +1329,7 @@ async function getTidalToken(): Promise<string | null> {
         Authorization: tidalBasicAuth,
         "x-tidal-token": tidalTokenHeader,
         "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "music-player/1.0",
+        "User-Agent": "echodeck/1.0",
       },
       body: new URLSearchParams({
         grant_type: "client_credentials",
@@ -1373,7 +1376,7 @@ async function searchTidal(track: SpotifyTrack): Promise<ProviderMatch | null> {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.api+json",
-        "User-Agent": "music-player/1.0",
+        "User-Agent": "echodeck/1.0",
       },
     },
     20000
@@ -1493,7 +1496,7 @@ async function getQobuzToken(): Promise<string | null> {
     loginUrl,
     {
       headers: {
-        "User-Agent": "music-player/1.0",
+        "User-Agent": "echodeck/1.0",
       },
     },
     15000
@@ -1529,7 +1532,7 @@ async function searchQobuz(track: SpotifyTrack): Promise<ProviderMatch | null> {
     {
       headers: {
         "X-User-Auth-Token": token,
-        "User-Agent": "music-player/1.0",
+        "User-Agent": "echodeck/1.0",
       },
     },
     20000
@@ -1629,7 +1632,7 @@ async function searchAmazon(track: SpotifyTrack): Promise<ProviderMatch | null> 
     {
       headers: {
         "x-api-key": amazonApiKey,
-        "User-Agent": "music-player/1.0",
+        "User-Agent": "echodeck/1.0",
       },
     },
     20000
@@ -1889,7 +1892,7 @@ async function downloadToFile(
     downloadUrl,
     {
       headers: {
-        "User-Agent": "music-player/1.0",
+        "User-Agent": "echodeck/1.0",
       },
       redirect: "follow",
     },
@@ -2053,12 +2056,15 @@ export async function downloadSpotify(
         filePath: downloaded.filePath,
         title: track.title,
         artist: artistLabel,
+        album: track.albumName,
+        albumArtist: artistLabel,
         duration: track.duration,
         fileSize: downloaded.fileSize,
         format,
         thumbnail: track.thumbnail || match.metadata.coverArt,
         sourceUrl: track.sourceUrl,
         quality: match.quality,
+        releaseDate: track.releaseDate,
       }
 
       onProgress(`[${index + 1}/${tracks.length}] Downloaded ${track.title}`)

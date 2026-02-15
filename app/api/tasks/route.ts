@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../lib/prisma"
+import { AuthError, requireAuth } from "../../../lib/requireAuth"
 
 export async function GET(request: NextRequest) {
+  let userId = 0
+  try {
+    const auth = await requireAuth(request)
+    userId = auth.userId
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
   const searchParams = request.nextUrl.searchParams
 
   const parsedLimit = Number.parseInt(searchParams.get("limit") || "", 10)
@@ -13,7 +25,7 @@ export async function GET(request: NextRequest) {
   const status = searchParams.get("status") || undefined
   const source = searchParams.get("source") || undefined
 
-  const where: Record<string, unknown> = {}
+  const where: Record<string, unknown> = { userId }
   if (status) where.status = status
   if (source) where.source = source
 

@@ -3,6 +3,7 @@ import { verifyToken } from "./lib/auth"
 
 const PUBLIC_PATHS = [
   "/api/auth/",
+  "/api/subsonic/",
   "/login",
   "/setup",
   "/_next/",

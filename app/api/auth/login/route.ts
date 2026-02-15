@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../lib/prisma"
 import { verifyPassword, createToken } from "../../../../lib/auth"
+import { encryptSubsonicPassword } from "../../../../lib/subsonicPassword"
 import { checkRateLimit } from "../../../../lib/rateLimit"
 
 const LOGIN_MAX_ATTEMPTS_PER_ACCOUNT = 10
@@ -71,11 +72,20 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const user = await prisma.user.findUnique({ where: { username } })
+    const user = await prisma.user.findUnique({
+      where: { username },
+      select: { id: true, passwordHash: true, subsonicPasswordEnc: true, authTokenVersion: true, disabledAt: true },
+    })
     if (!user) {
       return NextResponse.json(
         { error: "Invalid username or password" },
         { status: 401 }
+      )
+    }
+    if (user.disabledAt) {
+      return NextResponse.json(
+        { error: "Account is disabled" },
+        { status: 403 }
       )
     }
 
@@ -87,7 +97,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const token = createToken(user.id)
+    const encrypted = encryptSubsonicPassword(password)
+    if (encrypted) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { subsonicPasswordEnc: encrypted },
+      }).catch(() => {})
+    }
+
+    const token = createToken(user.id, user.authTokenVersion)
 
     const response = NextResponse.json({ success: true })
     response.cookies.set("auth_token", token, {

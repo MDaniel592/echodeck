@@ -61,7 +61,7 @@ function follow(url: string, dest: string): Promise<void> {
 function fetchJson(url: string): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     https.get(url, {
-      headers: { "User-Agent": "music-player-setup" },
+      headers: { "User-Agent": "echodeck-setup" },
     }, (res) => {
       let data = ""
       res.on("data", (chunk) => data += chunk)
