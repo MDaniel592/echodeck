@@ -6,9 +6,11 @@ import { useRouter } from "next/navigation"
 import DownloadForm from "./components/DownloadForm"
 import SongList from "./components/SongList"
 import Player from "./components/Player"
+import LibraryManagementPanel from "./components/library/LibraryManagementPanel"
 import LibraryToolbar from "./components/library/LibraryToolbar"
 import LibraryGroupFolder from "./components/library/LibraryGroupFolder"
 import SongGridCards from "./components/library/SongGridCards"
+import MaintenancePanel from "./components/admin/MaintenancePanel"
 import { normalizeSongTitle } from "../lib/songTitle"
 import { removeQueueItem, reorderQueue } from "../lib/playbackQueue"
 import { groupSongsByScope } from "../lib/songGrouping"
@@ -77,7 +79,7 @@ export default function Home() {
   const [libraries, setLibraries] = useState<LibrarySummary[]>([])
   const [currentSongId, setCurrentSongId] = useState<number | null>(null)
   const [queueIds, setQueueIds] = useState<number[]>([])
-  const [activeTab, setActiveTab] = useState<"player" | "download">("player")
+  const [activeTab, setActiveTab] = useState<"player" | "download" | "manage" | "repair">("player")
   const [scopeMode, setScopeMode] = useState<ScopeMode>("all")
   const [viewMode, setViewMode] = useState<ViewMode>("list")
   const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null)
@@ -700,7 +702,7 @@ export default function Home() {
 
             <button
               type="button"
-              onClick={() => router.push("/library")}
+              onClick={() => setActiveTab("manage")}
               className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
             >
               Manage
@@ -708,7 +710,7 @@ export default function Home() {
 
             <button
               type="button"
-              onClick={() => router.push("/admin/maintenance")}
+              onClick={() => setActiveTab("repair")}
               className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
             >
               Repair
@@ -758,6 +760,10 @@ export default function Home() {
             }}
           />
         )}
+
+        {activeTab === "manage" && <LibraryManagementPanel embedded />}
+
+        {activeTab === "repair" && <MaintenancePanel embedded />}
 
         {activeTab === "player" && (
           <div className="animate-[app-fade-in_450ms_ease-out]">
