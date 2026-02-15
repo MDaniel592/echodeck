@@ -11,6 +11,8 @@ const SUPPORTED_ACTIONS: MaintenanceAction[] = [
   "dedupe_library_imports",
   "normalize_titles",
   "fill_missing_covers",
+  "refresh_file_metadata",
+  "queue_redownload_candidates",
 ]
 
 function isSupportedAction(value: string): value is MaintenanceAction {

@@ -1,5 +1,14 @@
 import path from "path"
+import fs from "fs/promises"
 import prisma from "./prisma"
+import { extractAudioMetadataFromFile } from "./audioMetadata"
+import {
+  drainQueuedTaskWorkers,
+  enqueueDownloadTask,
+  normalizeFormat,
+  normalizeQuality,
+  startDownloadTaskWorker,
+} from "./downloadTasks"
 
 export type MaintenanceAction =
   | "attach_library"
@@ -7,6 +16,8 @@ export type MaintenanceAction =
   | "dedupe_library_imports"
   | "normalize_titles"
   | "fill_missing_covers"
+  | "refresh_file_metadata"
+  | "queue_redownload_candidates"
 
 export type MaintenanceAudit = {
   songsTotal: number
@@ -438,6 +449,250 @@ async function runFillMissingCovers(userId: number, dryRun: boolean): Promise<Ma
   }
 }
 
+async function runRefreshFileMetadata(userId: number, dryRun: boolean): Promise<MaintenanceResult> {
+  const songs = await prisma.song.findMany({
+    where: { userId },
+    select: {
+      id: true,
+      filePath: true,
+      title: true,
+      artist: true,
+      album: true,
+      albumArtist: true,
+      genre: true,
+      year: true,
+      trackNumber: true,
+      discNumber: true,
+      duration: true,
+      bitrate: true,
+      sampleRate: true,
+      channels: true,
+      isrc: true,
+      lyrics: true,
+    },
+    orderBy: { id: "asc" },
+  })
+
+  let scannedSongs = 0
+  let missingFiles = 0
+  let noMetadataFound = 0
+  let updatedSongs = 0
+  let failedSongs = 0
+
+  for (const song of songs) {
+    scannedSongs += 1
+    try {
+      await fs.access(song.filePath)
+    } catch {
+      missingFiles += 1
+      continue
+    }
+
+    const extracted = await extractAudioMetadataFromFile(song.filePath)
+    const hasAnyExtracted =
+      extracted.title !== null ||
+      extracted.artist !== null ||
+      extracted.album !== null ||
+      extracted.albumArtist !== null ||
+      extracted.genre !== null ||
+      extracted.year !== null ||
+      extracted.trackNumber !== null ||
+      extracted.discNumber !== null ||
+      extracted.duration !== null ||
+      extracted.bitrate !== null ||
+      extracted.sampleRate !== null ||
+      extracted.channels !== null ||
+      extracted.isrc !== null ||
+      extracted.lyrics !== null
+
+    if (!hasAnyExtracted) {
+      noMetadataFound += 1
+      continue
+    }
+
+    const nextTitle = extracted.title ?? song.title
+    const nextArtist = extracted.artist ?? song.artist
+    const nextAlbum = extracted.album ?? song.album
+    const nextAlbumArtist = extracted.albumArtist ?? song.albumArtist
+    const nextGenre = extracted.genre ?? song.genre
+    const nextYear = extracted.year ?? song.year
+    const nextTrack = extracted.trackNumber ?? song.trackNumber
+    const nextDisc = extracted.discNumber ?? song.discNumber
+    const nextDuration = extracted.duration ?? song.duration
+    const nextBitrate = extracted.bitrate ?? song.bitrate
+    const nextSampleRate = extracted.sampleRate ?? song.sampleRate
+    const nextChannels = extracted.channels ?? song.channels
+    const nextIsrc = extracted.isrc ?? song.isrc
+    const nextLyrics = extracted.lyrics ?? song.lyrics
+
+    const changed =
+      nextTitle !== song.title ||
+      nextArtist !== song.artist ||
+      nextAlbum !== song.album ||
+      nextAlbumArtist !== song.albumArtist ||
+      nextGenre !== song.genre ||
+      nextYear !== song.year ||
+      nextTrack !== song.trackNumber ||
+      nextDisc !== song.discNumber ||
+      nextDuration !== song.duration ||
+      nextBitrate !== song.bitrate ||
+      nextSampleRate !== song.sampleRate ||
+      nextChannels !== song.channels ||
+      nextIsrc !== song.isrc ||
+      nextLyrics !== song.lyrics
+
+    if (!changed) continue
+
+    if (!dryRun) {
+      try {
+        await prisma.song.update({
+          where: { id: song.id },
+          data: {
+            title: nextTitle,
+            artist: nextArtist,
+            album: nextAlbum,
+            albumArtist: nextAlbumArtist,
+            genre: nextGenre,
+            year: nextYear,
+            trackNumber: nextTrack,
+            discNumber: nextDisc,
+            duration: nextDuration,
+            bitrate: nextBitrate,
+            sampleRate: nextSampleRate,
+            channels: nextChannels,
+            isrc: nextIsrc,
+            lyrics: nextLyrics,
+          },
+        })
+      } catch {
+        failedSongs += 1
+        continue
+      }
+    }
+
+    updatedSongs += 1
+  }
+
+  return {
+    action: "refresh_file_metadata",
+    dryRun,
+    details: {
+      scannedSongs,
+      updatedSongs,
+      missingFiles,
+      noMetadataFound,
+      failedSongs,
+    },
+  }
+}
+
+async function runQueueRedownloadCandidates(
+  userId: number,
+  dryRun: boolean
+): Promise<MaintenanceResult> {
+  const songs = await prisma.song.findMany({
+    where: {
+      userId,
+      sourceUrl: { not: null },
+      source: { in: ["youtube", "soundcloud", "spotify"] },
+    },
+    select: {
+      id: true,
+      source: true,
+      sourceUrl: true,
+      format: true,
+      quality: true,
+      duration: true,
+      bitrate: true,
+      filePath: true,
+    },
+    orderBy: { id: "asc" },
+  })
+
+  let checkedSongs = 0
+  let missingFiles = 0
+  let missingMetadata = 0
+  let candidates = 0
+  let skippedActive = 0
+  let queuedTasks = 0
+
+  const activeTasks = await prisma.downloadTask.findMany({
+    where: {
+      userId,
+      status: { in: ["queued", "running"] },
+    },
+    select: { sourceUrl: true },
+  })
+  const activeUrls = new Set(activeTasks.map((task) => task.sourceUrl))
+
+  for (const song of songs) {
+    checkedSongs += 1
+
+    let hasFile = true
+    try {
+      await fs.access(song.filePath)
+    } catch {
+      hasFile = false
+      missingFiles += 1
+    }
+
+    const lacksTechnicalMetadata = song.duration === null || song.bitrate === null
+    if (lacksTechnicalMetadata) {
+      missingMetadata += 1
+    }
+
+    if (hasFile && !lacksTechnicalMetadata) continue
+    if (!song.sourceUrl) continue
+
+    candidates += 1
+    if (activeUrls.has(song.sourceUrl)) {
+      skippedActive += 1
+      continue
+    }
+
+    if (!dryRun) {
+      await enqueueDownloadTask({
+        userId,
+        source: song.source as "youtube" | "soundcloud" | "spotify",
+        sourceUrl: song.sourceUrl,
+        format: normalizeFormat(song.format),
+        quality: normalizeQuality(song.quality),
+      })
+      activeUrls.add(song.sourceUrl)
+    }
+    queuedTasks += 1
+  }
+
+  let startedWorkers = 0
+  if (!dryRun && queuedTasks > 0) {
+    // Try to start at least one worker immediately, then fill remaining slots.
+    const oldestQueued = await prisma.downloadTask.findFirst({
+      where: { userId, status: "queued", workerPid: null },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    })
+    if (oldestQueued) {
+      const started = await startDownloadTaskWorker(oldestQueued.id)
+      if (started) startedWorkers += 1
+    }
+    startedWorkers += await drainQueuedTaskWorkers()
+  }
+
+  return {
+    action: "queue_redownload_candidates",
+    dryRun,
+    details: {
+      checkedSongs,
+      missingFiles,
+      missingMetadata,
+      candidates,
+      skippedActive,
+      queuedTasks,
+      startedWorkers,
+    },
+  }
+}
+
 export async function runMaintenanceAction(
   userId: number,
   action: MaintenanceAction,
@@ -448,5 +703,7 @@ export async function runMaintenanceAction(
   if (action === "dedupe_library_imports") return runDedupeLibraryImports(userId, dryRun)
   if (action === "normalize_titles") return runNormalizeTitles(userId, dryRun)
   if (action === "fill_missing_covers") return runFillMissingCovers(userId, dryRun)
+  if (action === "refresh_file_metadata") return runRefreshFileMetadata(userId, dryRun)
+  if (action === "queue_redownload_candidates") return runQueueRedownloadCandidates(userId, dryRun)
   throw new Error(`Unsupported action: ${action}`)
 }

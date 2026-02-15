@@ -22,6 +22,8 @@ type MaintenanceAction =
   | "dedupe_library_imports"
   | "normalize_titles"
   | "fill_missing_covers"
+  | "refresh_file_metadata"
+  | "queue_redownload_candidates"
 
 type MaintenanceResult = {
   action: MaintenanceAction
@@ -54,6 +56,16 @@ const ACTIONS: Array<{ id: MaintenanceAction; label: string; description: string
     id: "fill_missing_covers",
     label: "Fill Missing Covers",
     description: "Reuse known cover paths from matching songs when coverPath is missing.",
+  },
+  {
+    id: "refresh_file_metadata",
+    label: "Refresh File Metadata",
+    description: "Run ffprobe on local files and update title/tag/technical metadata fields from audio tags.",
+  },
+  {
+    id: "queue_redownload_candidates",
+    label: "Queue Re-download Candidates",
+    description: "Queue download tasks for tracks with missing files or weak technical metadata.",
   },
 ]
 
