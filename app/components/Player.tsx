@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, type CSSProperties } from "react"
+import { queuePositionLabel } from "../../lib/playbackQueue"
 
 interface Song {
   id: number
@@ -625,7 +626,7 @@ export default function Player({
     (shuffleEnabled
       ? songs.length > 1 || repeatMode === "all"
       : currentIndex < songs.length - 1 || repeatMode === "all")
-  const queuePositionLabel = `${currentIndex >= 0 ? currentIndex + 1 : 0}/${songs.length}`
+  const queuePosition = queuePositionLabel(currentIndex, songs.length)
 
   useEffect(() => {
     if (typeof document === "undefined") return
@@ -1482,7 +1483,7 @@ export default function Player({
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm font-semibold text-zinc-100">Queue</h3>
-                        <span className="text-xs font-medium tabular-nums text-zinc-400">{queuePositionLabel}</span>
+                        <span className="text-xs font-medium tabular-nums text-zinc-400">{queuePosition}</span>
                       </div>
                     </div>
                     <button
@@ -1707,7 +1708,7 @@ export default function Player({
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="text-base font-semibold text-zinc-100">Queue</h3>
-                      <span className="text-sm font-medium tabular-nums text-zinc-300">{queuePositionLabel}</span>
+                      <span className="text-sm font-medium tabular-nums text-zinc-300">{queuePosition}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">

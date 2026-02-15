@@ -7,6 +7,8 @@ import DownloadForm from "./components/DownloadForm"
 import SongList from "./components/SongList"
 import Player from "./components/Player"
 import { normalizeSongTitle } from "../lib/songTitle"
+import { removeQueueItem, reorderQueue } from "../lib/playbackQueue"
+import { groupSongsByScope } from "../lib/songGrouping"
 
 interface Song {
   id: number
@@ -585,37 +587,10 @@ export default function Home() {
     [libraries]
   )
 
-  const groupedVisibleSongs = useMemo(() => {
-    if (scopeMode === "all") {
-      return [{ key: "all", label: "All Songs", songs: visibleSongs }]
-    }
-
-    const groups = new Map<string, { key: string; label: string; songs: Song[] }>()
-    for (const song of visibleSongs) {
-      if (scopeMode === "playlists") {
-        const key = song.playlistId === null ? "playlist-none" : `playlist-${song.playlistId}`
-        const label = song.playlistId === null
-          ? "Unassigned Playlist"
-          : (playlistNameById.get(song.playlistId) ?? `Playlist #${song.playlistId}`)
-        if (!groups.has(key)) groups.set(key, { key, label, songs: [] })
-        groups.get(key)!.songs.push(song)
-        continue
-      }
-
-      const key = song.libraryId == null ? "library-none" : `library-${song.libraryId}`
-      const label = song.libraryId == null
-        ? "Unassigned Library"
-        : (libraryNameById.get(song.libraryId) ?? `Library #${song.libraryId}`)
-      if (!groups.has(key)) groups.set(key, { key, label, songs: [] })
-      groups.get(key)!.songs.push(song)
-    }
-
-    return Array.from(groups.values()).sort((a, b) => {
-      if (a.label === "Unassigned Playlist" || a.label === "Unassigned Library") return 1
-      if (b.label === "Unassigned Playlist" || b.label === "Unassigned Library") return -1
-      return a.label.localeCompare(b.label)
-    })
-  }, [scopeMode, visibleSongs, playlistNameById, libraryNameById])
+  const groupedVisibleSongs = useMemo(
+    () => groupSongsByScope(visibleSongs, scopeMode, playlistNameById, libraryNameById),
+    [scopeMode, visibleSongs, playlistNameById, libraryNameById]
+  )
 
   useEffect(() => {
     if (scopeMode === "all") {
@@ -671,27 +646,13 @@ export default function Home() {
   }
 
   function handleQueueReorder(fromIndex: number, toIndex: number) {
-    setQueueIds((prev) => {
-      if (fromIndex < 0 || toIndex < 0 || fromIndex >= prev.length || toIndex >= prev.length) return prev
-      if (fromIndex === toIndex) return prev
-      const next = [...prev]
-      const [moved] = next.splice(fromIndex, 1)
-      next.splice(toIndex, 0, moved)
-      return next
-    })
+    setQueueIds((prev) => reorderQueue(prev, fromIndex, toIndex))
   }
 
   function handleQueueRemove(songId: number, index: number) {
     setQueueIds((prev) => {
-      if (index < 0 || index >= prev.length) return prev
-      const next = [...prev]
-      if (next[index] !== songId) {
-        const fallbackIndex = next.indexOf(songId)
-        if (fallbackIndex === -1) return prev
-        next.splice(fallbackIndex, 1)
-      } else {
-        next.splice(index, 1)
-      }
+      const next = removeQueueItem(prev, songId, index)
+      if (next === prev) return prev
       if (currentSongId !== null && !next.includes(currentSongId)) {
         setCurrentSongId(next[0] ?? null)
       }
