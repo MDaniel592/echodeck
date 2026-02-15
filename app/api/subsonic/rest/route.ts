@@ -250,6 +250,58 @@ function parseIntParam(value: string | null, fallback: number): number {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback
 }
 
+async function buildSearchResult(
+  userId: number,
+  query: string,
+  artistCount: number,
+  albumCount: number,
+  songCount: number,
+  artistOffset: number,
+  albumOffset: number,
+  songOffset: number
+) {
+  const [artists, albums, songs] = await Promise.all([
+    prisma.artist.findMany({
+      where: { userId, name: { contains: query } },
+      orderBy: { name: "asc" },
+      skip: artistOffset,
+      take: artistCount,
+    }),
+    prisma.album.findMany({
+      where: {
+        userId,
+        OR: [
+          { title: { contains: query } },
+          { albumArtist: { contains: query } },
+        ],
+      },
+      orderBy: [{ year: "desc" }, { title: "asc" }],
+      skip: albumOffset,
+      take: albumCount,
+      include: { artist: true },
+    }),
+    prisma.song.findMany({
+      where: {
+        userId,
+        OR: [
+          { title: { contains: query } },
+          { artist: { contains: query } },
+          { album: { contains: query } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      skip: songOffset,
+      take: songCount,
+    }),
+  ])
+
+  return {
+    artists,
+    albums,
+    songs,
+  }
+}
+
 function extractSongIds(request: NextRequest): number[] {
   const values = [
     ...request.nextUrl.searchParams.getAll("id"),
@@ -972,6 +1024,39 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    if (cmd === "getAlbumInfo") {
+      const id = Number.parseInt(request.nextUrl.searchParams.get("id") || "", 10)
+      if (!Number.isInteger(id) || id <= 0) {
+        return response(request, { error: { code: 10, message: "Missing album id" } }, "failed")
+      }
+
+      const album = await prisma.album.findFirst({
+        where: { id, userId: user.id },
+        include: {
+          songs: {
+            select: { duration: true },
+          },
+        },
+      })
+      if (!album) {
+        return response(request, { error: { code: 70, message: "Album not found" } }, "failed")
+      }
+
+      const songCount = album.songs.length
+      const duration = album.songs.reduce((sum, song) => sum + (song.duration || 0), 0)
+      return response(request, {
+        albumInfo: {
+          notes: "",
+          musicBrainzId: "",
+          smallImageUrl: "",
+          mediumImageUrl: "",
+          largeImageUrl: "",
+          songCount,
+          duration,
+        },
+      })
+    }
+
     if (cmd === "getArtistInfo") {
       const id = parseNumericId(request.nextUrl.searchParams.get("id"))
       if (!id) {
@@ -1158,43 +1243,113 @@ export async function GET(request: NextRequest) {
       const albumOffset = parseIntParam(request.nextUrl.searchParams.get("albumOffset"), 0)
       const songOffset = parseIntParam(request.nextUrl.searchParams.get("songOffset"), 0)
 
-      const [artists, albums, songs] = await Promise.all([
-        prisma.artist.findMany({
-          where: { userId: user.id, name: { contains: query } },
-          orderBy: { name: "asc" },
-          skip: artistOffset,
-          take: artistCount,
-        }),
-        prisma.album.findMany({
-          where: {
-            userId: user.id,
-            OR: [
-              { title: { contains: query } },
-              { albumArtist: { contains: query } },
-            ],
-          },
-          orderBy: [{ year: "desc" }, { title: "asc" }],
-          skip: albumOffset,
-          take: albumCount,
-          include: { artist: true },
-        }),
-        prisma.song.findMany({
-          where: {
-            userId: user.id,
-            OR: [
-              { title: { contains: query } },
-              { artist: { contains: query } },
-              { album: { contains: query } },
-            ],
-          },
-          orderBy: { createdAt: "desc" },
-          skip: songOffset,
-          take: songCount,
-        }),
-      ])
+      const { artists, albums, songs } = await buildSearchResult(
+        user.id,
+        query,
+        artistCount,
+        albumCount,
+        songCount,
+        artistOffset,
+        albumOffset,
+        songOffset
+      )
 
       return response(request, {
         searchResult3: {
+          artist: artists.map((artist) => ({
+            id: String(artist.id),
+            name: artist.name,
+          })),
+          album: albums.map((album) => ({
+            id: String(album.id),
+            name: album.title,
+            artist: album.artist?.name || album.albumArtist || undefined,
+            year: album.year || undefined,
+          })),
+          song: songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "search2") {
+      const query = request.nextUrl.searchParams.get("query")?.trim() || ""
+      if (!query) {
+        return response(request, {
+          searchResult2: {
+            artist: [],
+            album: [],
+            song: [],
+          },
+        })
+      }
+
+      const artistCount = parseIntParam(request.nextUrl.searchParams.get("artistCount"), 20)
+      const albumCount = parseIntParam(request.nextUrl.searchParams.get("albumCount"), 20)
+      const songCount = parseIntParam(request.nextUrl.searchParams.get("songCount"), 20)
+      const artistOffset = parseIntParam(request.nextUrl.searchParams.get("artistOffset"), 0)
+      const albumOffset = parseIntParam(request.nextUrl.searchParams.get("albumOffset"), 0)
+      const songOffset = parseIntParam(request.nextUrl.searchParams.get("songOffset"), 0)
+
+      const { artists, albums, songs } = await buildSearchResult(
+        user.id,
+        query,
+        artistCount,
+        albumCount,
+        songCount,
+        artistOffset,
+        albumOffset,
+        songOffset
+      )
+
+      return response(request, {
+        searchResult2: {
+          artist: artists.map((artist) => ({
+            id: String(artist.id),
+            name: artist.name,
+          })),
+          album: albums.map((album) => ({
+            id: String(album.id),
+            name: album.title,
+            artist: album.artist?.name || album.albumArtist || undefined,
+            year: album.year || undefined,
+          })),
+          song: songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "search") {
+      const query = request.nextUrl.searchParams.get("query")?.trim() || ""
+      if (!query) {
+        return response(request, {
+          searchResult: {
+            artist: [],
+            album: [],
+            song: [],
+          },
+        })
+      }
+
+      const artistCount = parseIntParam(request.nextUrl.searchParams.get("artistCount"), 20)
+      const albumCount = parseIntParam(request.nextUrl.searchParams.get("albumCount"), 20)
+      const songCount = parseIntParam(request.nextUrl.searchParams.get("songCount"), 20)
+      const artistOffset = parseIntParam(request.nextUrl.searchParams.get("artistOffset"), 0)
+      const albumOffset = parseIntParam(request.nextUrl.searchParams.get("albumOffset"), 0)
+      const songOffset = parseIntParam(request.nextUrl.searchParams.get("songOffset"), 0)
+
+      const { artists, albums, songs } = await buildSearchResult(
+        user.id,
+        query,
+        artistCount,
+        albumCount,
+        songCount,
+        artistOffset,
+        albumOffset,
+        songOffset
+      )
+
+      return response(request, {
+        searchResult: {
           artist: artists.map((artist) => ({
             id: String(artist.id),
             name: artist.name,
@@ -1271,6 +1426,72 @@ export async function GET(request: NextRequest) {
       return response(request, {
         starred2: {
           song: songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "getStarred") {
+      const songs = await prisma.song.findMany({
+        where: {
+          userId: user.id,
+          starredAt: { not: null },
+        },
+        orderBy: [{ starredAt: "desc" }, { id: "desc" }],
+        take: 500,
+      })
+
+      return response(request, {
+        starred: {
+          song: songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "getSimilarSongs2" || cmd === "getSimilarSongs") {
+      const id = parseNumericId(request.nextUrl.searchParams.get("id"))
+      const count = Math.min(100, Math.max(1, parseIntParam(request.nextUrl.searchParams.get("count"), 50)))
+      if (!id) {
+        return response(request, { error: { code: 10, message: "Missing song id" } }, "failed")
+      }
+
+      const sourceSong = await prisma.song.findFirst({
+        where: { id, userId: user.id },
+        select: { artist: true, album: true },
+      })
+      if (!sourceSong) {
+        return response(request, { error: { code: 70, message: "Song not found" } }, "failed")
+      }
+
+      const similarityFilters: Array<{ artist: string } | { album: string }> = []
+      if (sourceSong.artist) {
+        similarityFilters.push({ artist: sourceSong.artist })
+      }
+      if (sourceSong.album) {
+        similarityFilters.push({ album: sourceSong.album })
+      }
+
+      if (similarityFilters.length === 0) {
+        return response(request, {
+          [cmd === "getSimilarSongs" ? "similarSongs" : "similarSongs2"]: {
+            song: [],
+          },
+        })
+      }
+
+      const similarSongs = await prisma.song.findMany({
+        where: {
+          userId: user.id,
+          id: { not: id },
+          OR: similarityFilters,
+        },
+        orderBy: [{ playCount: "desc" }, { createdAt: "desc" }],
+        take: count,
+      })
+
+      const payloadKey = cmd === "getSimilarSongs" ? "similarSongs" : "similarSongs2"
+      return response(request, {
+        [payloadKey]: {
+          song: similarSongs.map(mapSong),
         },
       })
     }
