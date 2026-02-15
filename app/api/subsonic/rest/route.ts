@@ -264,6 +264,88 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    if (cmd === "getNowPlaying") {
+      const songs = await prisma.song.findMany({
+        where: {
+          userId: user.id,
+          lastPlayedAt: { not: null },
+        },
+        orderBy: { lastPlayedAt: "desc" },
+        take: 25,
+      })
+
+      return response(request, {
+        nowPlaying: {
+          entry: songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "getRandomSongs") {
+      const size = Math.min(500, Math.max(1, parseIntParam(request.nextUrl.searchParams.get("size"), 50)))
+      const total = await prisma.song.count({ where: { userId: user.id } })
+      if (total === 0) {
+        return response(request, { randomSongs: { song: [] } })
+      }
+
+      const take = Math.min(size, total)
+      const randomIds = await prisma.song.findMany({
+        where: { userId: user.id },
+        orderBy: { id: "asc" },
+        select: { id: true },
+      })
+      const shuffled = randomIds
+        .map((row) => row.id)
+        .sort(() => Math.random() - 0.5)
+        .slice(0, take)
+
+      const songs = await prisma.song.findMany({
+        where: { userId: user.id, id: { in: shuffled } },
+      })
+
+      return response(request, {
+        randomSongs: {
+          song: songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "getAlbumList2") {
+      const type = (request.nextUrl.searchParams.get("type") || "newest").toLowerCase()
+      const size = Math.min(500, Math.max(1, parseIntParam(request.nextUrl.searchParams.get("size"), 50)))
+      const offset = Math.max(0, parseIntParam(request.nextUrl.searchParams.get("offset"), 0))
+
+      let orderBy: Array<{ createdAt?: "asc" | "desc"; year?: "asc" | "desc"; title?: "asc" | "desc" }>
+      if (type === "alphabeticalbyname") {
+        orderBy = [{ title: "asc" }]
+      } else if (type === "byyear") {
+        orderBy = [{ year: "desc" }, { title: "asc" }]
+      } else {
+        orderBy = [{ createdAt: "desc" }]
+      }
+
+      const albums = await prisma.album.findMany({
+        where: { userId: user.id },
+        orderBy,
+        skip: offset,
+        take: size,
+        include: {
+          artist: { select: { id: true, name: true } },
+        },
+      })
+
+      return response(request, {
+        albumList2: {
+          album: albums.map((album) => ({
+            id: String(album.id),
+            name: album.title,
+            artist: album.artist?.name || album.albumArtist || undefined,
+            year: album.year || undefined,
+          })),
+        },
+      })
+    }
+
     if (cmd === "getPlaylist") {
       const id = Number.parseInt(request.nextUrl.searchParams.get("id") || "", 10)
       if (!Number.isInteger(id) || id <= 0) {
