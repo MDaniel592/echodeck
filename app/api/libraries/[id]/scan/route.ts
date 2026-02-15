@@ -30,7 +30,7 @@ export async function POST(
       return NextResponse.json({ success: true, mode: "sync", stats })
     }
 
-    if (isLibraryScanActive(auth.userId, libraryId)) {
+    if (await isLibraryScanActive(auth.userId, libraryId)) {
       return NextResponse.json(
         { error: "A scan is already running for this library." },
         { status: 409 }

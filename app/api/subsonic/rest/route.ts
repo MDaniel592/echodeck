@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import fs from "fs"
 import fsPromises from "fs/promises"
 import path from "path"
+import crypto from "crypto"
 import prisma from "../../../../lib/prisma"
 import { verifyPassword } from "../../../../lib/auth"
 import { checkRateLimit } from "../../../../lib/rateLimit"
@@ -35,29 +36,67 @@ function getClientIdentifier(request: NextRequest): string {
 
 function response(request: NextRequest, payload: Record<string, unknown>, status = "ok") {
   const format = request.nextUrl.searchParams.get("f") || "json"
-  const body = {
-    "subsonic-response": {
-      status,
-      version: "1.16.1",
-      type: "EchoDeck",
-      serverVersion: "1.0.0",
-      ...payload,
-    },
+  const root = {
+    status,
+    version: "1.16.1",
+    type: "EchoDeck",
+    serverVersion: "1.0.0",
+    ...payload,
   }
 
-  if (format !== "json") {
+  if (format === "json") {
+    return NextResponse.json({
+      "subsonic-response": root,
+    })
+  }
+
+  if (format !== "xml") {
     return NextResponse.json(
       {
         "subsonic-response": {
-          ...body["subsonic-response"],
-          error: { code: 0, message: "Only JSON format is supported" },
+          ...root,
+          error: { code: 0, message: "Unsupported format. Use json or xml." },
         },
       },
       { status: 400 }
     )
   }
 
-  return NextResponse.json(body)
+  const attrs = `status="${xmlEscape(status)}" version="1.16.1" type="EchoDeck" serverVersion="1.0.0"`
+  const xmlBody = objectToXml(payload)
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<subsonic-response ${attrs}>${xmlBody}</subsonic-response>`
+
+  return new Response(xml, {
+    headers: { "Content-Type": "application/xml; charset=utf-8" },
+  })
+}
+
+function xmlEscape(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;")
+}
+
+function objectToXml(value: unknown, keyName?: string): string {
+  if (value === null || value === undefined) return ""
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => objectToXml(entry, keyName)).join("")
+  }
+
+  if (typeof value === "object") {
+    const objectEntries = Object.entries(value as Record<string, unknown>)
+      .map(([key, val]) => objectToXml(val, key))
+      .join("")
+    if (!keyName) return objectEntries
+    return `<${keyName}>${objectEntries}</${keyName}>`
+  }
+
+  if (!keyName) return ""
+  return `<${keyName}>${xmlEscape(String(value))}</${keyName}>`
 }
 
 function decodePassword(raw: string): string {
@@ -71,7 +110,9 @@ function decodePassword(raw: string): string {
 async function authenticate(request: NextRequest): Promise<SubsonicUser | null> {
   const username = request.nextUrl.searchParams.get("u")?.trim() || ""
   const passwordRaw = request.nextUrl.searchParams.get("p") || ""
-  if (!username || !passwordRaw) return null
+  const tokenRaw = request.nextUrl.searchParams.get("t") || ""
+  const salt = request.nextUrl.searchParams.get("s") || ""
+  if (!username || (!passwordRaw && !(tokenRaw && salt))) return null
 
   const client = getClientIdentifier(request)
   const perClientLimit = checkRateLimit(
@@ -95,12 +136,22 @@ async function authenticate(request: NextRequest): Promise<SubsonicUser | null> 
 
   const user = await prisma.user.findUnique({
     where: { username },
-    select: { id: true, username: true, passwordHash: true, disabledAt: true },
+    select: { id: true, username: true, passwordHash: true, subsonicToken: true, disabledAt: true },
   })
   if (!user || user.disabledAt) return null
 
-  const password = decodePassword(passwordRaw)
-  const valid = await verifyPassword(password, user.passwordHash)
+  let valid = false
+  if (passwordRaw) {
+    const password = decodePassword(passwordRaw)
+    valid = await verifyPassword(password, user.passwordHash)
+  } else if (tokenRaw && salt && user.subsonicToken) {
+    const expected = crypto
+      .createHash("md5")
+      .update(`${user.subsonicToken}${salt}`)
+      .digest("hex")
+    valid = expected.toLowerCase() === tokenRaw.toLowerCase()
+  }
+
   if (!valid) return null
 
   return { id: user.id, username: user.username }
@@ -305,18 +356,25 @@ export async function GET(request: NextRequest) {
     }
 
     if (cmd === "getNowPlaying") {
-      const songs = await prisma.song.findMany({
+      const sessions = await prisma.playbackSession.findMany({
         where: {
           userId: user.id,
-          lastPlayedAt: { not: null },
+          isPlaying: true,
+          currentSongId: { not: null },
         },
-        orderBy: { lastPlayedAt: "desc" },
+        orderBy: { updatedAt: "desc" },
         take: 25,
+        include: {
+          currentSong: true,
+        },
       })
 
       return response(request, {
         nowPlaying: {
-          entry: songs.map(mapSong),
+          entry: sessions
+            .map((session) => session.currentSong)
+            .filter((song): song is NonNullable<typeof song> => Boolean(song))
+            .map(mapSong),
         },
       })
     }
@@ -410,6 +468,188 @@ export async function GET(request: NextRequest) {
           name: playlist.name,
           songCount: playlist.songs.length,
           entry: playlist.songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "createPlaylist") {
+      const name = request.nextUrl.searchParams.get("name")?.trim() || ""
+      if (!name) {
+        return response(request, { error: { code: 10, message: "Missing playlist name" } }, "failed")
+      }
+
+      const songIds = extractSongIds(request)
+      const playlist = await prisma.playlist.create({
+        data: {
+          userId: user.id,
+          name,
+        },
+      })
+
+      if (songIds.length > 0) {
+        await prisma.song.updateMany({
+          where: {
+            userId: user.id,
+            id: { in: songIds },
+          },
+          data: {
+            playlistId: playlist.id,
+          },
+        })
+      }
+
+      const updatedPlaylist = await prisma.playlist.findUnique({
+        where: { id: playlist.id },
+        include: { songs: { orderBy: { createdAt: "asc" } } },
+      })
+
+      return response(request, {
+        playlist: {
+          id: String(playlist.id),
+          name: playlist.name,
+          songCount: updatedPlaylist?.songs.length || 0,
+          entry: (updatedPlaylist?.songs || []).map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "updatePlaylist") {
+      const playlistId = Number.parseInt(request.nextUrl.searchParams.get("playlistId") || "", 10)
+      if (!Number.isInteger(playlistId) || playlistId <= 0) {
+        return response(request, { error: { code: 10, message: "Missing playlistId" } }, "failed")
+      }
+
+      const playlist = await prisma.playlist.findFirst({
+        where: { id: playlistId, userId: user.id },
+      })
+      if (!playlist) {
+        return response(request, { error: { code: 70, message: "Playlist not found" } }, "failed")
+      }
+
+      const newName = request.nextUrl.searchParams.get("name")?.trim() || null
+      const addSongIds = request.nextUrl.searchParams
+        .getAll("songIdToAdd")
+        .map((raw) => Number.parseInt(raw, 10))
+        .filter((id): id is number => Number.isInteger(id) && id > 0)
+      const removeIndices = request.nextUrl.searchParams
+        .getAll("songIndexToRemove")
+        .map((raw) => Number.parseInt(raw, 10))
+        .filter((index): index is number => Number.isInteger(index) && index >= 0)
+
+      if (newName) {
+        await prisma.playlist.update({
+          where: { id: playlist.id },
+          data: { name: newName },
+        })
+      }
+
+      if (addSongIds.length > 0) {
+        await prisma.song.updateMany({
+          where: {
+            userId: user.id,
+            id: { in: Array.from(new Set(addSongIds)) },
+          },
+          data: {
+            playlistId: playlist.id,
+          },
+        })
+      }
+
+      if (removeIndices.length > 0) {
+        const entries = await prisma.song.findMany({
+          where: { userId: user.id, playlistId: playlist.id },
+          orderBy: { createdAt: "asc" },
+          select: { id: true },
+        })
+        const idsToRemove = Array.from(
+          new Set(
+            removeIndices
+              .map((index) => entries[index]?.id)
+              .filter((id): id is number => Number.isInteger(id))
+          )
+        )
+        if (idsToRemove.length > 0) {
+          await prisma.song.updateMany({
+            where: {
+              userId: user.id,
+              id: { in: idsToRemove },
+              playlistId: playlist.id,
+            },
+            data: { playlistId: null },
+          })
+        }
+      }
+
+      return response(request, {})
+    }
+
+    if (cmd === "deletePlaylist") {
+      const id = Number.parseInt(request.nextUrl.searchParams.get("id") || "", 10)
+      if (!Number.isInteger(id) || id <= 0) {
+        return response(request, { error: { code: 10, message: "Missing playlist id" } }, "failed")
+      }
+      const playlist = await prisma.playlist.findFirst({
+        where: { id, userId: user.id },
+      })
+      if (!playlist) {
+        return response(request, { error: { code: 70, message: "Playlist not found" } }, "failed")
+      }
+      await prisma.playlist.delete({ where: { id: playlist.id } })
+      return response(request, {})
+    }
+
+    if (cmd === "getGenres") {
+      const songs = await prisma.song.findMany({
+        where: { userId: user.id, genre: { not: null } },
+        select: { genre: true },
+      })
+      const counts = new Map<string, number>()
+      for (const song of songs) {
+        const genre = song.genre?.trim()
+        if (!genre) continue
+        counts.set(genre, (counts.get(genre) || 0) + 1)
+      }
+      return response(request, {
+        genres: {
+          genre: Array.from(counts.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([value, songCount]) => ({
+              value,
+              songCount,
+            })),
+        },
+      })
+    }
+
+    if (cmd === "getAlbumInfo2") {
+      const id = Number.parseInt(request.nextUrl.searchParams.get("id") || "", 10)
+      if (!Number.isInteger(id) || id <= 0) {
+        return response(request, { error: { code: 10, message: "Missing album id" } }, "failed")
+      }
+
+      const album = await prisma.album.findFirst({
+        where: { id, userId: user.id },
+        include: {
+          songs: {
+            select: { duration: true },
+          },
+        },
+      })
+      if (!album) {
+        return response(request, { error: { code: 70, message: "Album not found" } }, "failed")
+      }
+
+      const songCount = album.songs.length
+      const duration = album.songs.reduce((sum, song) => sum + (song.duration || 0), 0)
+      return response(request, {
+        albumInfo: {
+          notes: "",
+          musicBrainzId: "",
+          smallImageUrl: "",
+          mediumImageUrl: "",
+          largeImageUrl: "",
+          songCount,
+          duration,
         },
       })
     }

@@ -34,6 +34,16 @@ export async function register() {
       console.error("Failed to run ownership backfill at startup:", error)
     }
 
+    try {
+      const { ensureSubsonicTokens } = await import("./lib/subsonicTokens")
+      const generated = await ensureSubsonicTokens()
+      if (generated > 0) {
+        console.log(`Generated ${generated} missing Subsonic token(s).`)
+      }
+    } catch (error) {
+      console.error("Failed to ensure Subsonic tokens at startup:", error)
+    }
+
     // Recover any tasks left in "running" state from a previous crash
     try {
       const { recoverStaleTasks } = await import("./lib/downloadTasks")
@@ -48,7 +58,7 @@ export async function register() {
         console.log(`Started ${started} queued download task worker(s) at startup.`)
       }
 
-      const { recoverLibraryScanQueue } = await import("./lib/libraryScanQueue")
+      const { recoverLibraryScanQueue, startLibraryScanScheduler } = await import("./lib/libraryScanQueue")
       const scanRecovery = await recoverLibraryScanQueue()
       if (scanRecovery.failedRunning > 0) {
         console.log(`Marked ${scanRecovery.failedRunning} interrupted library scan(s) as failed.`)
@@ -56,6 +66,7 @@ export async function register() {
       if (scanRecovery.queuedStarted > 0) {
         console.log(`Started ${scanRecovery.queuedStarted} queued library scan(s) at startup.`)
       }
+      startLibraryScanScheduler()
     } catch (error) {
       console.error("Failed to recover stale tasks at startup:", error)
     }

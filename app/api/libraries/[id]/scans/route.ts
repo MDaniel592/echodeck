@@ -29,7 +29,7 @@ export async function GET(
       take: 50,
     })
     return NextResponse.json({
-      active: isLibraryScanActive(auth.userId, libraryId),
+      active: await isLibraryScanActive(auth.userId, libraryId),
       scans,
     })
   } catch (error) {

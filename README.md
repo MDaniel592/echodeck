@@ -56,6 +56,10 @@ On container start, the image runs `npm run setup` automatically so `yt-dlp` and
 | `TASK_SSE_POLL_MS` | No | SSE poll interval for live task updates (minimum: `2000`) |
 | `TASK_SSE_MAX_CLIENTS` | No | Max concurrent clients for `/api/tasks/stream` |
 | `TASK_DETAIL_SSE_MAX_CLIENTS` | No | Max concurrent clients for `/api/tasks/[id]/stream` |
+| `LIBRARY_SCAN_MAX_WORKERS` | No | Max concurrent library scan workers (default: `1`) |
+| `LIBRARY_SCAN_INTERVAL_MINUTES` | No | Auto-scan interval in minutes (`0` disables scheduler) |
+| `LIBRARY_SCAN_WATCH` | No | Set `1` to enable filesystem watch-triggered scans |
+| `LIBRARY_SCAN_WATCH_REFRESH_MS` | No | Watcher refresh interval in ms (default: `300000`) |
 | `SPOTIFY_CLIENT_ID` | No | Spotify API client ID |
 | `SPOTIFY_CLIENT_SECRET` | No | Spotify API client secret |
 | `SPOTIFY_AUTH_TOKEN` | No | Explicit Spotify web token override |
@@ -89,8 +93,10 @@ Run `npm run validate-env` to check your configuration.
 | `npm run artwork:refresh` | Rebuild low-res artwork cache |
 | `npm run validate-env` | Verify required env vars |
 | `npm run db:push` | Sync Prisma schema to database |
+| `npm run db:generate` | Regenerate Prisma client |
 | `npm run db:backfill-ownership` | Backfill legacy rows with missing ownership |
 | `npm run db:verify-ownership` | Fail if any rows still have missing ownership |
+| `npm run db:ensure-subsonic-tokens` | Ensure each user has a Subsonic token |
 | `npm run db:studio` | Open Prisma Studio GUI |
 
 ## API Highlights
@@ -121,6 +127,8 @@ Metadata browse:
 Subsonic-compatible endpoints:
 - `GET /api/subsonic/rest` (query command mode)
 - `GET /api/subsonic/rest/:command.view` (path command mode)
+- Supports auth via:
+`u` + `p` (plain or `enc:` hex), and `u` + `t` + `s` using each user’s Subsonic token
 - Includes: `ping`, `getLicense`, `getMusicFolders`, `getIndexes`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `stream`, `getCoverArt`, `getPlaylists`, `getPlaylist`, `search3`, `star`, `unstar`, `getStarred2`, `scrobble`, `getNowPlaying`, `getRandomSongs`, `getAlbumList2`
 
 ## Security

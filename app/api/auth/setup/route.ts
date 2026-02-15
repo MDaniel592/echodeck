@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import crypto from "crypto"
 import prisma from "../../../../lib/prisma"
 import { hashPassword, createToken } from "../../../../lib/auth"
 
@@ -62,7 +63,12 @@ export async function POST(request: NextRequest) {
           throw new SetupAlreadyCompleteError()
         }
         return tx.user.create({
-          data: { username, passwordHash, role: "admin" },
+          data: {
+            username,
+            passwordHash,
+            role: "admin",
+            subsonicToken: crypto.randomBytes(24).toString("hex"),
+          },
         })
       })
     } catch (error) {

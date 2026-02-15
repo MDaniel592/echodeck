@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import crypto from "crypto"
 import prisma from "../../../../lib/prisma"
 import { hashPassword } from "../../../../lib/auth"
 import { AuthError, requireAdmin, requireAuth } from "../../../../lib/requireAuth"
@@ -46,11 +47,13 @@ export async function PATCH(
     const role = body?.role === "admin" || body?.role === "user" ? body.role : undefined
     const disableRequested = typeof body?.disabled === "boolean" ? body.disabled : undefined
     const password = typeof body?.password === "string" ? body.password : undefined
+    const rotateSubsonicToken = body?.rotateSubsonicToken === true
 
     const updates: {
       role?: "admin" | "user"
       disabledAt?: Date | null
       passwordHash?: string
+      subsonicToken?: string
     } = {}
 
     if (role) {
@@ -86,6 +89,10 @@ export async function PATCH(
       updates.passwordHash = await hashPassword(password)
     }
 
+    if (rotateSubsonicToken) {
+      updates.subsonicToken = crypto.randomBytes(24).toString("hex")
+    }
+
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No valid updates provided" }, { status: 400 })
     }
@@ -97,12 +104,16 @@ export async function PATCH(
         id: true,
         username: true,
         role: true,
+        subsonicToken: true,
         disabledAt: true,
         createdAt: true,
       },
     })
 
-    return NextResponse.json(updated)
+    return NextResponse.json({
+      ...updated,
+      hasSubsonicToken: Boolean(updated.subsonicToken),
+    })
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status })

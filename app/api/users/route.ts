@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import crypto from "crypto"
 import prisma from "../../../lib/prisma"
 import { hashPassword } from "../../../lib/auth"
 import { AuthError, requireAdmin, requireAuth } from "../../../lib/requireAuth"
@@ -14,12 +15,22 @@ export async function GET(request: NextRequest) {
         id: true,
         username: true,
         role: true,
+        subsonicToken: true,
         disabledAt: true,
         createdAt: true,
       },
     })
 
-    return NextResponse.json(users)
+    return NextResponse.json(
+      users.map((user) => ({
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        disabledAt: user.disabledAt,
+        createdAt: user.createdAt,
+        hasSubsonicToken: Boolean(user.subsonicToken),
+      }))
+    )
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
@@ -48,17 +59,29 @@ export async function POST(request: NextRequest) {
 
     const passwordHash = await hashPassword(password)
     const user = await prisma.user.create({
-      data: { username, passwordHash, role },
+      data: {
+        username,
+        passwordHash,
+        role,
+        subsonicToken: crypto.randomBytes(24).toString("hex"),
+      },
       select: {
         id: true,
         username: true,
         role: true,
+        subsonicToken: true,
         disabledAt: true,
         createdAt: true,
       },
     })
 
-    return NextResponse.json(user, { status: 201 })
+    return NextResponse.json(
+      {
+        ...user,
+        hasSubsonicToken: Boolean(user.subsonicToken),
+      },
+      { status: 201 }
+    )
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
