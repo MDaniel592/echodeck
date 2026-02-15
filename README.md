@@ -1,6 +1,6 @@
-# EchoDeck
+# <img src="public/EchoDeck.png" alt="EchoDeck" width="28" /> EchoDeck
 
-Self-hosted music player and downloader. Download from YouTube, SoundCloud, and Spotify, then stream from your own library.
+Self-hosted music platform and downloader. Download from YouTube, SoundCloud, and Spotify, then stream from your own library.
 
 ## Preview
 
@@ -87,6 +87,7 @@ Run `npm run validate-env` to check your configuration.
 | `npm run start` | Start production server |
 | `npm test` | Run tests |
 | `npm run test:watch` | Run tests in watch mode |
+| `npm run test:integration` | Run end-to-end API smoke test against a running app |
 | `npm run subsonic:smoke` | Run Subsonic compatibility smoke checks (requires env vars) |
 | `npm run typecheck` | TypeScript type check |
 | `npm run lint` | ESLint |
@@ -150,6 +151,8 @@ This project is distributed for self-hosted use. You are responsible for complia
 
 ## Community
 
+- Roadmap: `docs/echodeck-roadmap.md`
+- Release process: `docs/release-process.md`
 - Contributing guide: `CONTRIBUTING.md`
 - Code of conduct: `CODE_OF_CONDUCT.md`
 - Security policy: `SECURITY.md`
