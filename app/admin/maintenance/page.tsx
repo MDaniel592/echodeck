@@ -303,8 +303,8 @@ export default function MaintenancePage() {
       : null
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100">
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+    <div className="app-shell">
+      <div className="relative z-10 mx-auto max-w-6xl px-4 py-6 sm:px-6">
         <div className="mb-6 flex items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold">Maintenance</h1>

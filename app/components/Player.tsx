@@ -23,6 +23,15 @@ interface PlayerProps {
   song: Song | null
   songs: Song[]
   onSongChange: (song: Song) => void
+  onQueueReorder?: (fromIndex: number, toIndex: number) => void
+  onQueueRemove?: (songId: number, index: number) => void
+  onQueueClear?: () => void
+  onPlaybackStateChange?: (state: {
+    positionSec: number
+    isPlaying: boolean
+    repeatMode: RepeatMode
+    shuffle: boolean
+  }) => void
 }
 
 type RepeatMode = "off" | "all" | "one"
@@ -134,6 +143,43 @@ function QueueIcon() {
       <circle cx="4" cy="7" r="0.9" fill="currentColor" stroke="none" />
       <circle cx="4" cy="12" r="0.9" fill="currentColor" stroke="none" />
       <circle cx="4" cy="17" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+function TrashIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M6 6l1 14h10l1-14" />
+    </svg>
+  )
+}
+
+function XIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
     </svg>
   )
 }
@@ -387,6 +433,10 @@ export default function Player({
   song,
   songs,
   onSongChange,
+  onQueueReorder,
+  onQueueRemove,
+  onQueueClear,
+  onPlaybackStateChange,
 }: PlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const miniArtworkRef = useRef<HTMLDivElement>(null)
@@ -414,10 +464,12 @@ export default function Player({
   const [miniDragOffset, setMiniDragOffset] = useState(0)
   const [isMiniDragging, setIsMiniDragging] = useState(false)
   const [isQueueSheetOpen, setIsQueueSheetOpen] = useState(false)
+  const [showQueueClearConfirm, setShowQueueClearConfirm] = useState(false)
   const [queueDragOffset, setQueueDragOffset] = useState(0)
   const [isQueueDragging, setIsQueueDragging] = useState(false)
   const [artworkFlip, setArtworkFlip] = useState({ dx: 0, dy: 0, scale: 1 })
   const defaultDocumentTitleRef = useRef<string>("EchoDeck")
+  const lastPlaybackSnapshotRef = useRef<string>("")
 
   const currentIndex = song ? songs.findIndex((s) => s.id === song.id) : -1
 
@@ -466,6 +518,20 @@ export default function Player({
     if (nextIndex !== null) onSongChange(songs[nextIndex])
   }, [getNextIndex, onSongChange, songs])
 
+  const emitPlaybackState = useCallback((timeSec: number, isPlayingValue: boolean) => {
+    if (!onPlaybackStateChange) return
+    const payload = {
+      positionSec: Math.max(0, Math.round(timeSec)),
+      isPlaying: isPlayingValue,
+      repeatMode,
+      shuffle: shuffleEnabled,
+    }
+    const serialized = JSON.stringify(payload)
+    if (serialized === lastPlaybackSnapshotRef.current) return
+    lastPlaybackSnapshotRef.current = serialized
+    onPlaybackStateChange(payload)
+  }, [onPlaybackStateChange, repeatMode, shuffleEnabled])
+
   useEffect(() => {
     const audio = audioRef.current
     if (!audio || !song) return
@@ -480,10 +546,19 @@ export default function Player({
     const audio = audioRef.current
     if (!audio) return
 
-    const onTimeUpdate = () => setCurrentTime(audio.currentTime)
+    const onTimeUpdate = () => {
+      setCurrentTime(audio.currentTime)
+      emitPlaybackState(audio.currentTime, !audio.paused)
+    }
     const onDurationChange = () => setDuration(audio.duration)
-    const onPlay = () => setPlaying(true)
-    const onPause = () => setPlaying(false)
+    const onPlay = () => {
+      setPlaying(true)
+      emitPlaybackState(audio.currentTime, true)
+    }
+    const onPause = () => {
+      setPlaying(false)
+      emitPlaybackState(audio.currentTime, false)
+    }
     const onEnded = () => {
       if (repeatMode === "one") {
         audio.currentTime = 0
@@ -512,9 +587,9 @@ export default function Player({
       audio.removeEventListener("pause", onPause)
       audio.removeEventListener("ended", onEnded)
     }
-  }, [getNextIndex, onSongChange, repeatMode, songs])
+  }, [emitPlaybackState, getNextIndex, onSongChange, repeatMode, songs])
 
-  function togglePlay() {
+  const togglePlay = useCallback(() => {
     const audio = audioRef.current
     if (!audio) return
     if (playing) {
@@ -523,7 +598,7 @@ export default function Player({
     } else {
       audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
     }
-  }
+  }, [playing])
 
   function changeVolume(e: React.ChangeEvent<HTMLInputElement>) {
     const val = parseFloat(e.target.value)
@@ -550,6 +625,7 @@ export default function Player({
     (shuffleEnabled
       ? songs.length > 1 || repeatMode === "all"
       : currentIndex < songs.length - 1 || repeatMode === "all")
+  const queuePositionLabel = `${currentIndex >= 0 ? currentIndex + 1 : 0}/${songs.length}`
 
   useEffect(() => {
     if (typeof document === "undefined") return
@@ -645,6 +721,56 @@ export default function Player({
   }, [song, playing, canGoPrev, canGoNext, playPrev, playNext])
 
   useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!song) return
+      const activeElement = document.activeElement
+      const isTyping =
+        activeElement?.tagName === "INPUT" ||
+        activeElement?.tagName === "TEXTAREA" ||
+        activeElement?.tagName === "SELECT" ||
+        (activeElement instanceof HTMLElement && activeElement.isContentEditable)
+      if (isTyping || e.altKey || e.metaKey || e.ctrlKey) return
+
+      if (e.code === "Space") {
+        e.preventDefault()
+        togglePlay()
+        return
+      }
+
+      if (e.key === "ArrowRight") {
+        e.preventDefault()
+        const audio = audioRef.current
+        if (!audio) return
+        const maxTime = Number.isFinite(audio.duration) ? audio.duration : audio.currentTime + 5
+        audio.currentTime = Math.min(maxTime, audio.currentTime + 5)
+        return
+      }
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault()
+        const audio = audioRef.current
+        if (!audio) return
+        audio.currentTime = Math.max(0, audio.currentTime - 5)
+        return
+      }
+
+      if (e.key === "ArrowUp" && canGoPrev) {
+        e.preventDefault()
+        playPrev()
+        return
+      }
+
+      if (e.key === "ArrowDown" && canGoNext) {
+        e.preventDefault()
+        playNext()
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [song, canGoPrev, canGoNext, playPrev, playNext, togglePlay])
+
+  useEffect(() => {
     if (typeof window === "undefined" || !("mediaSession" in navigator)) return
     if (!song || !Number.isFinite(duration) || duration <= 0) return
     if (typeof navigator.mediaSession.setPositionState !== "function") return
@@ -659,6 +785,11 @@ export default function Player({
       // Position state can throw when browser cannot determine timeline.
     }
   }, [song, duration, currentTime])
+
+  useEffect(() => {
+    if (!song || !onPlaybackStateChange) return
+    emitPlaybackState(currentTime, playing)
+  }, [song, currentTime, playing, repeatMode, shuffleEnabled, emitPlaybackState, onPlaybackStateChange])
 
   const songId = song?.id ?? null
 
@@ -794,7 +925,7 @@ export default function Player({
     return (
       <>
         <audio ref={audioRef} />
-        <div className="fixed bottom-0 left-0 right-0 bg-[#181818] border-t border-zinc-800 px-3 sm:px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+        <div className="fixed bottom-0 left-0 right-0 z-[70] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 sm:px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
           <div className="max-w-5xl mx-auto text-center text-zinc-600 text-sm">
             Select a song to play
           </div>
@@ -865,6 +996,7 @@ export default function Player({
     setQueueDragOffset(0)
     setIsQueueDragging(false)
     setIsQueueSheetOpen(false)
+    setShowQueueClearConfirm(false)
   }
 
   function openQueueSheet() {
@@ -1047,6 +1179,18 @@ export default function Player({
     setIsQueueDragging(false)
   }
 
+  function moveQueueItem(fromIndex: number, toIndex: number) {
+    if (!onQueueReorder) return
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= songs.length || toIndex >= songs.length) return
+    if (fromIndex === toIndex) return
+    onQueueReorder(fromIndex, toIndex)
+  }
+
+  function removeQueueItem(songId: number, index: number) {
+    if (!onQueueRemove) return
+    onQueueRemove(songId, index)
+  }
+
   if (isMobileViewport) {
     const miniOpacity = isMobileExpanded
       ? miniRevealOpacity
@@ -1056,7 +1200,7 @@ export default function Player({
       <>
         <audio ref={audioRef} />
         <div
-          className="fixed bottom-0 left-0 right-0 z-[60] bg-[#181818] border-t border-zinc-800 px-3 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]"
+          className="fixed bottom-0 left-0 right-0 z-[60] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]"
           style={{
             transform: `translateY(${miniDragOffset}px)`,
             opacity: miniOpacity,
@@ -1100,7 +1244,7 @@ export default function Player({
             <button
               type="button"
               onClick={togglePlay}
-              className="h-12 w-12 flex items-center justify-center rounded-full bg-[#181818] text-white"
+              className="h-12 w-12 flex items-center justify-center text-white"
               aria-label={playing ? "Pause" : "Play"}
             >
               <PlayPauseIcon playing={playing} />
@@ -1272,7 +1416,7 @@ export default function Player({
                   <button
                     type="button"
                     onClick={togglePlay}
-                    className="h-[clamp(3.5rem,17vw,4.5rem)] w-[clamp(3.5rem,17vw,4.5rem)] shrink-0 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 transition-transform active:scale-95"
+                    className="h-[clamp(3.5rem,17vw,4.5rem)] w-[clamp(3.5rem,17vw,4.5rem)] shrink-0 flex items-center justify-center text-white hover:scale-105 transition-transform active:scale-95"
                   >
                     <PlayPauseIcon playing={playing} xlarge />
                   </button>
@@ -1312,7 +1456,7 @@ export default function Player({
             />
 
             <section
-              className="fixed inset-x-0 bottom-0 z-[75] mx-2 sm:mx-4 max-h-[72vh] rounded-t-2xl border border-zinc-800 bg-zinc-950 shadow-[0_-18px_48px_rgba(0,0,0,0.6)] overflow-hidden animate-[queue-sheet-in_260ms_cubic-bezier(0.22,1,0.36,1)]"
+              className="fixed inset-x-0 bottom-0 z-[75] mx-2 sm:mx-4 max-h-[58vh] sm:max-h-[66vh] rounded-t-2xl border border-zinc-800 bg-zinc-950 shadow-[0_-18px_48px_rgba(0,0,0,0.6)] overflow-hidden animate-[queue-sheet-in_260ms_cubic-bezier(0.22,1,0.36,1)]"
               aria-label="Queue"
             >
               <div
@@ -1334,11 +1478,24 @@ export default function Player({
                   <div className="flex justify-center pb-2">
                     <div className="h-1 w-8 rounded-full bg-zinc-700" />
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <div>
-                      <h3 className="text-sm font-semibold text-zinc-100">Queue</h3>
-                      <p className="text-xs text-zinc-500">{songs.length} tracks</p>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-zinc-100">Queue</h3>
+                        <span className="text-xs font-medium tabular-nums text-zinc-400">{queuePositionLabel}</span>
+                      </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onQueueClear?.()
+                        closeQueueSheet()
+                      }}
+                      disabled={songs.length === 0}
+                      className="h-7 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Clear
+                    </button>
                   </div>
                 </div>
 
@@ -1347,30 +1504,58 @@ export default function Player({
                     Queue is empty.
                   </div>
                 ) : (
-                  <div className="max-h-[calc(72vh-4.6rem)] overflow-y-auto px-2 py-2">
+                  <div className="max-h-[calc(58vh-4.6rem)] sm:max-h-[calc(66vh-4.6rem)] overflow-y-auto px-2 py-2">
                     {songs.map((queueSong, index) => {
                       const isCurrent = queueSong.id === songId
                       return (
-                        <button
+                        <div
                           key={`${queueSong.id}-${index}`}
-                          type="button"
-                          onClick={() => {
-                            onSongChange(queueSong)
-                            closeQueueSheet()
-                          }}
-                          className={`w-full text-left rounded-lg px-3 py-2 mb-1 border transition-colors ${
+                          className={`mb-1 rounded-lg border px-2 py-2 ${
                             isCurrent
                               ? "bg-blue-600/20 border-blue-500/40"
-                              : "bg-zinc-900 border-zinc-800 hover:bg-zinc-800"
+                              : "bg-zinc-900 border-zinc-800"
                           }`}
                         >
-                          <p className={`text-sm truncate ${isCurrent ? "text-blue-300" : "text-white"}`}>
-                            {index + 1}. {queueSong.title}
-                          </p>
-                          <p className="text-xs text-zinc-500 truncate">
-                            {queueSong.artist || "Unknown Artist"}
-                          </p>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSongChange(queueSong)
+                            }}
+                            className="w-full text-left"
+                          >
+                            <p className={`text-sm truncate ${isCurrent ? "text-blue-300" : "text-white"}`}>
+                              {index + 1}. {queueSong.title}
+                            </p>
+                            <p className="text-xs text-zinc-500 truncate">
+                              {queueSong.artist || "Unknown Artist"}
+                            </p>
+                          </button>
+                          <div className="mt-2 flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => moveQueueItem(index, index - 1)}
+                              disabled={index === 0}
+                              className="h-6 rounded border border-zinc-700 px-2 text-[11px] text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white disabled:opacity-40"
+                            >
+                              Up
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveQueueItem(index, index + 1)}
+                              disabled={index >= songs.length - 1}
+                              className="h-6 rounded border border-zinc-700 px-2 text-[11px] text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white disabled:opacity-40"
+                            >
+                              Down
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeQueueItem(queueSong.id, index)}
+                              className="h-6 rounded border border-red-500/35 px-2 text-[11px] text-red-300 transition-colors hover:bg-red-500/20"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
@@ -1385,7 +1570,7 @@ export default function Player({
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 bg-[#181818] border-t border-zinc-800 px-3 sm:px-4 lg:px-6 pt-3 lg:pt-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+      className="fixed bottom-0 left-0 right-0 z-[70] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 sm:px-4 lg:px-6 pt-3 lg:pt-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
     >
       <audio ref={audioRef} />
       <div className="max-w-6xl mx-auto flex flex-col gap-3 lg:gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] sm:items-center">
@@ -1498,8 +1683,143 @@ export default function Player({
             onChange={changeVolume}
             className="w-full sm:w-28 lg:w-36 accent-emerald-500"
           />
+          <button
+            type="button"
+            onClick={toggleQueueSheet}
+            disabled={songs.length === 0}
+            className={`h-10 min-w-10 rounded-lg inline-flex items-center justify-center transition-colors lg:h-11 lg:min-w-11 ${
+              isQueueSheetOpen
+                ? "bg-zinc-800 text-white"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+            } disabled:opacity-40 disabled:hover:text-zinc-400 disabled:hover:bg-transparent`}
+            aria-label={isQueueSheetOpen ? "Close queue" : "Open queue"}
+            aria-expanded={isQueueSheetOpen}
+          >
+            <QueueIcon />
+          </button>
         </div>
       </div>
+      {isQueueSheetOpen && (
+        <>
+          <div className="absolute right-3 bottom-full z-[75] h-[min(34rem,60vh)] w-[min(32rem,94vw)]">
+            <section className="relative h-full overflow-hidden rounded-tl-2xl rounded-tr-2xl border border-zinc-700/85 border-b-0 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-none">
+                <div className="flex items-center justify-between border-b border-zinc-700/75 bg-[linear-gradient(180deg,rgba(43,50,66,0.82)_0%,rgba(34,39,52,0.80)_100%)] px-4 py-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-semibold text-zinc-100">Queue</h3>
+                      <span className="text-sm font-medium tabular-nums text-zinc-300">{queuePositionLabel}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowQueueClearConfirm(true)}
+                      disabled={songs.length === 0}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-red-500/35 text-red-300 hover:bg-red-500/15 disabled:opacity-40"
+                      aria-label="Clear queue"
+                      title="Clear queue"
+                    >
+                      <TrashIcon />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={closeQueueSheet}
+                      className="h-7 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-300 hover:border-zinc-500 hover:text-white"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+                {songs.length === 0 ? (
+                  <div className="px-4 py-5 text-sm text-zinc-500">Queue is empty.</div>
+                ) : (
+                  <div className="custom-scrollbar h-[calc(100%-3.25rem)] overflow-y-auto px-2 py-2">
+                    {songs.map((queueSong, index) => {
+                      const isCurrent = queueSong.id === songId
+                      const queueCoverSrc = queueSong.coverPath ? `/api/cover/${queueSong.id}` : queueSong.thumbnail
+                      return (
+                        <div
+                          key={`${queueSong.id}-${index}`}
+                          className={`mb-1 flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors ${
+                            isCurrent
+                              ? "border-sky-400/45 bg-sky-500/15"
+                              : "border-zinc-800 bg-zinc-900 hover:bg-zinc-800"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSongChange(queueSong)
+                            }}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="h-9 w-9 shrink-0 overflow-hidden rounded bg-zinc-800">
+                                {queueCoverSrc ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={queueCoverSrc}
+                                    alt={`${queueSong.title} cover`}
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-[11px] text-zinc-500">♪</div>
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <p className={`truncate text-base ${isCurrent ? "text-sky-200" : "text-zinc-100"}`}>
+                                  {index + 1}. {queueSong.title}
+                                </p>
+                                <p className="truncate text-sm text-zinc-400">{queueSong.artist || "Unknown Artist"}</p>
+                              </div>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeQueueItem(queueSong.id, index)}
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-white"
+                            aria-label={`Remove ${queueSong.title} from queue`}
+                            title="Remove from queue"
+                          >
+                            <XIcon />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                {showQueueClearConfirm && (
+                  <div className="absolute right-3 top-12 z-[77] w-[18rem] rounded-xl border border-zinc-700/80 bg-zinc-950 p-3 shadow-xl">
+                    <p className="text-sm font-medium text-zinc-100">Clear entire queue?</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      This removes all queued tracks from the current playback session.
+                    </p>
+                    <div className="mt-3 flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowQueueClearConfirm(false)}
+                        className="h-7 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-300 hover:bg-zinc-800"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onQueueClear?.()
+                          setShowQueueClearConfirm(false)
+                          closeQueueSheet()
+                        }}
+                        className="h-7 rounded-md border border-red-500/40 bg-red-500/15 px-2.5 text-xs text-red-200 hover:bg-red-500/25"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                )}
+            </section>
+          </div>
+        </>
+      )}
     </div>
   )
 }
