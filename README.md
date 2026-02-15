@@ -93,6 +93,36 @@ Run `npm run validate-env` to check your configuration.
 | `npm run db:verify-ownership` | Fail if any rows still have missing ownership |
 | `npm run db:studio` | Open Prisma Studio GUI |
 
+## API Highlights
+
+Core app APIs:
+- `GET /api/songs` supports filters for `search`, `source`, `playlistId`, `albumId`, `year`, `genre`
+- `PATCH /api/songs/:id` supports playlist assignment and metadata edits
+- `GET/POST /api/playlists`
+- `GET/POST /api/users` and `PATCH /api/users/:id` (admin only)
+
+Playback state:
+- `GET/PUT /api/playback/session`
+- `PUT /api/playback/queue`
+- `POST /api/playback/queue/reorder`
+
+Library scanning:
+- `GET/POST /api/libraries`
+- `PATCH /api/libraries/:id/paths`
+- `POST /api/libraries/:id/scan` (async default, `?mode=sync` supported)
+- `GET /api/libraries/:id/scans`
+
+Metadata browse:
+- `GET /api/artists`
+- `GET /api/artists/:id/albums`
+- `GET /api/albums`
+- `GET /api/albums/:id/songs`
+
+Subsonic-compatible endpoints:
+- `GET /api/subsonic/rest` (query command mode)
+- `GET /api/subsonic/rest/:command.view` (path command mode)
+- Includes: `ping`, `getLicense`, `getMusicFolders`, `getIndexes`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `stream`, `getCoverArt`, `getPlaylists`, `getPlaylist`, `search3`, `star`, `unstar`, `getStarred2`, `scrobble`, `getNowPlaying`, `getRandomSongs`, `getAlbumList2`
+
 ## Security
 
 Provider credentials are environment-managed only. Keep them in `.env` or your deployment secret manager and never commit real secrets.
