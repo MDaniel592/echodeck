@@ -168,4 +168,61 @@ describe("adminMaintenance refresh_origin_metadata", () => {
     expect(perItemProgress).toEqual([0, 1, 2, 3])
     expect(progressEvents.some((event) => event.phase === "complete")).toBe(true)
   })
+
+  it("non-dry-run updates songs and reports configured concurrency", async () => {
+    const previousConcurrency = process.env.ORIGIN_METADATA_CONCURRENCY
+    process.env.ORIGIN_METADATA_CONCURRENCY = "3"
+    vi.resetModules()
+
+    const runWithEnv = (await import("../lib/adminMaintenance")).runMaintenanceAction
+    const sourceSongs = [
+      {
+        id: 1,
+        source: "youtube",
+        sourceUrl: "https://youtube.com/watch?v=one",
+        title: "One",
+        artist: "Artist",
+        album: null,
+        albumArtist: null,
+        year: 2024,
+        duration: null,
+        thumbnail: null,
+        coverPath: null,
+      },
+      {
+        id: 2,
+        source: "spotify",
+        sourceUrl: "https://open.spotify.com/track/xyz",
+        title: "Two",
+        artist: "Artist",
+        album: null,
+        albumArtist: null,
+        year: 2024,
+        duration: null,
+        thumbnail: null,
+        coverPath: null,
+      },
+    ]
+    mocks.prisma.song.findMany.mockResolvedValue(sourceSongs)
+    mocks.ensureArtistAlbumRefs.mockResolvedValue({
+      artistId: 10,
+      albumId: 20,
+      artist: "New Artist",
+      album: "Singles",
+      albumArtist: "New Artist",
+    })
+
+    await runWithEnv(1, "refresh_origin_metadata", false)
+
+    const calls = mocks.prisma.song.update.mock.calls.map((args) => args[0] as { data: Record<string, unknown> })
+    expect(calls.some((call) => Object.prototype.hasOwnProperty.call(call.data, "title"))).toBe(true)
+    expect(calls.some((call) => Object.prototype.hasOwnProperty.call(call.data, "coverPath"))).toBe(true)
+    expect(mocks.ensureArtistAlbumRefs).toHaveBeenCalledTimes(2)
+
+    const result = await runWithEnv(1, "refresh_origin_metadata", true)
+    expect(result.details.concurrency).toBe(3)
+
+    if (previousConcurrency === undefined) delete process.env.ORIGIN_METADATA_CONCURRENCY
+    else process.env.ORIGIN_METADATA_CONCURRENCY = previousConcurrency
+  })
 })

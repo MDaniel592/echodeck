@@ -126,4 +126,33 @@ describe("admin maintenance fix route", () => {
     expect(body.error).toBe("Invalid action")
     expect(runMaintenanceActionMock).not.toHaveBeenCalled()
   })
+
+  it("streams error event when maintenance action throws", async () => {
+    runMaintenanceActionMock.mockRejectedValue(new Error("boom"))
+
+    const { POST } = await import("../app/api/admin/maintenance/fix/route")
+    const req = new NextRequest("http://localhost/api/admin/maintenance/fix", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "refresh_origin_metadata",
+        dryRun: true,
+        stream: true,
+      }),
+      headers: { "content-type": "application/json" },
+    })
+    const res = await POST(req)
+    const text = await res.text()
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson")
+
+    const lines = text
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string; error?: string })
+
+    expect(lines[0]?.type).toBe("started")
+    expect(lines[lines.length - 1]?.type).toBe("error")
+    expect(lines[lines.length - 1]?.error).toBe("boom")
+  })
 })
