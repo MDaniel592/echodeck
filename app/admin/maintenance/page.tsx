@@ -32,6 +32,17 @@ type MaintenanceResult = {
   details: Record<string, number | string | boolean>
 }
 
+type MaintenanceProgress = {
+  action: MaintenanceAction
+  dryRun: boolean
+  phase: "start" | "scan" | "apply" | "complete"
+  message?: string
+  processed?: number
+  total?: number
+}
+
+const MIN_PROGRESS_PANEL_MS = 1200
+
 const ACTIONS: Array<{ id: MaintenanceAction; label: string; description: string }> = [
   {
     id: "attach_library",
@@ -82,6 +93,12 @@ export default function MaintenancePage() {
   const [runningAction, setRunningAction] = useState<MaintenanceAction | null>(null)
   const [error, setError] = useState("")
   const [resultLog, setResultLog] = useState<MaintenanceResult[]>([])
+  const [progress, setProgress] = useState<MaintenanceProgress | null>(null)
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [showProgressPanel, setShowProgressPanel] = useState(false)
+  const [panelMode, setPanelMode] = useState<"running" | "complete" | "error">("running")
+  const [activeResult, setActiveResult] = useState<MaintenanceResult | null>(null)
 
   useEffect(() => {
     let active = true
@@ -113,6 +130,17 @@ export default function MaintenancePage() {
     }
   }, [router])
 
+  useEffect(() => {
+    if (!runStartedAt || !runningAction) {
+      setElapsedSeconds(0)
+      return
+    }
+    const tick = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - runStartedAt) / 1000)))
+    tick()
+    const interval = setInterval(tick, 1000)
+    return () => clearInterval(interval)
+  }, [runStartedAt, runningAction])
+
   async function refreshAudit() {
     setLoadingAudit(true)
     setError("")
@@ -132,27 +160,123 @@ export default function MaintenancePage() {
   }
 
   async function runAction(action: MaintenanceAction, dryRun: boolean) {
+    const startedAt = Date.now()
     setRunningAction(action)
     setError("")
+    setShowProgressPanel(true)
+    setPanelMode("running")
+    setActiveResult(null)
+    setProgress({
+      action,
+      dryRun,
+      phase: "start",
+      message: "Starting maintenance run...",
+      processed: 0,
+      total: undefined,
+    })
+    setRunStartedAt(startedAt)
     try {
       const res = await fetch("/api/admin/maintenance/fix", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, dryRun }),
+        body: JSON.stringify({ action, dryRun, stream: true }),
       })
-      const data = await res.json()
+
       if (!res.ok) {
+        const data = await res.json().catch(() => null)
         setError(data?.error || "Maintenance action failed.")
         return
       }
-      setResultLog((prev) => [data as MaintenanceResult, ...prev].slice(0, 20))
+
+      let finalResult: MaintenanceResult | null = null
+      let streamError = ""
+
+      if (res.body) {
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ""
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split("\n")
+          buffer = lines.pop() ?? ""
+
+          for (const rawLine of lines) {
+            const line = rawLine.trim()
+            if (!line) continue
+            let payload: unknown
+            try {
+              payload = JSON.parse(line)
+            } catch {
+              continue
+            }
+            if (!payload || typeof payload !== "object") continue
+            const typed = payload as {
+              type?: string
+              event?: MaintenanceProgress
+              result?: MaintenanceResult
+              error?: string
+              startedAt?: number
+            }
+            if (typed.type === "started" && typeof typed.startedAt === "number") {
+              setRunStartedAt(typed.startedAt)
+            } else if (typed.type === "progress" && typed.event) {
+              setProgress(typed.event)
+            } else if (typed.type === "result" && typed.result) {
+              finalResult = typed.result
+              setActiveResult(typed.result)
+              setPanelMode("complete")
+              setProgress((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      phase: "complete",
+                      message: "Completed.",
+                    }
+                  : null
+              )
+            } else if (typed.type === "error") {
+              streamError = typed.error || "Maintenance action failed."
+              setPanelMode("error")
+            }
+          }
+        }
+      }
+
+      if (streamError) {
+        setError(streamError)
+        setProgress((prev) =>
+          prev
+            ? {
+                ...prev,
+                message: streamError,
+              }
+            : null
+        )
+        return
+      }
+      if (!finalResult) {
+        setError("Maintenance action did not return a final result.")
+        setPanelMode("error")
+        return
+      }
+      setResultLog((prev) => [finalResult as MaintenanceResult, ...prev].slice(0, 20))
       if (!dryRun) {
         await refreshAudit()
       }
     } catch {
       setError("Maintenance action failed.")
+      setPanelMode("error")
     } finally {
+      const elapsedMs = Date.now() - startedAt
+      if (elapsedMs < MIN_PROGRESS_PANEL_MS) {
+        await new Promise((resolve) => setTimeout(resolve, MIN_PROGRESS_PANEL_MS - elapsedMs))
+      }
       setRunningAction(null)
+      setRunStartedAt(null)
+      setShowProgressPanel(false)
     }
   }
 
@@ -172,6 +296,11 @@ export default function MaintenancePage() {
         : [],
     [audit]
   )
+
+  const progressPercent =
+    progress && typeof progress.processed === "number" && typeof progress.total === "number" && progress.total > 0
+      ? Math.max(0, Math.min(100, Math.round((progress.processed / progress.total) * 100)))
+      : null
 
   return (
     <div className="min-h-screen bg-black text-zinc-100">
@@ -248,6 +377,58 @@ export default function MaintenancePage() {
             })}
           </div>
         </div>
+
+        {showProgressPanel ? (
+          <div
+            className={`mt-4 rounded-lg p-4 ${
+              panelMode === "error"
+                ? "border border-red-500/30 bg-red-500/10"
+                : panelMode === "complete"
+                  ? "border border-emerald-500/30 bg-emerald-500/10"
+                  : "border border-blue-500/30 bg-blue-500/10"
+            }`}
+          >
+            <div
+              className={`flex flex-wrap items-center gap-3 text-xs ${
+                panelMode === "error" ? "text-red-100" : panelMode === "complete" ? "text-emerald-100" : "text-blue-100"
+              }`}
+            >
+              <span className="font-medium">Running: {runningAction}</span>
+              <span>Elapsed: {elapsedSeconds}s</span>
+              {progress && typeof progress.processed === "number" && typeof progress.total === "number" ? (
+                <span>
+                  Progress: {progress.processed}/{progress.total}
+                </span>
+              ) : null}
+            </div>
+            <p
+              className={`mt-2 text-xs ${
+                panelMode === "error" ? "text-red-200" : panelMode === "complete" ? "text-emerald-200" : "text-blue-200"
+              }`}
+            >
+              {progress?.message || "Working..."}
+            </p>
+            {progressPercent !== null ? (
+              <div
+                className={`mt-3 h-2 rounded ${
+                  panelMode === "error" ? "bg-red-950/70" : panelMode === "complete" ? "bg-emerald-950/70" : "bg-blue-950/70"
+                }`}
+              >
+                <div
+                  className={`h-2 rounded transition-all ${
+                    panelMode === "error" ? "bg-red-400" : panelMode === "complete" ? "bg-emerald-400" : "bg-blue-400"
+                  }`}
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            ) : null}
+            {activeResult ? (
+              <pre className="mt-3 whitespace-pre-wrap text-xs text-zinc-200">
+                {JSON.stringify(activeResult.details, null, 2)}
+              </pre>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="mt-6 grid gap-4 lg:grid-cols-2">
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">

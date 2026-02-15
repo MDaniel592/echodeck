@@ -6,6 +6,7 @@ import { normalizeSongTitle } from "./songTitle"
 import { getVideoInfo } from "./ytdlp"
 import { downloadSongArtwork, getSpotifyThumbnail } from "./artwork"
 import { ensureArtistAlbumRefs } from "./artistAlbumRefs"
+import { runWithConcurrency } from "./asyncPool"
 import {
   drainQueuedTaskWorkers,
   enqueueDownloadTask,
@@ -43,7 +44,84 @@ export type MaintenanceResult = {
   details: Record<string, number | string | boolean>
 }
 
+export type MaintenanceProgress = {
+  action: MaintenanceAction
+  dryRun: boolean
+  phase: "start" | "scan" | "apply" | "complete"
+  message?: string
+  processed?: number
+  total?: number
+}
+
+type MaintenanceProgressCallback = (event: MaintenanceProgress) => void
+
 const MALFORMED_PREFIX = /^[0-9]{10,}[\s-]+/
+const ORIGIN_LOOKUP_TIMEOUT_MS = 15_000
+const SPOTIFY_LOOKUP_TIMEOUT_MS = 7_000
+const ORIGIN_METADATA_CONCURRENCY = Math.max(
+  1,
+  Math.min(8, Number.parseInt(process.env.ORIGIN_METADATA_CONCURRENCY || "4", 10) || 4)
+)
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`))
+    }, ms)
+
+    promise
+      .then((value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+      .catch((error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+  })
+}
+
+function resolveAlbumFields(input: {
+  artist?: string | null
+  album?: string | null
+  albumArtist?: string | null
+}): { album: string | null; albumArtist: string | null } {
+  const artist = (input.artist || "").trim() || null
+  let album = (input.album || "").trim() || null
+  let albumArtist = (input.albumArtist || artist || "").trim() || null
+
+  // Keep downloaded tracks grouped even if source metadata has no album.
+  if (!album && artist) {
+    album = "Singles"
+    if (!albumArtist) {
+      albumArtist = artist
+    }
+  }
+
+  return { album, albumArtist }
+}
+
+function createProgressReporter(
+  action: MaintenanceAction,
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
+) {
+  return (event: Omit<MaintenanceProgress, "action" | "dryRun">) => {
+    onProgress?.({
+      action,
+      dryRun,
+      ...event,
+    })
+  }
+}
+
+function shouldReportProgress(index: number, total: number): boolean {
+  if (total <= 200) return true
+  if (total <= 1000) {
+    return index === 1 || index === total || index % 5 === 0
+  }
+  return index === 1 || index === total || index % 25 === 0
+}
 
 function normalizeImportBasename(filePath: string): string {
   return path.basename(filePath).replace(/^[0-9]{10,}-/, "").toLowerCase()
@@ -135,7 +213,13 @@ export async function getMaintenanceAudit(userId: number): Promise<MaintenanceAu
   }
 }
 
-async function runAttachLibrary(userId: number, dryRun: boolean): Promise<MaintenanceResult> {
+async function runAttachLibrary(
+  userId: number,
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
+): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("attach_library", dryRun, onProgress)
+  progress({ phase: "start", message: "Loading library and candidate songs." })
   let library = await prisma.library.findFirst({
     where: { userId },
     orderBy: { createdAt: "asc" },
@@ -155,6 +239,7 @@ async function runAttachLibrary(userId: number, dryRun: boolean): Promise<Mainte
     where: { userId, libraryId: null },
     select: { id: true, filePath: true },
   })
+  progress({ phase: "scan", processed: songsToAttach.length, total: songsToAttach.length, message: "Songs queued for attachment." })
 
   let relativePathUpdated = 0
   if (!dryRun && targetLibraryId > 0) {
@@ -189,6 +274,14 @@ async function runAttachLibrary(userId: number, dryRun: boolean): Promise<Mainte
           data: { relativePath: rel },
         })
         relativePathUpdated += 1
+        if (shouldReportProgress(relativePathUpdated, songsToAttach.length)) {
+          progress({
+            phase: "apply",
+            processed: relativePathUpdated,
+            total: songsToAttach.length,
+            message: "Updating relative paths.",
+          })
+        }
       }
     }
   }
@@ -205,7 +298,13 @@ async function runAttachLibrary(userId: number, dryRun: boolean): Promise<Mainte
   }
 }
 
-async function runBackfillMetadata(userId: number, dryRun: boolean): Promise<MaintenanceResult> {
+async function runBackfillMetadata(
+  userId: number,
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
+): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("backfill_metadata", dryRun, onProgress)
+  progress({ phase: "start", message: "Loading songs and existing artist references." })
   const songs = await prisma.song.findMany({
     where: {
       userId,
@@ -237,8 +336,10 @@ async function runBackfillMetadata(userId: number, dryRun: boolean): Promise<Mai
   let createdArtists = 0
   let createdAlbums = 0
   let updatedSongs = 0
+  progress({ phase: "scan", processed: 0, total: normalized.length, message: "Backfilling artist/album metadata." })
 
-  for (const song of normalized) {
+  for (let i = 0; i < normalized.length; i += 1) {
+    const song = normalized[i]
     let artistId = artistByName.get(song.artistName) || null
     if (!artistId && !dryRun) {
       const created = await prisma.artist.create({
@@ -299,6 +400,14 @@ async function runBackfillMetadata(userId: number, dryRun: boolean): Promise<Mai
       })
       updatedSongs += 1
     }
+    if (shouldReportProgress(i + 1, normalized.length)) {
+      progress({
+        phase: dryRun ? "scan" : "apply",
+        processed: i + 1,
+        total: normalized.length,
+        message: "Processing songs.",
+      })
+    }
   }
 
   return {
@@ -313,7 +422,13 @@ async function runBackfillMetadata(userId: number, dryRun: boolean): Promise<Mai
   }
 }
 
-async function runDedupeLibraryImports(userId: number, dryRun: boolean): Promise<MaintenanceResult> {
+async function runDedupeLibraryImports(
+  userId: number,
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
+): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("dedupe_library_imports", dryRun, onProgress)
+  progress({ phase: "start", message: "Finding duplicate import songs." })
   const duplicates = await getDuplicateImportSongs(userId)
 
   let deletedSongs = 0
@@ -322,8 +437,10 @@ async function runDedupeLibraryImports(userId: number, dryRun: boolean): Promise
   let reassignedCurrentSong = 0
   let copiedCovers = 0
 
+  progress({ phase: "scan", processed: 0, total: duplicates.length, message: "Duplicate candidates loaded." })
   if (!dryRun) {
-    for (const entry of duplicates) {
+    for (let i = 0; i < duplicates.length; i += 1) {
+      const entry = duplicates[i]
       const importSong = entry.importSong
       const originalSong = entry.originalSong
       if (!originalSong) continue
@@ -356,6 +473,14 @@ async function runDedupeLibraryImports(userId: number, dryRun: boolean): Promise
 
       await prisma.song.delete({ where: { id: importSong.id } })
       deletedSongs += 1
+      if (shouldReportProgress(i + 1, duplicates.length)) {
+        progress({
+          phase: "apply",
+          processed: i + 1,
+          total: duplicates.length,
+          message: "Deduplicating import songs.",
+        })
+      }
     }
   }
 
@@ -373,7 +498,13 @@ async function runDedupeLibraryImports(userId: number, dryRun: boolean): Promise
   }
 }
 
-async function runNormalizeTitles(userId: number, dryRun: boolean): Promise<MaintenanceResult> {
+async function runNormalizeTitles(
+  userId: number,
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
+): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("normalize_titles", dryRun, onProgress)
+  progress({ phase: "start", message: "Scanning titles for malformed prefixes." })
   const songs = await prisma.song.findMany({
     where: { userId },
     select: { id: true, title: true, filePath: true },
@@ -385,13 +516,23 @@ async function runNormalizeTitles(userId: number, dryRun: boolean): Promise<Main
       cleaned: sanitizeTitleFromFilename(song.filePath, song.title),
     }))
     .filter((song) => song.cleaned !== song.title)
+  progress({ phase: "scan", processed: 0, total: candidates.length, message: "Title normalization candidates loaded." })
 
   if (!dryRun) {
-    for (const song of candidates) {
+    for (let i = 0; i < candidates.length; i += 1) {
+      const song = candidates[i]
       await prisma.song.update({
         where: { id: song.id },
         data: { title: song.cleaned.slice(0, 500) },
       })
+      if (shouldReportProgress(i + 1, candidates.length)) {
+        progress({
+          phase: "apply",
+          processed: i + 1,
+          total: candidates.length,
+          message: "Updating normalized titles.",
+        })
+      }
     }
   }
 
@@ -405,7 +546,13 @@ async function runNormalizeTitles(userId: number, dryRun: boolean): Promise<Main
   }
 }
 
-async function runFillMissingCovers(userId: number, dryRun: boolean): Promise<MaintenanceResult> {
+async function runFillMissingCovers(
+  userId: number,
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
+): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("fill_missing_covers", dryRun, onProgress)
+  progress({ phase: "start", message: "Scanning songs with missing cover paths." })
   const [withoutCover, withCover] = await Promise.all([
     prisma.song.findMany({
       where: { userId, coverPath: null },
@@ -434,13 +581,23 @@ async function runFillMissingCovers(userId: number, dryRun: boolean): Promise<Ma
         null,
     }))
     .filter((song) => song.coverPath)
+  progress({ phase: "scan", processed: 0, total: candidates.length, message: "Cover fill candidates loaded." })
 
   if (!dryRun) {
-    for (const song of candidates) {
+    for (let i = 0; i < candidates.length; i += 1) {
+      const song = candidates[i]
       await prisma.song.update({
         where: { id: song.id },
         data: { coverPath: song.coverPath },
       })
+      if (shouldReportProgress(i + 1, candidates.length)) {
+        progress({
+          phase: "apply",
+          processed: i + 1,
+          total: candidates.length,
+          message: "Applying cover path updates.",
+        })
+      }
     }
   }
 
@@ -454,7 +611,13 @@ async function runFillMissingCovers(userId: number, dryRun: boolean): Promise<Ma
   }
 }
 
-async function runRefreshFileMetadata(userId: number, dryRun: boolean): Promise<MaintenanceResult> {
+async function runRefreshFileMetadata(
+  userId: number,
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
+): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("refresh_file_metadata", dryRun, onProgress)
+  progress({ phase: "start", message: "Loading local files for metadata probe." })
   const songs = await prisma.song.findMany({
     where: { userId },
     select: {
@@ -483,9 +646,19 @@ async function runRefreshFileMetadata(userId: number, dryRun: boolean): Promise<
   let noMetadataFound = 0
   let updatedSongs = 0
   let failedSongs = 0
+  progress({ phase: "scan", processed: 0, total: songs.length, message: "Scanning file metadata." })
 
-  for (const song of songs) {
+  for (let i = 0; i < songs.length; i += 1) {
+    const song = songs[i]
     scannedSongs += 1
+    if (shouldReportProgress(i + 1, songs.length)) {
+      progress({
+        phase: "scan",
+        processed: i + 1,
+        total: songs.length,
+        message: "Refreshing extracted file metadata.",
+      })
+    }
     try {
       await fs.access(song.filePath)
     } catch {
@@ -593,8 +766,11 @@ async function runRefreshFileMetadata(userId: number, dryRun: boolean): Promise<
 
 async function runQueueRedownloadCandidates(
   userId: number,
-  dryRun: boolean
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
 ): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("queue_redownload_candidates", dryRun, onProgress)
+  progress({ phase: "start", message: "Evaluating songs for re-download candidates." })
   const songs = await prisma.song.findMany({
     where: {
       userId,
@@ -629,9 +805,19 @@ async function runQueueRedownloadCandidates(
     select: { sourceUrl: true },
   })
   const activeUrls = new Set(activeTasks.map((task) => task.sourceUrl))
+  progress({ phase: "scan", processed: 0, total: songs.length, message: "Checking file and technical metadata quality." })
 
-  for (const song of songs) {
+  for (let i = 0; i < songs.length; i += 1) {
+    const song = songs[i]
     checkedSongs += 1
+    if (shouldReportProgress(i + 1, songs.length)) {
+      progress({
+        phase: dryRun ? "scan" : "apply",
+        processed: i + 1,
+        total: songs.length,
+        message: "Queueing redownload candidates.",
+      })
+    }
 
     let hasFile = true
     try {
@@ -700,8 +886,11 @@ async function runQueueRedownloadCandidates(
 
 async function runRefreshOriginMetadata(
   userId: number,
-  dryRun: boolean
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
 ): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("refresh_origin_metadata", dryRun, onProgress)
+  progress({ phase: "start", message: "Loading songs with source URLs." })
   const songs = await prisma.song.findMany({
     where: {
       userId,
@@ -729,13 +918,24 @@ async function runRefreshOriginMetadata(
   let artworkUpdated = 0
   let failedSongs = 0
   let skippedSongs = 0
+  let completedSongs = 0
+  progress({ phase: "scan", processed: 0, total: songs.length, message: "Fetching source metadata and artwork." })
 
-  for (const song of songs) {
+  await runWithConcurrency(songs, ORIGIN_METADATA_CONCURRENCY, async (song) => {
     checkedSongs += 1
     const sourceUrl = song.sourceUrl?.trim() || ""
     if (!sourceUrl) {
       skippedSongs += 1
-      continue
+      completedSongs += 1
+      if (shouldReportProgress(completedSongs, songs.length)) {
+        progress({
+          phase: dryRun ? "scan" : "apply",
+          processed: completedSongs,
+          total: songs.length,
+          message: "Refreshing origin metadata.",
+        })
+      }
+      return
     }
 
     try {
@@ -747,7 +947,11 @@ async function runRefreshOriginMetadata(
       let nextThumbnail = song.thumbnail
 
       if (song.source === "youtube" || song.source === "soundcloud") {
-        const info = await getVideoInfo(sourceUrl)
+        const info = await withTimeout(
+          getVideoInfo(sourceUrl),
+          ORIGIN_LOOKUP_TIMEOUT_MS,
+          "origin metadata lookup"
+        )
         nextTitle = normalizeSongTitle(info.title || song.title || "Unknown title")
         nextArtist = info.artist || song.artist
         nextDuration = info.duration ?? song.duration
@@ -755,29 +959,39 @@ async function runRefreshOriginMetadata(
         if (!nextAlbum && nextArtist) nextAlbum = "Singles"
         if (!nextAlbumArtist && nextArtist) nextAlbumArtist = nextArtist
       } else if (song.source === "spotify") {
-        const thumb = await getSpotifyThumbnail(sourceUrl)
+        const thumb = await withTimeout(
+          getSpotifyThumbnail(sourceUrl),
+          SPOTIFY_LOOKUP_TIMEOUT_MS,
+          "spotify thumbnail lookup"
+        )
         if (thumb) nextThumbnail = thumb
         if (!nextAlbum && (nextArtist || song.artist)) nextAlbum = "Singles"
         if (!nextAlbumArtist && (nextArtist || song.artist)) nextAlbumArtist = nextArtist || song.artist
       }
 
-      const refs = await ensureArtistAlbumRefs({
-        userId,
+      const resolvedFields = resolveAlbumFields({
         artist: nextArtist,
         album: nextAlbum,
         albumArtist: nextAlbumArtist,
-        year: song.year ?? null,
       })
 
       const metadataChanged =
         nextTitle !== song.title ||
         nextArtist !== song.artist ||
-        refs.album !== song.album ||
-        refs.albumArtist !== song.albumArtist ||
+        resolvedFields.album !== song.album ||
+        resolvedFields.albumArtist !== song.albumArtist ||
         nextDuration !== song.duration ||
         nextThumbnail !== song.thumbnail
 
       if (!dryRun && metadataChanged) {
+        const refs = await ensureArtistAlbumRefs({
+          userId,
+          artist: nextArtist,
+          album: resolvedFields.album,
+          albumArtist: resolvedFields.albumArtist,
+          year: song.year ?? null,
+        })
+
         await prisma.song.update({
           where: { id: song.id },
           data: {
@@ -806,8 +1020,18 @@ async function runRefreshOriginMetadata(
       }
     } catch {
       failedSongs += 1
+    } finally {
+      completedSongs += 1
+      if (shouldReportProgress(completedSongs, songs.length)) {
+        progress({
+          phase: dryRun ? "scan" : "apply",
+          processed: completedSongs,
+          total: songs.length,
+          message: "Refreshing origin metadata.",
+        })
+      }
     }
-  }
+  })
 
   return {
     action: "refresh_origin_metadata",
@@ -818,6 +1042,7 @@ async function runRefreshOriginMetadata(
       artworkUpdated,
       failedSongs,
       skippedSongs,
+      concurrency: ORIGIN_METADATA_CONCURRENCY,
     },
   }
 }
@@ -825,15 +1050,25 @@ async function runRefreshOriginMetadata(
 export async function runMaintenanceAction(
   userId: number,
   action: MaintenanceAction,
-  dryRun: boolean
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
 ): Promise<MaintenanceResult> {
-  if (action === "attach_library") return runAttachLibrary(userId, dryRun)
-  if (action === "backfill_metadata") return runBackfillMetadata(userId, dryRun)
-  if (action === "dedupe_library_imports") return runDedupeLibraryImports(userId, dryRun)
-  if (action === "normalize_titles") return runNormalizeTitles(userId, dryRun)
-  if (action === "fill_missing_covers") return runFillMissingCovers(userId, dryRun)
-  if (action === "refresh_file_metadata") return runRefreshFileMetadata(userId, dryRun)
-  if (action === "queue_redownload_candidates") return runQueueRedownloadCandidates(userId, dryRun)
-  if (action === "refresh_origin_metadata") return runRefreshOriginMetadata(userId, dryRun)
-  throw new Error(`Unsupported action: ${action}`)
+  let result: MaintenanceResult
+  if (action === "attach_library") result = await runAttachLibrary(userId, dryRun, onProgress)
+  else if (action === "backfill_metadata") result = await runBackfillMetadata(userId, dryRun, onProgress)
+  else if (action === "dedupe_library_imports") result = await runDedupeLibraryImports(userId, dryRun, onProgress)
+  else if (action === "normalize_titles") result = await runNormalizeTitles(userId, dryRun, onProgress)
+  else if (action === "fill_missing_covers") result = await runFillMissingCovers(userId, dryRun, onProgress)
+  else if (action === "refresh_file_metadata") result = await runRefreshFileMetadata(userId, dryRun, onProgress)
+  else if (action === "queue_redownload_candidates") result = await runQueueRedownloadCandidates(userId, dryRun, onProgress)
+  else if (action === "refresh_origin_metadata") result = await runRefreshOriginMetadata(userId, dryRun, onProgress)
+  else throw new Error(`Unsupported action: ${action}`)
+
+  onProgress?.({
+    action,
+    dryRun,
+    phase: "complete",
+    message: "Maintenance action completed.",
+  })
+  return result
 }
