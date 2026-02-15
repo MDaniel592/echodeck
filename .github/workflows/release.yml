@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - "v*"
+      - "echodeck-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. echodeck-v1.0.1)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,6 +19,8 @@ permissions:
 jobs:
   release-assets:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,18 +29,21 @@ jobs:
       - name: Build source tarball
         run: |
           mkdir -p dist
-          git archive --format=tar.gz --prefix=echodeck-${GITHUB_REF_NAME}/ -o dist/echodeck-${GITHUB_REF_NAME}-source.tar.gz HEAD
-          sha256sum dist/echodeck-${GITHUB_REF_NAME}-source.tar.gz > dist/echodeck-${GITHUB_REF_NAME}-source.tar.gz.sha256
+          git archive --format=tar.gz --prefix=echodeck-${RELEASE_TAG}/ -o dist/echodeck-${RELEASE_TAG}-source.tar.gz HEAD
+          sha256sum dist/echodeck-${RELEASE_TAG}-source.tar.gz > dist/echodeck-${RELEASE_TAG}-source.tar.gz.sha256
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
             dist/*.tar.gz
             dist/*.sha256
 
   docker-image:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +67,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/echodeck
           tags: |
             type=ref,event=tag
+            type=raw,value=${{ env.RELEASE_TAG }}
             type=raw,value=latest
 
       - name: Build and push Docker image
