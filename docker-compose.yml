@@ -1,0 +1,24 @@
+services:
+  music-player:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: file:./data/dev.db
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      SETUP_SECRET: ${SETUP_SECRET:?SETUP_SECRET is required for production}
+      NEXT_TELEMETRY_DISABLED: "1"
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
+      SPOTIFY_AUTH_TOKEN: ${SPOTIFY_AUTH_TOKEN:-}
+    volumes:
+      - music_player_data:/app/data
+      - music_player_downloads:/app/downloads
+    restart: unless-stopped
+
+volumes:
+  music_player_data:
+  music_player_downloads:

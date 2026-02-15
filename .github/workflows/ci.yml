@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # Skip postinstall binary downloads in CI
+          SKIP_SETUP: "1"
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+        env:
+          JWT_SECRET: ci-test-secret-not-real
+          DATABASE_URL: "file:./test.db"
+
+      - name: Build
+        run: npm run build
+        env:
+          JWT_SECRET: ci-test-secret-not-real
+          DATABASE_URL: "file:./test.db"

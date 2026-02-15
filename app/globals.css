@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Custom scrollbar used in desktop web player scroll areas */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #52525b #111827;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, #09090b 0%, #111827 100%);
+  border-radius: 999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #71717a 0%, #52525b 100%);
+  border: 2px solid #111827;
+  border-radius: 999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #a1a1aa 0%, #71717a 100%);
+}
+
+@media (max-width: 767px) {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+}
+
+.player-marquee-track {
+  animation-name: player-marquee;
+  animation-duration: var(--player-marquee-duration, 8s);
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+@keyframes player-marquee {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(calc(-1 * var(--player-marquee-travel, 0px)), 0, 0);
+  }
+}
+
+@keyframes queue-sheet-in {
+  0% {
+    transform: translate3d(0, 28px, 0);
+    opacity: 0;
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+
+select:not([multiple]) {
+   -webkit-appearance: none;
+   -moz-appearance: none;
+   appearance: none;
+   padding-right: 2.5rem;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpolyline%20points='6%2010%2012%2016%2018%2010'%20stroke='%23d4d4d4'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3C/polyline%3E%3C/svg%3E");
+   background-repeat: no-repeat;
+   background-position: right 0.75rem center;
+   background-size: 0.75rem;
+ }
+
+select::-ms-expand {
+   display: none;
+ }

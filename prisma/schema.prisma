@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Song {
+  id        Int      @id @default(autoincrement())
+  title     String
+  artist    String?
+  duration  Int?
+  format    String
+  quality   String?
+  source    String
+  sourceUrl String?
+  filePath  String
+  coverPath String?
+  thumbnail String?
+  fileSize  Int?
+  playlistId Int?
+  playlist   Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
+  downloadTaskId Int?
+  downloadTask DownloadTask? @relation(fields: [downloadTaskId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@unique([source, sourceUrl])
+  @@index([playlistId])
+  @@index([source])
+  @@index([createdAt])
+  @@index([title])
+  @@index([artist])
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model Playlist {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  songs     Song[]
+  downloadTasks DownloadTask[]
+}
+
+model DownloadTask {
+  id                  Int                 @id @default(autoincrement())
+  source              String
+  sourceUrl           String
+  format              String
+  quality             String?
+  bestAudioPreference String?
+  playlistId          Int?
+  playlist            Playlist?           @relation(fields: [playlistId], references: [id], onDelete: SetNull)
+  status              String              @default("queued")
+  playlistTitle       String?
+  isPlaylist          Boolean             @default(false)
+  totalItems          Int?
+  processedItems      Int                 @default(0)
+  successfulItems     Int                 @default(0)
+  failedItems         Int                 @default(0)
+  errorMessage        String?
+  workerPid           Int?
+  heartbeatAt         DateTime?
+  createdAt           DateTime            @default(now())
+  startedAt           DateTime?
+  completedAt         DateTime?
+  updatedAt           DateTime            @updatedAt
+  songs               Song[]
+  events              DownloadTaskEvent[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model DownloadTaskEvent {
+  id        Int          @id @default(autoincrement())
+  taskId    Int
+  task      DownloadTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  level     String
+  message   String
+  payload   String?
+  createdAt DateTime     @default(now())
+
+  @@index([taskId])
+}

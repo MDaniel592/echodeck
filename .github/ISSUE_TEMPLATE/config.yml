@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/your-org/your-repo/security/advisories/new
+    about: Please report vulnerabilities privately via GitHub Security Advisories.
+  - name: Usage and legal questions
+    url: https://github.com/your-org/your-repo/discussions
+    about: Ask non-bug questions about setup, usage, and legal compliance responsibilities.
