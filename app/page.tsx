@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation"
 import DownloadForm from "./components/DownloadForm"
 import SongList from "./components/SongList"
 import Player from "./components/Player"
+import LibraryToolbar from "./components/library/LibraryToolbar"
+import LibraryGroupFolder from "./components/library/LibraryGroupFolder"
+import SongGridCards from "./components/library/SongGridCards"
 import { normalizeSongTitle } from "../lib/songTitle"
 import { removeQueueItem, reorderQueue } from "../lib/playbackQueue"
 import { groupSongsByScope } from "../lib/songGrouping"
@@ -47,24 +50,6 @@ interface LibrarySummary {
 const QUEUE_STORAGE_KEY = "echodeck.queue.ids"
 const DEVICE_ID_STORAGE_KEY = "echodeck.device.id"
 
-function SearchIcon({ className = "h-4 w-4" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <circle cx="11" cy="11" r="7" />
-      <path d="M20 20l-3.4-3.4" />
-    </svg>
-  )
-}
-
 function LogoutIcon() {
   return (
     <svg
@@ -84,64 +69,6 @@ function LogoutIcon() {
   )
 }
 
-function CloseIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-3.5 w-3.5"
-      aria-hidden="true"
-    >
-      <path d="M6 6l12 12" />
-      <path d="M18 6L6 18" />
-    </svg>
-  )
-}
-
-function GridIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5" aria-hidden="true">
-      <rect x="3" y="3" width="7" height="7" rx="1.2" />
-      <rect x="14" y="3" width="7" height="7" rx="1.2" />
-      <rect x="3" y="14" width="7" height="7" rx="1.2" />
-      <rect x="14" y="14" width="7" height="7" rx="1.2" />
-    </svg>
-  )
-}
-
-function ListIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5" aria-hidden="true">
-      <path d="M8 6h13" />
-      <path d="M8 12h13" />
-      <path d="M8 18h13" />
-      <circle cx="4" cy="6" r="1" fill="currentColor" stroke="none" />
-      <circle cx="4" cy="12" r="1" fill="currentColor" stroke="none" />
-      <circle cx="4" cy="18" r="1" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
-
-function FolderIcon({ open }: { open: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
-      <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v2H3V7z" />
-      <rect x="3" y="11" width="18" height="9" rx="2" />
-      {open && <path d="M7 15h10" />}
-    </svg>
-  )
-}
-
-function formatDuration(seconds: number | null): string {
-  if (!seconds) return "--:--"
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  return `${m}:${s.toString().padStart(2, "0")}`
-}
 
 export default function Home() {
   const router = useRouter()
@@ -169,7 +96,6 @@ export default function Home() {
     repeatMode: "off",
     shuffle: false,
   })
-  const searchInputRef = useRef<HTMLInputElement>(null)
   const hydratedPlaybackRef = useRef(false)
 
   const songById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs])
@@ -666,27 +592,15 @@ export default function Home() {
         {groupedVisibleSongs.map((group) => {
           const isOpen = expandedGroupKey === group.key
           return (
-            <section key={group.key} className="rounded-2xl border border-white/10 bg-white/[0.03]">
-              <button
-                type="button"
-                onClick={() => setExpandedGroupKey((prev) => (prev === group.key ? null : group.key))}
-                className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left hover:bg-white/[0.04] sm:px-4"
-                aria-expanded={isOpen}
-              >
-                <div className="flex items-center gap-2.5">
-                  <span className={isOpen ? "text-sky-300" : "text-zinc-300"}>
-                    <FolderIcon open={isOpen} />
-                  </span>
-                  <h3 className={`text-sm font-semibold tracking-wide ${isOpen ? "text-sky-100" : "text-zinc-100"}`}>{group.label}</h3>
-                </div>
-                <span className="text-xs text-zinc-400 tabular-nums">{group.songs.length} tracks</span>
-              </button>
-              {isOpen ? (
-                <div className="border-t border-white/10 p-2.5 sm:p-3">
-                  {children(group, isOpen)}
-                </div>
-              ) : null}
-            </section>
+            <LibraryGroupFolder
+              key={group.key}
+              label={group.label}
+              count={group.songs.length}
+              isOpen={isOpen}
+              onToggle={() => setExpandedGroupKey((prev) => (prev === group.key ? null : group.key))}
+            >
+              {children(group, isOpen)}
+            </LibraryGroupFolder>
           )
         })}
       </div>
@@ -696,56 +610,13 @@ export default function Home() {
   function renderGroupedGrid() {
     if (scopeMode !== "all") {
       return renderGroupFolders((group) => (
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
-          {group.songs.map((song) => {
-            const coverSrc = song.coverPath ? `/api/cover/${song.id}` : song.thumbnail
-            const isPlaying = currentSongId === song.id
-            return (
-              <article
-                key={song.id}
-                className={`rounded-lg border p-2 transition-colors ${
-                  isPlaying
-                    ? "border-sky-300/40 bg-sky-400/10"
-                    : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => handlePlaySong(song)}
-                  className="w-full text-left"
-                >
-                  <div className="aspect-square overflow-hidden rounded-lg bg-zinc-900">
-                    {coverSrc ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={coverSrc} alt={`${song.title} cover`} className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-zinc-600">♪</div>
-                    )}
-                  </div>
-                  <p className={`mt-1.5 truncate text-xs font-medium ${isPlaying ? "text-sky-200" : "text-zinc-100"}`}>{song.title}</p>
-                  <p className="truncate text-[11px] text-zinc-400">{song.artist || "Unknown Artist"}</p>
-                  <p className="mt-0.5 text-[10px] text-zinc-500">{formatDuration(song.duration)}</p>
-                </button>
-                <div className="mt-1.5 flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => handlePlayNext(song)}
-                    className="h-6 flex-1 rounded border border-white/10 text-[10px] text-zinc-200 hover:bg-white/10"
-                  >
-                    Next
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleAddToQueue(song)}
-                    className="h-6 flex-1 rounded border border-white/10 text-[10px] text-zinc-200 hover:bg-white/10"
-                  >
-                    Queue
-                  </button>
-                </div>
-              </article>
-            )
-          })}
-        </div>
+        <SongGridCards
+          songs={group.songs}
+          currentSongId={currentSongId}
+          onPlay={handlePlaySong}
+          onPlayNext={handlePlayNext}
+          onAddToQueue={handleAddToQueue}
+        />
       ))
     }
 
@@ -759,56 +630,13 @@ export default function Home() {
                 <span className="text-xs text-zinc-400 tabular-nums">{group.songs.length} tracks</span>
               </div>
             )}
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
-              {group.songs.map((song) => {
-                const coverSrc = song.coverPath ? `/api/cover/${song.id}` : song.thumbnail
-                const isPlaying = currentSongId === song.id
-                return (
-                  <article
-                    key={song.id}
-                    className={`rounded-lg border p-2 transition-colors ${
-                      isPlaying
-                        ? "border-sky-300/40 bg-sky-400/10"
-                        : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handlePlaySong(song)}
-                      className="w-full text-left"
-                    >
-                      <div className="aspect-square overflow-hidden rounded-lg bg-zinc-900">
-                        {coverSrc ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={coverSrc} alt={`${song.title} cover`} className="h-full w-full object-cover" />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-zinc-600">♪</div>
-                        )}
-                      </div>
-                      <p className={`mt-1.5 truncate text-xs font-medium ${isPlaying ? "text-sky-200" : "text-zinc-100"}`}>{song.title}</p>
-                      <p className="truncate text-[11px] text-zinc-400">{song.artist || "Unknown Artist"}</p>
-                      <p className="mt-0.5 text-[10px] text-zinc-500">{formatDuration(song.duration)}</p>
-                    </button>
-                    <div className="mt-1.5 flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handlePlayNext(song)}
-                        className="h-6 flex-1 rounded border border-white/10 text-[10px] text-zinc-200 hover:bg-white/10"
-                      >
-                        Next
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleAddToQueue(song)}
-                        className="h-6 flex-1 rounded border border-white/10 text-[10px] text-zinc-200 hover:bg-white/10"
-                      >
-                        Queue
-                      </button>
-                    </div>
-                  </article>
-                )
-              })}
-            </div>
+            <SongGridCards
+              songs={group.songs}
+              currentSongId={currentSongId}
+              onPlay={handlePlaySong}
+              onPlayNext={handlePlayNext}
+              onAddToQueue={handleAddToQueue}
+            />
           </section>
         ))}
       </div>
@@ -900,90 +728,20 @@ export default function Home() {
 
           {/* Toolbar row (library tab only) */}
           {activeTab === "player" && (
-            <div className="flex flex-wrap items-center gap-2 pb-2 pt-0 lg:gap-3">
-              {/* Search */}
-              <div className="relative flex-1 max-w-xs">
-                <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-2.5 text-zinc-400">
-                  <SearchIcon />
-                </span>
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search..."
-                  className="h-8 w-full rounded-lg border border-white/10 bg-white/5 pl-8 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-sky-300/50 focus:outline-none lg:h-10 lg:text-base"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery("")}
-                    className="absolute inset-y-0 right-0 flex items-center pr-2 text-zinc-400 hover:text-zinc-100"
-                    aria-label="Clear search"
-                  >
-                    <CloseIcon />
-                  </button>
-                )}
-              </div>
-
-              <select
-                value={scopeMode}
-                onChange={(e) => setScopeMode(e.target.value as ScopeMode)}
-                className="h-8 rounded-lg border border-white/10 bg-white/5 pl-2.5 text-xs text-zinc-200 transition-colors focus:border-sky-300/50 focus:outline-none lg:h-10 lg:text-sm"
-                aria-label="Scope"
-              >
-                <option value="all">Scope: All Songs</option>
-                <option value="playlists">Scope: Playlists</option>
-                <option value="libraries">Scope: Libraries</option>
-              </select>
-
-              {scopeMode !== "libraries" && (
-                <select
-                  value={selectedPlaylist}
-                  onChange={(e) => setSelectedPlaylist(e.target.value)}
-                  className="h-8 rounded-lg border border-white/10 bg-white/5 pl-2.5 text-xs text-zinc-200 transition-colors focus:border-sky-300/50 focus:outline-none sm:min-w-[10rem] lg:h-10 lg:text-sm"
-                >
-                  <option value="all">All Playlists ({songs.length})</option>
-                  <option value="none">
-                    Unassigned ({songs.filter((s) => s.playlistId === null).length})
-                  </option>
-                  {playlists.map((playlist) => (
-                    <option key={playlist.id} value={playlist.id}>
-                      {playlist.name} ({playlist._count.songs})
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              <div className="inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 p-0.5 lg:h-10">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("list")}
-                  className={`inline-flex h-full items-center gap-1 rounded-md px-2.5 text-xs transition-colors ${
-                    viewMode === "list"
-                      ? "bg-sky-300/90 text-slate-900"
-                      : "text-zinc-200 hover:bg-white/10"
-                  }`}
-                  aria-pressed={viewMode === "list"}
-                >
-                  <ListIcon />
-                  List
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode("grid")}
-                  className={`inline-flex h-full items-center gap-1 rounded-md px-2.5 text-xs transition-colors ${
-                    viewMode === "grid"
-                      ? "bg-sky-300/90 text-slate-900"
-                      : "text-zinc-200 hover:bg-white/10"
-                  }`}
-                  aria-pressed={viewMode === "grid"}
-                >
-                  <GridIcon />
-                  Grid
-                </button>
-              </div>
-            </div>
+            <LibraryToolbar
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              onClearSearch={() => setSearchQuery("")}
+              scopeMode={scopeMode}
+              onScopeModeChange={setScopeMode}
+              selectedPlaylist={selectedPlaylist}
+              onSelectedPlaylistChange={setSelectedPlaylist}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              songsCount={songs.length}
+              unassignedCount={songs.filter((song) => song.playlistId === null).length}
+              playlists={playlists}
+            />
           )}
         </div>
       </header>
