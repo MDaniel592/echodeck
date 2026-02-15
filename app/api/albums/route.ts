@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
 
     const [albums, total] = await Promise.all([
       prisma.album.findMany({
-        where: { userId: auth.userId },
+        where: { userId: auth.userId, songs: { some: {} } },
         orderBy: [{ year: "desc" }, { title: "asc" }],
         skip,
         take: limit,
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
           _count: { select: { songs: true } },
         },
       }),
-      prisma.album.count({ where: { userId: auth.userId } }),
+      prisma.album.count({ where: { userId: auth.userId, songs: { some: {} } } }),
     ])
 
     return NextResponse.json({

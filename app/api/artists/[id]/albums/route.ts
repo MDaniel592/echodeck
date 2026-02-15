@@ -23,7 +23,7 @@ export async function GET(
     }
 
     const albums = await prisma.album.findMany({
-      where: { userId: auth.userId, artistId },
+      where: { userId: auth.userId, artistId, songs: { some: {} } },
       orderBy: [{ year: "desc" }, { title: "asc" }],
       include: {
         _count: { select: { songs: true } },
