@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       authenticated: true,
       needsSetup: false,
-      user: { id: auth.userId, role: auth.role },
+      user: { id: auth.userId, username: auth.username, role: auth.role },
     })
   } catch (error) {
     if (error instanceof AuthError) {

@@ -15,6 +15,7 @@ export class AuthError extends Error {
 export type AuthedUser = {
   userId: number
   role: "admin" | "user"
+  username: string
 }
 
 export async function requireAuth(request: NextRequest): Promise<AuthedUser> {
@@ -30,7 +31,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthedUser> {
 
   const user = await prisma.user.findUnique({
     where: { id: payload.userId },
-    select: { id: true, role: true, disabledAt: true },
+    select: { id: true, username: true, role: true, disabledAt: true },
   })
   if (!user || user.disabledAt) {
     throw new AuthError("Unauthorized", 401)
@@ -39,6 +40,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthedUser> {
   return {
     userId: user.id,
     role: user.role,
+    username: user.username,
   }
 }
 
