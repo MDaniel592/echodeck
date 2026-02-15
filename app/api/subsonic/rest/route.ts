@@ -35,6 +35,11 @@ type SubsonicUser = {
   username: string
 }
 
+type AuthResult =
+  | { ok: true; user: SubsonicUser }
+  | { ok: false; rateLimited: false }
+  | { ok: false; rateLimited: true; retryAfterSeconds: number }
+
 const SUBSONIC_MAX_FAILED_ATTEMPTS_PER_ACCOUNT = 20
 const SUBSONIC_MAX_FAILED_ATTEMPTS_PER_CLIENT = 80
 const SUBSONIC_WINDOW_MS = 15 * 60 * 1000
@@ -62,12 +67,12 @@ function decodePassword(raw: string): string {
   return raw
 }
 
-async function authenticate(request: NextRequest): Promise<SubsonicUser | null> {
+async function authenticate(request: NextRequest): Promise<AuthResult> {
   const username = request.nextUrl.searchParams.get("u")?.trim() || ""
   const passwordRaw = request.nextUrl.searchParams.get("p") || ""
   const tokenRaw = request.nextUrl.searchParams.get("t") || ""
   const salt = request.nextUrl.searchParams.get("s") || ""
-  if (!username || (!passwordRaw && !(tokenRaw && salt))) return null
+  if (!username || (!passwordRaw && !(tokenRaw && salt))) return { ok: false, rateLimited: false }
 
   const user = await prisma.user.findUnique({
     where: { username },
@@ -80,7 +85,7 @@ async function authenticate(request: NextRequest): Promise<SubsonicUser | null> 
       disabledAt: true,
     },
   })
-  if (!user || user.disabledAt) return null
+  if (!user || user.disabledAt) return { ok: false, rateLimited: false }
 
   let valid = false
   if (passwordRaw) {
@@ -122,12 +127,17 @@ async function authenticate(request: NextRequest): Promise<SubsonicUser | null> 
       SUBSONIC_WINDOW_MS
     )
     if (!perClientLimit.allowed || !accountLimit.allowed) {
-      return null
+      const retryAfterSeconds = Math.max(
+        perClientLimit.retryAfterSeconds || 0,
+        accountLimit.retryAfterSeconds || 0,
+        1
+      )
+      return { ok: false, rateLimited: true, retryAfterSeconds }
     }
-    return null
+    return { ok: false, rateLimited: false }
   }
 
-  return { id: user.id, username: user.username }
+  return { ok: true, user: { id: user.id, username: user.username } }
 }
 
 function commandFromRequest(request: NextRequest): string {
@@ -256,10 +266,21 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const user = await authenticate(request)
-    if (!user) {
+    const authResult = await authenticate(request)
+    if (!authResult.ok) {
+      if (authResult.rateLimited) {
+        const failed = response(
+          request,
+          { error: { code: 40, message: "Too many failed login attempts. Try again later." } },
+          "failed"
+        )
+        const headers = new Headers(failed.headers)
+        headers.set("Retry-After", String(authResult.retryAfterSeconds))
+        return new Response(failed.body, { status: 429, headers })
+      }
       return response(request, { error: { code: 40, message: "Wrong username or password" } }, "failed")
     }
+    const user = authResult.user
     const subsonicDeviceId = `subsonic:${user.username}`
 
     if (cmd === "getUser") {

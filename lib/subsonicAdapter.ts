@@ -7,6 +7,7 @@ type SubsonicSong = {
   title: string
   artist: string | null
   album: string | null
+  coverPath?: string | null
   duration: number | null
   trackNumber: number | null
   year: number | null
@@ -59,12 +60,19 @@ export function subsonicResponse(
 }
 
 export function mapSubsonicSong(song: SubsonicSong) {
+  const coverArtId = song.coverPath
+    ? String(song.id)
+    : song.albumId
+      ? `al-${song.albumId}`
+      : undefined
+
   return {
     id: String(song.id),
     title: normalizeSongTitle(song.title || "Unknown title"),
     artist: song.artist || undefined,
     album: song.album || undefined,
     albumId: song.albumId ? String(song.albumId) : undefined,
+    coverArt: coverArtId,
     duration: song.duration || undefined,
     track: song.trackNumber || undefined,
     year: song.year || undefined,

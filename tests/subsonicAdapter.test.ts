@@ -27,6 +27,7 @@ describe("subsonicAdapter", () => {
 
     expect(mapped.id).toBe("42")
     expect(mapped.albumId).toBe("7")
+    expect(mapped.coverArt).toBe("al-7")
     expect(mapped.track).toBe(3)
   })
 
