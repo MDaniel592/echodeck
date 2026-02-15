@@ -564,6 +564,14 @@ export default function Home() {
               Manage
             </button>
 
+            <button
+              type="button"
+              onClick={() => router.push("/admin/maintenance")}
+              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-zinc-800 px-3 text-xs text-zinc-300 hover:bg-zinc-900 md:text-sm"
+            >
+              Repair
+            </button>
+
             {/* Logout */}
             <button
               type="button"

@@ -97,14 +97,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!user.subsonicPasswordEnc) {
-      const encrypted = encryptSubsonicPassword(password)
-      if (encrypted) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { subsonicPasswordEnc: encrypted },
-        }).catch(() => {})
-      }
+    const encrypted = encryptSubsonicPassword(password)
+    if (encrypted) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { subsonicPasswordEnc: encrypted },
+      }).catch(() => {})
     }
 
     const token = createToken(user.id, user.authTokenVersion)
