@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import crypto from "crypto"
 import prisma from "../../../../lib/prisma"
 import { hashPassword } from "../../../../lib/auth"
+import { encryptSubsonicPassword } from "../../../../lib/subsonicPassword"
 import { AuthError, requireAdmin, requireAuth } from "../../../../lib/requireAuth"
 
 async function countActiveAdmins(excludeUserId?: number): Promise<number> {
@@ -54,6 +55,7 @@ export async function PATCH(
       disabledAt?: Date | null
       passwordHash?: string
       subsonicToken?: string
+      subsonicPasswordEnc?: string | null
     } = {}
 
     if (role) {
@@ -87,6 +89,7 @@ export async function PATCH(
         return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 })
       }
       updates.passwordHash = await hashPassword(password)
+      updates.subsonicPasswordEnc = encryptSubsonicPassword(password)
     }
 
     if (rotateSubsonicToken) {

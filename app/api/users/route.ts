@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import crypto from "crypto"
 import prisma from "../../../lib/prisma"
 import { hashPassword } from "../../../lib/auth"
+import { encryptSubsonicPassword } from "../../../lib/subsonicPassword"
 import { AuthError, requireAdmin, requireAuth } from "../../../lib/requireAuth"
 
 export async function GET(request: NextRequest) {
@@ -58,12 +59,14 @@ export async function POST(request: NextRequest) {
     }
 
     const passwordHash = await hashPassword(password)
+    const subsonicPasswordEnc = encryptSubsonicPassword(password)
     const user = await prisma.user.create({
       data: {
         username,
         passwordHash,
         role,
         subsonicToken: crypto.randomBytes(24).toString("hex"),
+        subsonicPasswordEnc,
       },
       select: {
         id: true,

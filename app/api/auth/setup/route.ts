@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import crypto from "crypto"
 import prisma from "../../../../lib/prisma"
 import { hashPassword, createToken } from "../../../../lib/auth"
+import { encryptSubsonicPassword } from "../../../../lib/subsonicPassword"
 
 export async function POST(request: NextRequest) {
   try {
@@ -50,6 +51,7 @@ export async function POST(request: NextRequest) {
     }
 
     const passwordHash = await hashPassword(password)
+    const subsonicPasswordEnc = encryptSubsonicPassword(password)
 
     // Atomic check-and-create: attempt to create the user and rely on
     // application-level guard.  We use a transaction that checks count
@@ -68,6 +70,7 @@ export async function POST(request: NextRequest) {
             passwordHash,
             role: "admin",
             subsonicToken: crypto.randomBytes(24).toString("hex"),
+            subsonicPasswordEnc,
           },
         })
       })

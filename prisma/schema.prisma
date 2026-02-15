@@ -78,6 +78,7 @@ model User {
   username     String   @unique
   passwordHash String
   subsonicToken String?
+  subsonicPasswordEnc String?
   role         UserRole @default(admin)
   disabledAt   DateTime?
   createdAt    DateTime @default(now())

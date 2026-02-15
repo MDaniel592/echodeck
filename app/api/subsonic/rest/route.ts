@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import fs from "fs"
 import fsPromises from "fs/promises"
 import path from "path"
-import crypto from "crypto"
 import { spawn } from "child_process"
 import prisma from "../../../../lib/prisma"
 import { verifyPassword } from "../../../../lib/auth"
@@ -15,6 +14,11 @@ import {
   getPlaylistSongsForUser,
   replacePlaylistEntriesForUser,
 } from "../../../../lib/playlistEntries"
+import {
+  createSubsonicTokenFromPassword,
+  decryptSubsonicPassword,
+  encryptSubsonicPassword,
+} from "../../../../lib/subsonicPassword"
 
 type SubsonicUser = {
   id: number
@@ -46,6 +50,7 @@ function response(request: NextRequest, payload: Record<string, unknown>, status
     status,
     version: "1.16.1",
     type: "EchoDeck",
+    openSubsonic: true,
     serverVersion: "1.0.0",
     ...payload,
   }
@@ -68,7 +73,7 @@ function response(request: NextRequest, payload: Record<string, unknown>, status
     )
   }
 
-  const attrs = `status="${xmlEscape(status)}" version="1.16.1" type="EchoDeck" serverVersion="1.0.0" xmlns="http://subsonic.org/restapi"`
+  const attrs = `status="${xmlEscape(status)}" version="1.16.1" type="EchoDeck" openSubsonic="true" serverVersion="1.0.0" xmlns="http://subsonic.org/restapi"`
   const xmlBody = objectToXml(payload)
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<subsonic-response ${attrs}>${xmlBody}</subsonic-response>`
 
@@ -163,7 +168,14 @@ async function authenticate(request: NextRequest): Promise<SubsonicUser | null> 
 
   const user = await prisma.user.findUnique({
     where: { username },
-    select: { id: true, username: true, passwordHash: true, subsonicToken: true, disabledAt: true },
+    select: {
+      id: true,
+      username: true,
+      passwordHash: true,
+      subsonicToken: true,
+      subsonicPasswordEnc: true,
+      disabledAt: true,
+    },
   })
   if (!user || user.disabledAt) return null
 
@@ -171,12 +183,26 @@ async function authenticate(request: NextRequest): Promise<SubsonicUser | null> 
   if (passwordRaw) {
     const password = decodePassword(passwordRaw)
     valid = await verifyPassword(password, user.passwordHash)
-  } else if (tokenRaw && salt && user.subsonicToken) {
-    const expected = crypto
-      .createHash("md5")
-      .update(`${user.subsonicToken}${salt}`)
-      .digest("hex")
-    valid = expected.toLowerCase() === tokenRaw.toLowerCase()
+    if (valid && !user.subsonicPasswordEnc) {
+      const encrypted = encryptSubsonicPassword(password)
+      if (encrypted) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { subsonicPasswordEnc: encrypted },
+        }).catch(() => {})
+      }
+    }
+  } else if (tokenRaw && salt) {
+    const storedPassword = decryptSubsonicPassword(user.subsonicPasswordEnc)
+    if (storedPassword) {
+      const expectedFromPassword = createSubsonicTokenFromPassword(storedPassword, salt)
+      valid = expectedFromPassword.toLowerCase() === tokenRaw.toLowerCase()
+    }
+
+    if (!valid && user.subsonicToken) {
+      const expectedFromLegacyToken = createSubsonicTokenFromPassword(user.subsonicToken, salt)
+      valid = expectedFromLegacyToken.toLowerCase() === tokenRaw.toLowerCase()
+    }
   }
 
   if (!valid) return null
@@ -328,6 +354,18 @@ export async function GET(request: NextRequest) {
 
     if (cmd === "ping" || cmd === "getLicense") {
       return response(request, cmd === "getLicense" ? { license: { valid: true } } : {})
+    }
+
+    if (cmd === "getOpenSubsonicExtensions") {
+      return response(request, {
+        openSubsonicExtensions: {
+          openSubsonicExtension: [
+            { name: "apiKeyAuthentication", versions: "1" },
+            { name: "formPost", versions: "1" },
+            { name: "transcodeOffset", versions: "1" },
+          ],
+        },
+      })
     }
 
     const user = await authenticate(request)
