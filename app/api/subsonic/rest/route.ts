@@ -35,8 +35,8 @@ type SubsonicUser = {
   username: string
 }
 
-const SUBSONIC_MAX_ATTEMPTS_PER_ACCOUNT = 20
-const SUBSONIC_MAX_ATTEMPTS_PER_CLIENT = 80
+const SUBSONIC_MAX_FAILED_ATTEMPTS_PER_ACCOUNT = 20
+const SUBSONIC_MAX_FAILED_ATTEMPTS_PER_CLIENT = 80
 const SUBSONIC_WINDOW_MS = 15 * 60 * 1000
 const TRUST_PROXY = process.env.TRUST_PROXY === "1"
 
@@ -68,26 +68,6 @@ async function authenticate(request: NextRequest): Promise<SubsonicUser | null> 
   const tokenRaw = request.nextUrl.searchParams.get("t") || ""
   const salt = request.nextUrl.searchParams.get("s") || ""
   if (!username || (!passwordRaw && !(tokenRaw && salt))) return null
-
-  const client = getClientIdentifier(request)
-  const perClientLimit = checkRateLimit(
-    `subsonic:client:${client}`,
-    SUBSONIC_MAX_ATTEMPTS_PER_CLIENT,
-    SUBSONIC_WINDOW_MS
-  )
-  if (!perClientLimit.allowed) {
-    return null
-  }
-
-  const accountKey = `subsonic:account:${username.toLowerCase()}:${client}`
-  const accountLimit = checkRateLimit(
-    accountKey,
-    SUBSONIC_MAX_ATTEMPTS_PER_ACCOUNT,
-    SUBSONIC_WINDOW_MS
-  )
-  if (!accountLimit.allowed) {
-    return null
-  }
 
   const user = await prisma.user.findUnique({
     where: { username },
@@ -128,7 +108,24 @@ async function authenticate(request: NextRequest): Promise<SubsonicUser | null> 
     }
   }
 
-  if (!valid) return null
+  if (!valid) {
+    const client = getClientIdentifier(request)
+    const perClientLimit = checkRateLimit(
+      `subsonic:failed:client:${client}`,
+      SUBSONIC_MAX_FAILED_ATTEMPTS_PER_CLIENT,
+      SUBSONIC_WINDOW_MS
+    )
+    const accountKey = `subsonic:failed:account:${username.toLowerCase()}:${client}`
+    const accountLimit = checkRateLimit(
+      accountKey,
+      SUBSONIC_MAX_FAILED_ATTEMPTS_PER_ACCOUNT,
+      SUBSONIC_WINDOW_MS
+    )
+    if (!perClientLimit.allowed || !accountLimit.allowed) {
+      return null
+    }
+    return null
+  }
 
   return { id: user.id, username: user.username }
 }
