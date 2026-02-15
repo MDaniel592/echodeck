@@ -1716,25 +1716,23 @@ export async function GET(request: NextRequest) {
         })
       }
 
-      const song = await prisma.song.findFirst(
-        artist
-          ? {
-              where: {
-                userId: user.id,
-                artist: { equals: artist },
-                title: { equals: title },
-              },
-              select: { title: true, artist: true, lyrics: true },
-            }
-          : {
-              where: {
-                userId: user.id,
-                title: { equals: title },
-              },
-              orderBy: { id: "asc" },
-              select: { title: true, artist: true, lyrics: true },
-            }
-      )
+      const song = artist
+        ? await prisma.song.findFirst({
+            where: {
+              userId: user.id,
+              artist: { equals: artist },
+              title: { equals: title },
+            },
+            select: { title: true, artist: true, lyrics: true },
+          })
+        : await prisma.song.findFirst({
+            where: {
+              userId: user.id,
+              title: { equals: title },
+            },
+            orderBy: { id: "asc" },
+            select: { title: true, artist: true, lyrics: true },
+          })
 
       return response(request, {
         lyrics: {
