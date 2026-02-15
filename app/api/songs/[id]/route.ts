@@ -40,9 +40,87 @@ export async function PATCH(
       }
     }
 
+    const normalizeOptionalString = (value: unknown, maxLen = 300): string | null | undefined => {
+      if (value === undefined) return undefined
+      if (value === null) return null
+      if (typeof value !== "string") return undefined
+      const trimmed = value.trim()
+      if (!trimmed) return null
+      return trimmed.slice(0, maxLen)
+    }
+
+    const normalizeOptionalInt = (value: unknown, min = 0, max = 9999): number | null | undefined => {
+      if (value === undefined) return undefined
+      if (value === null || value === "") return null
+      const parsed = Number.parseInt(String(value), 10)
+      if (!Number.isInteger(parsed)) return undefined
+      if (parsed < min || parsed > max) return undefined
+      return parsed
+    }
+
+    const updateData: {
+      playlistId?: number | null
+      title?: string
+      artist?: string | null
+      album?: string | null
+      albumArtist?: string | null
+      year?: number | null
+      genre?: string | null
+      trackNumber?: number | null
+      discNumber?: number | null
+      lyrics?: string | null
+    } = {
+      playlistId,
+    }
+
+    const title = normalizeOptionalString(body?.title, 300)
+    if (typeof title === "string") {
+      updateData.title = title
+    }
+
+    const artist = normalizeOptionalString(body?.artist, 300)
+    if (artist !== undefined) {
+      updateData.artist = artist
+    }
+
+    const album = normalizeOptionalString(body?.album, 300)
+    if (album !== undefined) {
+      updateData.album = album
+    }
+
+    const albumArtist = normalizeOptionalString(body?.albumArtist, 300)
+    if (albumArtist !== undefined) {
+      updateData.albumArtist = albumArtist
+    }
+
+    const genre = normalizeOptionalString(body?.genre, 120)
+    if (genre !== undefined) {
+      updateData.genre = genre
+    }
+
+    const lyrics = normalizeOptionalString(body?.lyrics, 20_000)
+    if (lyrics !== undefined) {
+      updateData.lyrics = lyrics
+    }
+
+    const year = normalizeOptionalInt(body?.year, 0, 9999)
+    if (year !== undefined) {
+      updateData.year = year
+    }
+
+    const trackNumber = normalizeOptionalInt(body?.trackNumber, 0, 999)
+    if (trackNumber !== undefined) {
+      updateData.trackNumber = trackNumber
+    }
+
+    const discNumber = normalizeOptionalInt(body?.discNumber, 0, 99)
+    if (discNumber !== undefined) {
+      updateData.discNumber = discNumber
+    }
+
     const updatedCount = await prisma.song.updateMany({
       where: { id: songId, userId: auth.userId },
-      data: { playlistId },
+      data: updateData,
     })
     if (updatedCount.count === 0) {
       return NextResponse.json({ error: "Song not found" }, { status: 404 })
