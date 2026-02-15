@@ -3,12 +3,18 @@ import fs from "fs"
 import fsPromises from "fs/promises"
 import path from "path"
 import crypto from "crypto"
+import { spawn } from "child_process"
 import prisma from "../../../../lib/prisma"
 import { verifyPassword } from "../../../../lib/auth"
 import { checkRateLimit } from "../../../../lib/rateLimit"
 import { sanitizeSong } from "../../../../lib/sanitize"
 import { resolveSafeDownloadPathForRead } from "../../../../lib/downloadPaths"
 import { nodeReadableToWebStream } from "../../../../lib/nodeReadableToWebStream"
+import { getFfmpegDir } from "../../../../lib/binaries"
+import {
+  getPlaylistSongsForUser,
+  replacePlaylistEntriesForUser,
+} from "../../../../lib/playlistEntries"
 
 type SubsonicUser = {
   id: number
@@ -216,6 +222,47 @@ function resolveMimeType(filePath: string): string {
   return "image/jpeg"
 }
 
+function parseNumericId(raw: string | null): number | null {
+  const value = Number.parseInt(raw || "", 10)
+  return Number.isInteger(value) && value > 0 ? value : null
+}
+
+function canTranscodeToBitrate(songBitrate: number | null | undefined, maxBitRateKbps: number): boolean {
+  if (!songBitrate || maxBitRateKbps <= 0) return false
+  return songBitrate > maxBitRateKbps * 1000
+}
+
+function transcodeToMp3(filePath: string, maxBitRateKbps: number) {
+  const ffmpegDir = getFfmpegDir()
+  const ffmpegPath = path.join(ffmpegDir, "ffmpeg")
+  if (!fs.existsSync(ffmpegPath)) return null
+
+  const proc = spawn(ffmpegPath, [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    filePath,
+    "-vn",
+    "-map_metadata",
+    "-1",
+    "-codec:a",
+    "libmp3lame",
+    "-b:a",
+    `${maxBitRateKbps}k`,
+    "-f",
+    "mp3",
+    "pipe:1",
+  ], {
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+
+  proc.stderr.on("data", () => {
+    // keep stderr drained to avoid backpressure stalling ffmpeg
+  })
+  return proc
+}
+
 export async function GET(request: NextRequest) {
   try {
     const cmd = commandFromRequest(request)
@@ -292,6 +339,138 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    if (cmd === "getArtistInfo2") {
+      const id = parseNumericId(request.nextUrl.searchParams.get("id"))
+      if (!id) {
+        return response(request, { error: { code: 10, message: "Missing artist id" } }, "failed")
+      }
+
+      const artist = await prisma.artist.findFirst({
+        where: { id, userId: user.id },
+      })
+      if (!artist) {
+        return response(request, { error: { code: 70, message: "Artist not found" } }, "failed")
+      }
+
+      return response(request, {
+        artistInfo2: {
+          biography: "",
+          musicBrainzId: artist.mbid || "",
+          lastFmUrl: "",
+          smallImageUrl: `/api/subsonic/rest/getCoverArt.view?id=ar-${artist.id}`,
+          mediumImageUrl: `/api/subsonic/rest/getCoverArt.view?id=ar-${artist.id}`,
+          largeImageUrl: `/api/subsonic/rest/getCoverArt.view?id=ar-${artist.id}`,
+          similarArtist: [],
+        },
+      })
+    }
+
+    if (cmd === "getMusicDirectory") {
+      const rawId = request.nextUrl.searchParams.get("id")
+      if (!rawId) {
+        return response(request, { error: { code: 10, message: "Missing directory id" } }, "failed")
+      }
+
+      const libraryId = parseNumericId(rawId)
+      if (libraryId) {
+        const library = await prisma.library.findFirst({
+          where: { id: libraryId, userId: user.id },
+        })
+        if (!library) {
+          return response(request, { error: { code: 70, message: "Directory not found" } }, "failed")
+        }
+
+        const artists = await prisma.artist.findMany({
+          where: {
+            userId: user.id,
+            songs: { some: { libraryId: library.id } },
+          },
+          orderBy: { name: "asc" },
+        })
+
+        return response(request, {
+          directory: {
+            id: String(library.id),
+            name: library.name,
+            child: artists.map((artist) => ({
+              id: `ar-${artist.id}`,
+              parent: String(library.id),
+              title: artist.name,
+              isDir: true,
+            })),
+          },
+        })
+      }
+
+      if (rawId.startsWith("ar-")) {
+        const artistId = parseNumericId(rawId.slice(3))
+        if (!artistId) {
+          return response(request, { error: { code: 10, message: "Invalid artist directory id" } }, "failed")
+        }
+
+        const artist = await prisma.artist.findFirst({
+          where: { id: artistId, userId: user.id },
+          include: {
+            albums: {
+              where: { userId: user.id },
+              orderBy: [{ year: "desc" }, { title: "asc" }],
+            },
+          },
+        })
+        if (!artist) {
+          return response(request, { error: { code: 70, message: "Directory not found" } }, "failed")
+        }
+
+        return response(request, {
+          directory: {
+            id: `ar-${artist.id}`,
+            name: artist.name,
+            child: artist.albums.map((album) => ({
+              id: `al-${album.id}`,
+              parent: `ar-${artist.id}`,
+              title: album.title,
+              isDir: true,
+              year: album.year || undefined,
+            })),
+          },
+        })
+      }
+
+      if (rawId.startsWith("al-")) {
+        const albumId = parseNumericId(rawId.slice(3))
+        if (!albumId) {
+          return response(request, { error: { code: 10, message: "Invalid album directory id" } }, "failed")
+        }
+
+        const album = await prisma.album.findFirst({
+          where: { id: albumId, userId: user.id },
+          include: {
+            songs: {
+              where: { userId: user.id },
+              orderBy: [{ discNumber: "asc" }, { trackNumber: "asc" }, { createdAt: "asc" }],
+            },
+          },
+        })
+        if (!album) {
+          return response(request, { error: { code: 70, message: "Directory not found" } }, "failed")
+        }
+
+        return response(request, {
+          directory: {
+            id: `al-${album.id}`,
+            name: album.title,
+            child: album.songs.map((song) => ({
+              ...mapSong(song),
+              parent: `al-${album.id}`,
+              isDir: false,
+            })),
+          },
+        })
+      }
+
+      return response(request, { error: { code: 0, message: "Unsupported directory id" } }, "failed")
+    }
+
     if (cmd === "getAlbum") {
       const id = Number.parseInt(request.nextUrl.searchParams.get("id") || "", 10)
       if (!Number.isInteger(id) || id <= 0) {
@@ -340,7 +519,7 @@ export async function GET(request: NextRequest) {
       const playlists = await prisma.playlist.findMany({
         where: { userId: user.id },
         orderBy: { createdAt: "desc" },
-        include: { _count: { select: { songs: true } } },
+        include: { _count: { select: { entries: true } } },
       })
 
       return response(request, {
@@ -348,7 +527,7 @@ export async function GET(request: NextRequest) {
           playlist: playlists.map((playlist) => ({
             id: String(playlist.id),
             name: playlist.name,
-            songCount: playlist._count.songs,
+            songCount: playlist._count.entries,
             created: playlist.createdAt.toISOString(),
           })),
         },
@@ -452,22 +631,19 @@ export async function GET(request: NextRequest) {
 
       const playlist = await prisma.playlist.findFirst({
         where: { id, userId: user.id },
-        include: {
-          songs: {
-            orderBy: { createdAt: "asc" },
-          },
-        },
       })
       if (!playlist) {
         return response(request, { error: { code: 70, message: "Playlist not found" } }, "failed")
       }
 
+      const playlistSongs = await getPlaylistSongsForUser(user.id, playlist.id)
+
       return response(request, {
         playlist: {
           id: String(playlist.id),
           name: playlist.name,
-          songCount: playlist.songs.length,
-          entry: playlist.songs.map(mapSong),
+          songCount: playlistSongs.length,
+          entry: playlistSongs.map(mapSong),
         },
       })
     }
@@ -487,28 +663,17 @@ export async function GET(request: NextRequest) {
       })
 
       if (songIds.length > 0) {
-        await prisma.song.updateMany({
-          where: {
-            userId: user.id,
-            id: { in: songIds },
-          },
-          data: {
-            playlistId: playlist.id,
-          },
-        })
+        await replacePlaylistEntriesForUser(user.id, playlist.id, songIds)
       }
 
-      const updatedPlaylist = await prisma.playlist.findUnique({
-        where: { id: playlist.id },
-        include: { songs: { orderBy: { createdAt: "asc" } } },
-      })
+      const updatedSongs = await getPlaylistSongsForUser(user.id, playlist.id)
 
       return response(request, {
         playlist: {
           id: String(playlist.id),
           name: playlist.name,
-          songCount: updatedPlaylist?.songs.length || 0,
-          entry: (updatedPlaylist?.songs || []).map(mapSong),
+          songCount: updatedSongs.length,
+          entry: updatedSongs.map(mapSong),
         },
       })
     }
@@ -543,42 +708,18 @@ export async function GET(request: NextRequest) {
         })
       }
 
-      if (addSongIds.length > 0) {
-        await prisma.song.updateMany({
-          where: {
-            userId: user.id,
-            id: { in: Array.from(new Set(addSongIds)) },
-          },
-          data: {
-            playlistId: playlist.id,
-          },
-        })
-      }
-
+      const currentSongs = await getPlaylistSongsForUser(user.id, playlist.id)
+      let orderedIds = currentSongs.map((song) => song.id)
       if (removeIndices.length > 0) {
-        const entries = await prisma.song.findMany({
-          where: { userId: user.id, playlistId: playlist.id },
-          orderBy: { createdAt: "asc" },
-          select: { id: true },
-        })
-        const idsToRemove = Array.from(
-          new Set(
-            removeIndices
-              .map((index) => entries[index]?.id)
-              .filter((id): id is number => Number.isInteger(id))
-          )
-        )
-        if (idsToRemove.length > 0) {
-          await prisma.song.updateMany({
-            where: {
-              userId: user.id,
-              id: { in: idsToRemove },
-              playlistId: playlist.id,
-            },
-            data: { playlistId: null },
-          })
+        const removeSet = new Set(removeIndices)
+        orderedIds = orderedIds.filter((_songId, index) => !removeSet.has(index))
+      }
+      if (addSongIds.length > 0) {
+        for (const songId of addSongIds) {
+          orderedIds.push(songId)
         }
       }
+      await replacePlaylistEntriesForUser(user.id, playlist.id, orderedIds)
 
       return response(request, {})
     }
@@ -670,6 +811,19 @@ export async function GET(request: NextRequest) {
       const resolvedPath = resolveSafeDownloadPathForRead(song.filePath)
       if (!resolvedPath) {
         return new Response("Access denied", { status: 403 })
+      }
+
+      const maxBitRate = parseIntParam(request.nextUrl.searchParams.get("maxBitRate"), 0)
+      if (canTranscodeToBitrate(song.bitrate, maxBitRate)) {
+        const transcoder = transcodeToMp3(resolvedPath, maxBitRate)
+        if (transcoder?.stdout) {
+          return new Response(nodeReadableToWebStream(transcoder.stdout), {
+            headers: {
+              "Content-Type": "audio/mpeg",
+              "Accept-Ranges": "none",
+            },
+          })
+        }
       }
 
       const stat = await fsPromises.stat(resolvedPath)
@@ -878,6 +1032,36 @@ export async function GET(request: NextRequest) {
       return response(request, {
         starred2: {
           song: songs.map(mapSong),
+        },
+      })
+    }
+
+    if (cmd === "getLyricsBySongId") {
+      const id = parseNumericId(request.nextUrl.searchParams.get("id"))
+      if (!id) {
+        return response(request, { error: { code: 10, message: "Missing song id" } }, "failed")
+      }
+
+      const song = await prisma.song.findFirst({
+        where: { id, userId: user.id },
+        select: { title: true, artist: true, lyrics: true },
+      })
+      if (!song) {
+        return response(request, { error: { code: 70, message: "Song not found" } }, "failed")
+      }
+
+      return response(request, {
+        lyricsList: {
+          structuredLyrics: [],
+          lyrics: song.lyrics
+            ? [
+                {
+                  artist: song.artist || undefined,
+                  title: song.title,
+                  value: song.lyrics,
+                },
+              ]
+            : [],
         },
       })
     }

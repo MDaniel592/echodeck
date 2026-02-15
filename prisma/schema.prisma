@@ -56,6 +56,7 @@ model Song {
   downloadTask DownloadTask? @relation(fields: [downloadTaskId], references: [id], onDelete: SetNull)
   playbackSessionsCurrent PlaybackSession[] @relation("CurrentPlaybackSong")
   playbackQueueItems PlaybackQueueItem[] @relation("QueueSong")
+  playlistEntries PlaylistSong[]
   createdAt DateTime @default(now())
 
   @@unique([userId, source, sourceUrl])
@@ -97,9 +98,23 @@ model Playlist {
   name      String
   createdAt DateTime @default(now())
   songs     Song[]
+  entries   PlaylistSong[]
   downloadTasks DownloadTask[]
 
   @@unique([userId, name])
+}
+
+model PlaylistSong {
+  id         Int      @id @default(autoincrement())
+  playlistId Int
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  songId     Int
+  song       Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  position   Int
+  createdAt  DateTime @default(now())
+
+  @@unique([playlistId, position])
+  @@index([playlistId, songId])
 }
 
 model DownloadTask {

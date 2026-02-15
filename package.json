@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "predev": "npm run db:backfill-ownership && npm run db:push && npm run db:generate && npm run db:backfill-ownership && npm run db:verify-ownership && npm run db:ensure-subsonic-tokens",
+    "predev": "npm run db:backfill-ownership && npm run db:push && npm run db:generate && npm run db:backfill-ownership && npm run db:verify-ownership && npm run db:backfill-playlist-entries && npm run db:ensure-subsonic-tokens",
     "dev": "next dev",
     "build": "next build",
-    "prestart": "npm run db:backfill-ownership && npm run db:push && npm run db:generate && npm run db:backfill-ownership && npm run db:verify-ownership && npm run db:ensure-subsonic-tokens",
+    "prestart": "npm run db:backfill-ownership && npm run db:push && npm run db:generate && npm run db:backfill-ownership && npm run db:verify-ownership && npm run db:backfill-playlist-entries && npm run db:ensure-subsonic-tokens",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
@@ -20,6 +20,7 @@
     "db:generate": "prisma generate",
     "db:backfill-ownership": "node --import tsx scripts/backfill-ownership.ts",
     "db:verify-ownership": "node --import tsx scripts/verify-ownership.ts",
+    "db:backfill-playlist-entries": "node --import tsx scripts/backfill-playlist-entries.ts",
     "db:ensure-subsonic-tokens": "node --import tsx scripts/ensure-subsonic-tokens.ts",
     "db:studio": "prisma studio",
     "postinstall": "tsx scripts/setup.ts"

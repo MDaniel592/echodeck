@@ -4,6 +4,7 @@ import { AuthError, requireAuth } from "../../../../lib/requireAuth"
 import { sanitizeSong } from "../../../../lib/sanitize"
 import fs from "fs/promises"
 import { resolveSafeDownloadPathForDelete } from "../../../../lib/downloadPaths"
+import { assignSongToPlaylistForUser } from "../../../../lib/playlistEntries"
 
 export async function PATCH(
   request: NextRequest,
@@ -19,12 +20,13 @@ export async function PATCH(
 
     const body = await request.json()
     const incomingPlaylistId = body?.playlistId
+    const hasPlaylistId = incomingPlaylistId !== undefined
     const playlistId =
       incomingPlaylistId === null || incomingPlaylistId === undefined
         ? null
         : Number.parseInt(String(incomingPlaylistId), 10)
 
-    if (playlistId !== null && !Number.isInteger(playlistId)) {
+    if (hasPlaylistId && playlistId !== null && !Number.isInteger(playlistId)) {
       return NextResponse.json({ error: "Invalid playlist ID" }, { status: 400 })
     }
 
@@ -33,7 +35,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Song not found" }, { status: 404 })
     }
 
-    if (playlistId !== null) {
+    if (hasPlaylistId && playlistId !== null) {
       const playlist = await prisma.playlist.findFirst({ where: { id: playlistId, userId: auth.userId } })
       if (!playlist) {
         return NextResponse.json({ error: "Playlist not found" }, { status: 404 })
@@ -59,7 +61,6 @@ export async function PATCH(
     }
 
     const updateData: {
-      playlistId?: number | null
       title?: string
       artist?: string | null
       album?: string | null
@@ -69,9 +70,7 @@ export async function PATCH(
       trackNumber?: number | null
       discNumber?: number | null
       lyrics?: string | null
-    } = {
-      playlistId,
-    }
+    } = {}
 
     const title = normalizeOptionalString(body?.title, 300)
     if (typeof title === "string") {
@@ -125,6 +124,11 @@ export async function PATCH(
     if (updatedCount.count === 0) {
       return NextResponse.json({ error: "Song not found" }, { status: 404 })
     }
+
+    if (hasPlaylistId) {
+      await assignSongToPlaylistForUser(auth.userId, songId, playlistId)
+    }
+
     const updatedSong = await prisma.song.findFirst({ where: { id: songId, userId: auth.userId } })
     if (!updatedSong) {
       return NextResponse.json({ error: "Song not found" }, { status: 404 })

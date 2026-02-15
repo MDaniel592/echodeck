@@ -17,6 +17,7 @@ import { downloadSpotify } from "../lib/spotdl"
 import { downloadAudio, getPlaylistInfo, getVideoInfo } from "../lib/ytdlp"
 import { redactSensitiveText } from "../lib/sanitize"
 import { findReusableSongBySourceUrl, normalizeSoundCloudUrl, normalizeSpotifyTrackUrl } from "../lib/songDedup"
+import { assignSongToPlaylistForUser } from "../lib/playlistEntries"
 
 const YOUTUBE_VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/
 const DOWNLOAD_CONCURRENCY = 4
@@ -123,17 +124,25 @@ async function updateTaskCounts(
 }
 
 async function assignSongToTaskPlaylistIfNeeded(
+  userId: number,
   song: { id: number; playlistId: number | null },
   taskPlaylistId: number | null
 ) {
-  if (taskPlaylistId === null || song.playlistId === taskPlaylistId) {
+  if (taskPlaylistId === null) {
     return
   }
 
-  await prisma.song.update({
-    where: { id: song.id },
-    data: { playlistId: taskPlaylistId },
-  })
+  if (song.playlistId === taskPlaylistId) {
+    const existing = await prisma.playlistSong.findFirst({
+      where: { playlistId: taskPlaylistId, songId: song.id },
+      select: { id: true },
+    })
+    if (existing) {
+      return
+    }
+  }
+
+  await assignSongToPlaylistForUser(userId, song.id, taskPlaylistId)
 }
 
 async function runVideoTask(taskId: number) {
@@ -181,7 +190,7 @@ async function runVideoTask(taskId: number) {
       try {
         const reusableSong = await findReusableSongBySourceUrl(userId, source, normalizedTrackUrl)
         if (reusableSong) {
-          await assignSongToTaskPlaylistIfNeeded(reusableSong, taskPlaylistId)
+          await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
           await logEvent(taskId, "status", `${progressPrefix} Already in library: ${reusableSong.title}`)
           await logEvent(taskId, "track", `${progressPrefix} Reused: ${reusableSong.title}`, {
             songId: reusableSong.id,
@@ -202,7 +211,7 @@ async function runVideoTask(taskId: number) {
 
         const existingAfterDownload = await findReusableSongBySourceUrl(userId, source, normalizedTrackUrl)
         if (existingAfterDownload) {
-          await assignSongToTaskPlaylistIfNeeded(existingAfterDownload, taskPlaylistId)
+          await assignSongToTaskPlaylistIfNeeded(userId, existingAfterDownload, taskPlaylistId)
           cleanupFileIfExists(result.filePath)
           await logEvent(taskId, "track", `${progressPrefix} Reused: ${existingAfterDownload.title}`, {
             songId: existingAfterDownload.id,
@@ -241,7 +250,7 @@ async function runVideoTask(taskId: number) {
           if (isUniqueConstraintError(error)) {
             const concurrentSong = await findReusableSongBySourceUrl(userId, source, normalizedTrackUrl)
             if (concurrentSong) {
-              await assignSongToTaskPlaylistIfNeeded(concurrentSong, taskPlaylistId)
+              await assignSongToTaskPlaylistIfNeeded(userId, concurrentSong, taskPlaylistId)
               cleanupFileIfExists(result.filePath)
               await logEvent(taskId, "track", `${progressPrefix} Reused: ${concurrentSong.title}`, {
                 songId: concurrentSong.id,
@@ -256,6 +265,8 @@ async function runVideoTask(taskId: number) {
         if (!createdSong) {
           return
         }
+
+        await assignSongToTaskPlaylistIfNeeded(userId, createdSong, taskPlaylistId)
 
         let song = createdSong
 
@@ -296,7 +307,7 @@ async function runVideoTask(taskId: number) {
 
   const reusableSong = await findReusableSongBySourceUrl(userId, source, normalizedUrl)
   if (reusableSong) {
-    await assignSongToTaskPlaylistIfNeeded(reusableSong, taskPlaylistId)
+    await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
     await logEvent(taskId, "status", "Song already downloaded. Reusing existing file.")
     await logEvent(taskId, "track", `Reused: ${reusableSong.title}`, { songId: reusableSong.id })
     await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -317,7 +328,7 @@ async function runVideoTask(taskId: number) {
 
   const existingAfterDownload = await findReusableSongBySourceUrl(userId, source, normalizedUrl)
   if (existingAfterDownload) {
-    await assignSongToTaskPlaylistIfNeeded(existingAfterDownload, taskPlaylistId)
+    await assignSongToTaskPlaylistIfNeeded(userId, existingAfterDownload, taskPlaylistId)
     cleanupFileIfExists(result.filePath)
     await logEvent(taskId, "track", `Reused: ${existingAfterDownload.title}`, { songId: existingAfterDownload.id })
     await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -354,7 +365,7 @@ async function runVideoTask(taskId: number) {
     if (isUniqueConstraintError(error)) {
       const concurrentSong = await findReusableSongBySourceUrl(userId, source, normalizedUrl)
       if (concurrentSong) {
-        await assignSongToTaskPlaylistIfNeeded(concurrentSong, taskPlaylistId)
+        await assignSongToTaskPlaylistIfNeeded(userId, concurrentSong, taskPlaylistId)
         cleanupFileIfExists(result.filePath)
         await logEvent(taskId, "track", `Reused: ${concurrentSong.title}`, { songId: concurrentSong.id })
         await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -367,6 +378,8 @@ async function runVideoTask(taskId: number) {
   if (!createdSong) {
     return
   }
+
+  await assignSongToTaskPlaylistIfNeeded(userId, createdSong, taskPlaylistId)
 
   let song = createdSong
 
@@ -426,7 +439,7 @@ async function runSpotifyTask(taskId: number) {
           return true
         }
 
-        await assignSongToTaskPlaylistIfNeeded(reusableSong, taskPlaylistId)
+        await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
         const progressPrefix = `[${context.index + 1}/${context.total}]`
         await logEvent(taskId, "status", `${progressPrefix} Already downloaded: ${reusableSong.title}`)
         await logEvent(taskId, "track", `${progressPrefix} Reused: ${reusableSong.title}`, {
@@ -454,7 +467,7 @@ async function runSpotifyTask(taskId: number) {
   for (const result of results) {
     const reusableSong = await findReusableBySpotifyUrl(result.sourceUrl)
     if (reusableSong) {
-      await assignSongToTaskPlaylistIfNeeded(reusableSong, taskPlaylistId)
+      await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
       cleanupFileIfExists(result.filePath)
       await logEvent(taskId, "track", `Reused: ${reusableSong.title}`, { songId: reusableSong.id })
       await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -486,7 +499,7 @@ async function runSpotifyTask(taskId: number) {
       if (isUniqueConstraintError(error)) {
         const concurrentSong = await findReusableBySpotifyUrl(songSourceUrl)
         if (concurrentSong) {
-          await assignSongToTaskPlaylistIfNeeded(concurrentSong, taskPlaylistId)
+          await assignSongToTaskPlaylistIfNeeded(userId, concurrentSong, taskPlaylistId)
           cleanupFileIfExists(result.filePath)
           await logEvent(taskId, "track", `Reused: ${concurrentSong.title}`, { songId: concurrentSong.id })
           await updateTaskCounts(taskId, { processed: 1, successful: 1 })
@@ -499,6 +512,8 @@ async function runSpotifyTask(taskId: number) {
     if (!createdSong) {
       continue
     }
+
+    await assignSongToTaskPlaylistIfNeeded(userId, createdSong, taskPlaylistId)
 
     let song = createdSong
 
