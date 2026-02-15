@@ -400,6 +400,29 @@ function parseByteRange(
   return { start, end: Math.min(end, fileSize - 1) }
 }
 
+function mapSubsonicUser(row: {
+  username: string
+  role: "admin" | "user"
+}) {
+  const adminRole = row.role === "admin"
+  return {
+    username: row.username,
+    scrobblingEnabled: true,
+    adminRole,
+    settingsRole: adminRole,
+    downloadRole: true,
+    uploadRole: adminRole,
+    playlistRole: true,
+    coverArtRole: true,
+    commentRole: true,
+    podcastRole: adminRole,
+    streamRole: true,
+    jukeboxRole: false,
+    shareRole: adminRole,
+    videoConversionRole: false,
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const cmd = commandFromRequest(request)
@@ -423,6 +446,61 @@ export async function GET(request: NextRequest) {
     const user = await authenticate(request)
     if (!user) {
       return response(request, { error: { code: 40, message: "Wrong username or password" } }, "failed")
+    }
+
+    if (cmd === "getUser") {
+      const targetUsername = request.nextUrl.searchParams.get("username")?.trim() || user.username
+      const target = await prisma.user.findFirst({
+        where: { username: targetUsername },
+        select: { username: true, role: true },
+      })
+      if (!target) {
+        return response(request, { error: { code: 70, message: "User not found" } }, "failed")
+      }
+
+      // Non-admin users can only introspect themselves.
+      if (target.username !== user.username) {
+        const me = await prisma.user.findFirst({
+          where: { id: user.id },
+          select: { role: true },
+        })
+        if (me?.role !== "admin") {
+          return response(request, { error: { code: 50, message: "Not authorized" } }, "failed")
+        }
+      }
+
+      return response(request, {
+        user: mapSubsonicUser(target),
+      })
+    }
+
+    if (cmd === "getUsers") {
+      const me = await prisma.user.findFirst({
+        where: { id: user.id },
+        select: { username: true, role: true },
+      })
+      if (!me) {
+        return response(request, { error: { code: 70, message: "User not found" } }, "failed")
+      }
+
+      if (me.role !== "admin") {
+        return response(request, {
+          users: {
+            user: [mapSubsonicUser(me)],
+          },
+        })
+      }
+
+      const users = await prisma.user.findMany({
+        where: { disabledAt: null },
+        orderBy: { username: "asc" },
+        select: { username: true, role: true },
+      })
+      return response(request, {
+        users: {
+          user: users.map(mapSubsonicUser),
+        },
+      })
     }
 
     if (cmd === "getMusicFolders") {
@@ -1206,6 +1284,53 @@ export async function GET(request: NextRequest) {
 
       if (!coverPath) {
         return new Response("Cover not found", { status: 404 })
+      }
+
+      const resolvedPath = resolveSafeDownloadPathForRead(coverPath)
+      if (!resolvedPath) {
+        return new Response("Access denied", { status: 403 })
+      }
+
+      const stat = await fsPromises.stat(resolvedPath)
+      const stream = fs.createReadStream(resolvedPath)
+      return new Response(nodeReadableToWebStream(stream), {
+        headers: {
+          "Content-Type": resolveMimeType(resolvedPath),
+          "Content-Length": String(stat.size),
+          "Cache-Control": "public, max-age=3600",
+        },
+      })
+    }
+
+    if (cmd === "getAvatar") {
+      const targetUsername = request.nextUrl.searchParams.get("username")?.trim() || user.username
+      const target = await prisma.user.findFirst({
+        where: { username: targetUsername },
+        select: { id: true, role: true, username: true },
+      })
+      if (!target) {
+        return new Response("User not found", { status: 404 })
+      }
+
+      const me = await prisma.user.findFirst({
+        where: { id: user.id },
+        select: { role: true, username: true },
+      })
+      if (!me) {
+        return new Response("User not found", { status: 404 })
+      }
+
+      if (target.username !== me.username && me.role !== "admin") {
+        return new Response("Not authorized", { status: 403 })
+      }
+
+      const song = await prisma.song.findFirst({
+        where: { userId: target.id, coverPath: { not: null } },
+        select: { coverPath: true },
+      })
+      const coverPath = song?.coverPath || null
+      if (!coverPath) {
+        return new Response("Avatar not found", { status: 404 })
       }
 
       const resolvedPath = resolveSafeDownloadPathForRead(coverPath)
