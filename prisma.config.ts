@@ -3,12 +3,17 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
+const databaseUrl = process.env["DATABASE_URL"]
+if (!databaseUrl && process.env.NODE_ENV === "production") {
+  throw new Error("DATABASE_URL is required in production")
+}
+
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"] ?? "file:./data/dev.db",
+    url: databaseUrl ?? "file:./data/dev.db",
   },
 });

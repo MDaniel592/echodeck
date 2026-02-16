@@ -33,6 +33,9 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+      - name: Verify production guardrails
+        run: npm run verify:prod
+
       - name: Run tests
         run: npm test
         env:
