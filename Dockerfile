@@ -75,4 +75,4 @@ RUN mkdir -p /app/data /app/downloads
 EXPOSE 3000
 
 # Push schema then start the standalone server.
-CMD ["sh", "-c", "npx prisma db push --skip-generate && node server.js"]
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js db push --skip-generate && node server.js"]
