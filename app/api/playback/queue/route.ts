@@ -35,6 +35,42 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "One or more songs were not found" }, { status: 404 })
     }
 
+    const existingSession = await prisma.playbackSession.findUnique({
+      where: {
+        userId_deviceId: {
+          userId: auth.userId,
+          deviceId,
+        },
+      },
+      select: {
+        id: true,
+        queueItems: {
+          orderBy: { sortOrder: "asc" },
+          select: { songId: true },
+        },
+      },
+    })
+    const existingSongIds = existingSession?.queueItems.map((item) => item.songId) ?? []
+    const unchanged =
+      existingSongIds.length === songIds.length &&
+      existingSongIds.every((songId, index) => songId === songIds[index])
+    if (unchanged) {
+      return NextResponse.json({
+        success: true,
+        sessionId: existingSession?.id ?? null,
+        length: songIds.length,
+        unchanged: true,
+      })
+    }
+    if (!existingSession && songIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        sessionId: null,
+        length: 0,
+        unchanged: true,
+      })
+    }
+
     const session = await prisma.$transaction(async (tx) => {
       const upserted = await tx.playbackSession.upsert({
         where: {
