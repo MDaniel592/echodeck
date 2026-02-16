@@ -4,6 +4,15 @@ FROM node:22-trixie-slim AS builder
 WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV DATABASE_URL=file:./data/dev.db
+ARG YTDLP_VERSION
+ARG SPOTDL_VERSION
+ARG YTDLP_SHA256
+ARG SPOTDL_SHA256
+ENV YTDLP_VERSION=${YTDLP_VERSION}
+ENV SPOTDL_VERSION=${SPOTDL_VERSION}
+ENV YTDLP_SHA256=${YTDLP_SHA256}
+ENV SPOTDL_SHA256=${SPOTDL_SHA256}
 
 # Native build tooling for better-sqlite3
 RUN apt-get update \
@@ -24,6 +33,7 @@ RUN npx prisma generate
 RUN npm run build
 
 # Download downloader binaries during build so they are cached in the image.
+RUN test -n "$YTDLP_VERSION" && test -n "$SPOTDL_VERSION"
 RUN npm run setup
 
 # ---- Runner stage ----
@@ -68,10 +78,11 @@ COPY --from=builder /app/node_modules/node-abi ./node_modules/node-abi
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv
+COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 
 RUN mkdir -p /app/data /app/downloads
 
 EXPOSE 3000
 
 # Push schema then start the standalone server.
-CMD ["sh", "-c", "npx prisma db push --skip-generate && node server.js"]
+CMD ["sh", "-c", "test -x ./node_modules/.bin/prisma && ./node_modules/.bin/prisma db push --skip-generate && node server.js"]

@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        YTDLP_VERSION: ${YTDLP_VERSION:?YTDLP_VERSION is required for reproducible builds}
+        SPOTDL_VERSION: ${SPOTDL_VERSION:?SPOTDL_VERSION is required for reproducible builds}
+        YTDLP_SHA256: ${YTDLP_SHA256:-}
+        SPOTDL_SHA256: ${SPOTDL_SHA256:-}
     ports:
       - "${APP_PORT:-3000}:3000"
     environment:
