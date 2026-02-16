@@ -53,6 +53,7 @@ export default function SongGridCards({
                 ? "border-sky-300/40 bg-sky-400/10"
                 : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
             }`}
+            style={{ contentVisibility: "auto", containIntrinsicSize: "180px" }}
           >
             <button
               type="button"
