@@ -87,6 +87,9 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("")
   const [loading, setLoading] = useState(true)
   const [deviceId, setDeviceId] = useState<string | null>(null)
+  const [searchResults, setSearchResults] = useState<Song[] | null>(null)
+  const searchAbortRef = useRef<AbortController | null>(null)
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hydratedPlaybackRef = useRef(false)
   const currentSongIdRef = useRef<number | null>(null)
   const playbackStateRef = useRef<{
@@ -174,7 +177,86 @@ export default function Home() {
   useEffect(() => {
     if (activeTab === "player") return
     setSearchQuery("")
+    setSearchResults(null)
   }, [activeTab])
+
+  // Debounced server-side search
+  useEffect(() => {
+    const trimmed = searchQuery.trim()
+
+    // Clear results immediately when search is emptied
+    if (!trimmed) {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+        searchDebounceRef.current = null
+      }
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort()
+        searchAbortRef.current = null
+      }
+      setSearchResults(null)
+      return
+    }
+
+    // Debounce the API call
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current)
+    }
+
+    searchDebounceRef.current = setTimeout(() => {
+      searchDebounceRef.current = null
+
+      // Abort any in-flight search
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort()
+      }
+      const controller = new AbortController()
+      searchAbortRef.current = controller
+
+      const params = new URLSearchParams({
+        search: trimmed,
+        limit: "1000",
+      })
+
+      // Pass scope filters so server results respect current view
+      if (scopeMode !== "libraries" && selectedPlaylist !== "all") {
+        params.set("playlistId", selectedPlaylist)
+      }
+
+      fetch(`/api/songs?${params.toString()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`Search failed with HTTP ${res.status}`)
+          return res.json() as Promise<{ songs?: Song[] } | Song[]>
+        })
+        .then((payload) => {
+          const results = Array.isArray(payload)
+            ? payload
+            : Array.isArray(payload.songs)
+              ? payload.songs
+              : []
+          setSearchResults(
+            results.map((song) => ({
+              ...song,
+              title: normalizeSongTitle(song.title || "Unknown title"),
+            }))
+          )
+        })
+        .catch((err) => {
+          if (err instanceof DOMException && err.name === "AbortError") return
+          console.error("Search failed:", err)
+        })
+    }, 300)
+
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+        searchDebounceRef.current = null
+      }
+    }
+  }, [searchQuery, scopeMode, selectedPlaylist])
 
   const fetchSongs = useCallback(async () => {
     try {
@@ -533,27 +615,10 @@ export default function Home() {
     })
   }, [songs, selectedPlaylist, scopeMode])
 
-  const normalizedSearch = searchQuery.trim().toLowerCase()
-  const searchableSongTextById = useMemo(
-    () =>
-      new Map(
-        songs.map((song) => [
-          song.id,
-          [song.title, song.artist ?? "", song.source, song.format, song.quality ?? ""]
-            .join(" ")
-            .toLowerCase(),
-        ])
-      ),
-    [songs]
-  )
-
   const visibleSongs = useMemo(() => {
-    if (!normalizedSearch) return scopedSongs
-    return scopedSongs.filter((song) => {
-      const haystack = searchableSongTextById.get(song.id) ?? ""
-      return haystack.includes(normalizedSearch)
-    })
-  }, [scopedSongs, normalizedSearch, searchableSongTextById])
+    if (searchResults !== null) return searchResults
+    return scopedSongs
+  }, [scopedSongs, searchResults])
 
   const playlistNameById = useMemo(
     () => new Map(playlists.map((playlist) => [playlist.id, playlist.name])),

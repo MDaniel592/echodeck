@@ -48,6 +48,10 @@ export async function GET(request: NextRequest) {
       where.OR = [
         { title: { contains: search } },
         { artist: { contains: search } },
+        { album: { contains: search } },
+        { source: { contains: search } },
+        { format: { contains: search } },
+        { quality: { contains: search } },
       ]
     }
 
@@ -85,6 +89,14 @@ export async function GET(request: NextRequest) {
         if (Number.isInteger(parsed) && parsed > 0) {
           where.playlistId = parsed
         }
+      }
+    }
+
+    const libraryId = searchParams.get("libraryId")
+    if (libraryId !== null && libraryId !== undefined) {
+      const parsed = Number.parseInt(libraryId, 10)
+      if (Number.isInteger(parsed) && parsed > 0) {
+        where.libraryId = parsed
       }
     }
 
