@@ -1,6 +1,6 @@
 {
   "name": "echodeck",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "scripts": {
     "predev": "npm run db:backfill-ownership && npm run db:push && npm run db:generate && npm run db:backfill-ownership && npm run db:verify-ownership && npm run db:backfill-playlist-entries && npm run db:ensure-subsonic-tokens",
