@@ -36,6 +36,9 @@ jobs:
       - name: Verify production guardrails
         run: npm run verify:prod
 
+      - name: Prisma CLI smoke test
+        run: npm run smoke:prisma-cli
+
       - name: Run tests
         run: npm test
         env:
