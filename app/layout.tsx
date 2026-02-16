@@ -19,7 +19,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark overflow-hidden h-full">
       <body
-        className="antialiased bg-black text-white h-full overflow-hidden font-sans"
+        className="antialiased bg-black text-white h-full overflow-hidden"
       >
         {children}
       </body>

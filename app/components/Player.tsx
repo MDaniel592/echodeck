@@ -1,6 +1,22 @@
 "use client"
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, type CSSProperties } from "react"
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react"
+import { queuePositionLabel } from "../../lib/playbackQueue"
+import DesktopQueuePanel from "./player/DesktopQueuePanel"
+import DesktopPlayerBar from "./player/DesktopPlayerBar"
+import MobileQueueSheet from "./player/MobileQueueSheet"
+import {
+  formatTime,
+  MinimizePlayerIcon,
+  NextIcon,
+  PlayPauseIcon,
+  PrevIcon,
+  QueueIcon,
+  RepeatIcon,
+  ScrollingTitle,
+  ShuffleIcon,
+} from "./player/ui"
+import { useSeekBarHandlers } from "./player/useSeekBarHandlers"
 
 interface Song {
   id: number
@@ -23,6 +39,15 @@ interface PlayerProps {
   song: Song | null
   songs: Song[]
   onSongChange: (song: Song) => void
+  onQueueReorder?: (fromIndex: number, toIndex: number) => void
+  onQueueRemove?: (songId: number, index: number) => void
+  onQueueClear?: () => void
+  onPlaybackStateChange?: (state: {
+    positionSec: number
+    isPlaying: boolean
+    repeatMode: RepeatMode
+    shuffle: boolean
+  }) => void
 }
 
 type RepeatMode = "off" | "all" | "one"
@@ -43,350 +68,13 @@ const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
   "seekto",
 ]
 
-function formatTime(seconds: number): string {
-  if (isNaN(seconds)) return "0:00"
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, "0")}`
-}
-
-function PlayPauseIcon({
-  playing,
-  large = false,
-  xlarge = false,
-}: {
-  playing: boolean
-  large?: boolean
-  xlarge?: boolean
-}) {
-  const isLarge = large || xlarge
-
-  if (playing) {
-    return (
-      <span className={`inline-flex items-center ${xlarge ? "gap-1.5" : isLarge ? "gap-1" : "gap-[3px]"}`}>
-        <span
-          className={`${
-            xlarge
-              ? "h-6 w-[6px]"
-              : isLarge
-              ? "h-5 w-[5px]"
-              : "h-4 w-1"
-          } rounded-[1px] bg-current`}
-        />
-        <span
-          className={`${
-            xlarge
-              ? "h-6 w-[6px]"
-              : isLarge
-              ? "h-5 w-[5px]"
-              : "h-4 w-1"
-          } rounded-[1px] bg-current`}
-        />
-      </span>
-    )
-  }
-
-  return (
-    <span
-      className={`block h-0 w-0 border-y-transparent border-l-current ${
-        xlarge
-          ? "ml-0.5 border-y-[10px] border-l-[16px]"
-          : isLarge
-          ? "ml-0.5 border-y-[9px] border-l-[14px]"
-          : "ml-[1px] border-y-[7px] border-l-[11px]"
-      }`}
-    />
-  )
-}
-
-function MinimizePlayerIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.25"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-5 w-5"
-      aria-hidden="true"
-    >
-      <path d="M6 9l6 6 6-6" />
-    </svg>
-  )
-}
-
-function QueueIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-5 w-5"
-      aria-hidden="true"
-    >
-      <path d="M7 7h11" />
-      <path d="M7 12h11" />
-      <path d="M7 17h11" />
-      <circle cx="4" cy="7" r="0.9" fill="currentColor" stroke="none" />
-      <circle cx="4" cy="12" r="0.9" fill="currentColor" stroke="none" />
-      <circle cx="4" cy="17" r="0.9" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
-
-function VolumeIcon({ className = "h-4 w-4 text-zinc-400" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-    </svg>
-  )
-}
-
-function ShuffleIcon({ className = "h-5 w-5" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
-    </svg>
-  )
-}
-
-function PrevIcon({ className = "h-5 w-5" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M6 6h2v12H6V6zm3.5 6l8.5 6V6l-8.5 6z" />
-    </svg>
-  )
-}
-
-function NextIcon({ className = "h-5 w-5" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M6 18l8.5-6L6 6v12zm9-12v12h2V6h-2z" />
-    </svg>
-  )
-}
-
-function RepeatIcon({ mode, className = "h-5 w-5" }: { mode: RepeatMode; className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M17 1l4 4-4 4" />
-      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-      <path d="M7 23l-4-4 4-4" />
-      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-      {mode === "one" && (
-        <text
-          x="12"
-          y="15"
-          fontSize="10"
-          fontWeight="700"
-          fill="currentColor"
-          textAnchor="middle"
-          stroke="none"
-        >
-          1
-        </text>
-      )}
-    </svg>
-  )
-}
-
-function ScrollingTitle({
-  text,
-  className,
-  speed = 15,
-}: {
-  text: string
-  className: string
-  speed?: number
-}) {
-  const containerRef = useRef<HTMLSpanElement>(null)
-  const measureRef = useRef<HTMLSpanElement>(null)
-  const MARQUEE_GAP = 28
-  const MARQUEE_SPEED = speed
-  const [marqueeState, setMarqueeState] = useState({
-    enabled: false,
-    travel: 0,
-    durationSec: 0,
-  })
-
-  useEffect(() => {
-    let frame = 0
-
-    const update = () => {
-      if (!containerRef.current || !measureRef.current) return
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(() => {
-        const containerWidth = containerRef.current?.clientWidth ?? 0
-        const textWidth = measureRef.current?.scrollWidth ?? 0
-        const overflow = Math.max(0, textWidth - containerWidth)
-        const enabled = overflow > 6
-        const travel = enabled ? textWidth + MARQUEE_GAP : 0
-        const durationSec = enabled ? Math.max(6, travel / MARQUEE_SPEED) : 0
-
-        setMarqueeState((prev) => {
-          if (
-            prev.enabled === enabled &&
-            Math.abs(prev.travel - travel) < 1 &&
-            Math.abs(prev.durationSec - durationSec) < 0.1
-          ) {
-            return prev
-          }
-
-          return {
-            enabled,
-            travel,
-            durationSec,
-          }
-        })
-      })
-    }
-
-    update()
-
-    let observer: ResizeObserver | null = null
-    if (typeof ResizeObserver !== "undefined" && containerRef.current && measureRef.current) {
-      observer = new ResizeObserver(update)
-      observer.observe(containerRef.current)
-      observer.observe(measureRef.current)
-    }
-
-    if (typeof window !== "undefined") {
-      window.addEventListener("resize", update)
-    }
-
-    return () => {
-      cancelAnimationFrame(frame)
-      observer?.disconnect()
-      if (typeof window !== "undefined") {
-        window.removeEventListener("resize", update)
-      }
-    }
-  }, [text, MARQUEE_SPEED])
-
-  const marqueeStyle: CSSProperties | undefined = marqueeState.enabled
-    ? ({
-        "--player-marquee-travel": `${marqueeState.travel}px`,
-        "--player-marquee-duration": `${marqueeState.durationSec}s`,
-      } as CSSProperties)
-    : undefined
-
-  return (
-    <p className={`${className} relative`} title={text}>
-      <span ref={containerRef} className="block overflow-hidden whitespace-nowrap">
-        {marqueeState.enabled ? (
-          <span className="player-marquee-track inline-flex min-w-max whitespace-nowrap" style={marqueeStyle}>
-            <span>{text}</span>
-            <span className="pl-7" aria-hidden="true">
-              {text}
-            </span>
-          </span>
-        ) : (
-          <span className="block truncate">{text}</span>
-        )}
-      </span>
-      <span
-        ref={measureRef}
-        className="pointer-events-none absolute -z-10 opacity-0 whitespace-nowrap select-none"
-        aria-hidden="true"
-      >
-        {text}
-      </span>
-    </p>
-  )
-}
-
-// Shared seek-by-touch/click logic for progress bars
-function useSeekBarHandlers(
-  audioRef: React.RefObject<HTMLAudioElement | null>,
-  barRef: React.RefObject<HTMLDivElement | null>,
-  duration: number,
-) {
-  const seekingRef = useRef(false)
-
-  const seekToPosition = useCallback((clientX: number) => {
-    const audio = audioRef.current
-    const bar = barRef.current
-    if (!audio || !bar || !duration) return
-    const rect = bar.getBoundingClientRect()
-    const pct = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
-    audio.currentTime = pct * duration
-  }, [audioRef, barRef, duration])
-
-  const handleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    seekToPosition(e.clientX)
-  }, [seekToPosition])
-
-  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    e.stopPropagation()
-    const touch = e.touches[0]
-    if (!touch) return
-    seekingRef.current = true
-    seekToPosition(touch.clientX)
-  }, [seekToPosition])
-
-  const handleTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    if (!seekingRef.current) return
-    e.stopPropagation()
-    const touch = e.touches[0]
-    if (!touch) return
-    seekToPosition(touch.clientX)
-  }, [seekToPosition])
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    e.stopPropagation()
-    seekingRef.current = false
-  }, [])
-
-  return [handleClick, handleTouchStart, handleTouchMove, handleTouchEnd] as const
-}
-
 export default function Player({
   song,
   songs,
   onSongChange,
+  onQueueRemove,
+  onQueueClear,
+  onPlaybackStateChange,
 }: PlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const miniArtworkRef = useRef<HTMLDivElement>(null)
@@ -398,6 +86,7 @@ export default function Player({
   const miniExpandTriggeredRef = useRef(false)
   const mobileCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mobileExpandTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const queueCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -418,6 +107,15 @@ export default function Player({
   const [isQueueDragging, setIsQueueDragging] = useState(false)
   const [artworkFlip, setArtworkFlip] = useState({ dx: 0, dy: 0, scale: 1 })
   const defaultDocumentTitleRef = useRef<string>("EchoDeck")
+  const lastPlaybackSnapshotRef = useRef<string>("")
+  const mediaSessionSongIdRef = useRef<number | null>(null)
+  const mediaSessionMetadataReadyRef = useRef(false)
+  const mediaSessionLastSyncAtRef = useRef(0)
+  const navRef = useRef({ canGoPrev: false, canGoNext: false, playPrev: () => {}, playNext: () => {} })
+  const isBraveBrowser = useMemo(
+    () => (typeof navigator !== "undefined" ? /Brave\//i.test(navigator.userAgent) : false),
+    []
+  )
 
   const currentIndex = song ? songs.findIndex((s) => s.id === song.id) : -1
 
@@ -466,24 +164,98 @@ export default function Player({
     if (nextIndex !== null) onSongChange(songs[nextIndex])
   }, [getNextIndex, onSongChange, songs])
 
+  const emitPlaybackState = useCallback((timeSec: number, isPlayingValue: boolean) => {
+    if (!onPlaybackStateChange) return
+    const payload = {
+      positionSec: Math.max(0, Math.round(timeSec)),
+      isPlaying: isPlayingValue,
+      repeatMode,
+      shuffle: shuffleEnabled,
+    }
+    const serialized = JSON.stringify(payload)
+    if (serialized === lastPlaybackSnapshotRef.current) return
+    lastPlaybackSnapshotRef.current = serialized
+    onPlaybackStateChange(payload)
+  }, [onPlaybackStateChange, repeatMode, shuffleEnabled])
+
+  const clearMediaSessionPosition = useCallback(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return
+    if (typeof navigator.mediaSession.setPositionState !== "function") return
+    try {
+      navigator.mediaSession.setPositionState()
+      mediaSessionLastSyncAtRef.current = 0
+    } catch {
+      // ignored
+    }
+  }, [])
+
+  const syncMediaSessionPosition = useCallback((audio: HTMLAudioElement, force = false) => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return
+    if (typeof navigator.mediaSession.setPositionState !== "function") return
+    if (!mediaSessionMetadataReadyRef.current) return
+    const now = Date.now()
+    if (isBraveBrowser && !force && now - mediaSessionLastSyncAtRef.current < 900) return
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) return
+    try {
+      const safePlaybackRate = Math.abs(audio.playbackRate) > 0 ? audio.playbackRate : 1
+      navigator.mediaSession.setPositionState({
+        duration: audio.duration,
+        position: Math.max(0, Math.min(audio.currentTime, audio.duration)),
+        playbackRate: safePlaybackRate,
+      })
+      mediaSessionLastSyncAtRef.current = now
+    } catch {
+      // ignored
+    }
+  }, [isBraveBrowser])
+
   useEffect(() => {
     const audio = audioRef.current
     if (!audio || !song) return
 
+    clearMediaSessionPosition()
+    mediaSessionSongIdRef.current = song.id
+    mediaSessionMetadataReadyRef.current = false
     audio.src = `/api/stream/${song.id}`
     audio.currentTime = 0
     audio.volume = volume
     audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
-  }, [song?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [song?.id, clearMediaSessionPosition, syncMediaSessionPosition]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
 
-    const onTimeUpdate = () => setCurrentTime(audio.currentTime)
-    const onDurationChange = () => setDuration(audio.duration)
-    const onPlay = () => setPlaying(true)
-    const onPause = () => setPlaying(false)
+    const onTimeUpdate = () => {
+      setCurrentTime(audio.currentTime)
+      emitPlaybackState(audio.currentTime, !audio.paused)
+    }
+    const onDurationChange = () => {
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+      syncMediaSessionPosition(audio, true)
+    }
+    const onLoadedMetadata = () => {
+      if (mediaSessionSongIdRef.current !== song?.id) return
+      mediaSessionMetadataReadyRef.current = true
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+      syncMediaSessionPosition(audio, true)
+    }
+    const onPlay = () => {
+      setPlaying(true)
+      if (typeof window !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "playing"
+      }
+      emitPlaybackState(audio.currentTime, true)
+      syncMediaSessionPosition(audio, true)
+    }
+    const onPause = () => {
+      setPlaying(false)
+      if (typeof window !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "paused"
+      }
+      emitPlaybackState(audio.currentTime, false)
+      syncMediaSessionPosition(audio, true)
+    }
     const onEnded = () => {
       if (repeatMode === "one") {
         audio.currentTime = 0
@@ -499,22 +271,30 @@ export default function Player({
       onSongChange(songs[nextIndex])
     }
 
+    const onSeeked = () => {
+      syncMediaSessionPosition(audio, true)
+    }
+
     audio.addEventListener("timeupdate", onTimeUpdate)
     audio.addEventListener("durationchange", onDurationChange)
+    audio.addEventListener("loadedmetadata", onLoadedMetadata)
     audio.addEventListener("play", onPlay)
     audio.addEventListener("pause", onPause)
     audio.addEventListener("ended", onEnded)
+    audio.addEventListener("seeked", onSeeked)
 
     return () => {
       audio.removeEventListener("timeupdate", onTimeUpdate)
       audio.removeEventListener("durationchange", onDurationChange)
+      audio.removeEventListener("loadedmetadata", onLoadedMetadata)
       audio.removeEventListener("play", onPlay)
       audio.removeEventListener("pause", onPause)
       audio.removeEventListener("ended", onEnded)
+      audio.removeEventListener("seeked", onSeeked)
     }
-  }, [getNextIndex, onSongChange, repeatMode, songs])
+  }, [emitPlaybackState, getNextIndex, onSongChange, repeatMode, song?.id, songs, syncMediaSessionPosition])
 
-  function togglePlay() {
+  const togglePlay = useCallback(() => {
     const audio = audioRef.current
     if (!audio) return
     if (playing) {
@@ -523,7 +303,7 @@ export default function Player({
     } else {
       audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
     }
-  }
+  }, [playing])
 
   function changeVolume(e: React.ChangeEvent<HTMLInputElement>) {
     const val = parseFloat(e.target.value)
@@ -550,6 +330,11 @@ export default function Player({
     (shuffleEnabled
       ? songs.length > 1 || repeatMode === "all"
       : currentIndex < songs.length - 1 || repeatMode === "all")
+  const queuePosition = queuePositionLabel(currentIndex, songs.length)
+
+  useEffect(() => {
+    navRef.current = { canGoPrev, canGoNext, playPrev, playNext }
+  }, [canGoPrev, canGoNext, playPrev, playNext])
 
   useEffect(() => {
     if (typeof document === "undefined") return
@@ -567,6 +352,15 @@ export default function Player({
     document.title = defaultDocumentTitleRef.current
   }, [song?.title])
 
+  // Update playback state independently — no handler teardown
+  useEffect(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return
+    navigator.mediaSession.playbackState = song
+      ? (playing ? "playing" : "paused")
+      : "none"
+  }, [song, playing])
+
+  // Set metadata + register action handlers
   useEffect(() => {
     if (typeof window === "undefined" || !("mediaSession" in navigator)) return
 
@@ -578,10 +372,6 @@ export default function Player({
         // Ignore unsupported actions per browser.
       }
     }
-
-    mediaSession.playbackState = song
-      ? (playing ? "playing" : "paused")
-      : "none"
 
     if (song && "MediaMetadata" in window) {
       const artworkUrl = song.coverPath
@@ -615,13 +405,22 @@ export default function Player({
       if (!audio) return
       audio.pause()
     })
-    setHandler("previoustrack", canGoPrev ? playPrev : null)
-    setHandler("nexttrack", canGoNext ? playNext : null)
+    setHandler("previoustrack", () => {
+      const n = navRef.current
+      if (!n.canGoPrev) return
+      n.playPrev()
+    })
+    setHandler("nexttrack", () => {
+      const n = navRef.current
+      if (!n.canGoNext) return
+      n.playNext()
+    })
     setHandler("seekbackward", (details) => {
       const audio = audioRef.current
       if (!audio) return
       const seekOffset = details.seekOffset ?? 10
       audio.currentTime = Math.max(0, audio.currentTime - seekOffset)
+      syncMediaSessionPosition(audio, true)
     })
     setHandler("seekforward", (details) => {
       const audio = audioRef.current
@@ -629,12 +428,14 @@ export default function Player({
       const seekOffset = details.seekOffset ?? 10
       const maxTime = Number.isFinite(audio.duration) ? audio.duration : audio.currentTime + seekOffset
       audio.currentTime = Math.min(maxTime, audio.currentTime + seekOffset)
+      syncMediaSessionPosition(audio, true)
     })
     setHandler("seekto", (details) => {
       const audio = audioRef.current
       if (!audio || details.seekTime === undefined) return
       const maxTime = Number.isFinite(audio.duration) ? audio.duration : details.seekTime
       audio.currentTime = Math.max(0, Math.min(details.seekTime, maxTime))
+      syncMediaSessionPosition(audio, true)
     })
 
     return () => {
@@ -642,23 +443,62 @@ export default function Player({
         setHandler(action, null)
       }
     }
-  }, [song, playing, canGoPrev, canGoNext, playPrev, playNext])
+  }, [song, syncMediaSessionPosition])
 
   useEffect(() => {
-    if (typeof window === "undefined" || !("mediaSession" in navigator)) return
-    if (!song || !Number.isFinite(duration) || duration <= 0) return
-    if (typeof navigator.mediaSession.setPositionState !== "function") return
+    function onKeyDown(e: KeyboardEvent) {
+      if (!song) return
+      const activeElement = document.activeElement
+      const isTyping =
+        activeElement?.tagName === "INPUT" ||
+        activeElement?.tagName === "TEXTAREA" ||
+        activeElement?.tagName === "SELECT" ||
+        (activeElement instanceof HTMLElement && activeElement.isContentEditable)
+      if (isTyping || e.altKey || e.metaKey || e.ctrlKey) return
 
-    try {
-      navigator.mediaSession.setPositionState({
-        duration,
-        position: Math.min(currentTime, duration),
-        playbackRate: 1,
-      })
-    } catch {
-      // Position state can throw when browser cannot determine timeline.
+      if (e.code === "Space") {
+        e.preventDefault()
+        togglePlay()
+        return
+      }
+
+      if (e.key === "ArrowRight") {
+        e.preventDefault()
+        const audio = audioRef.current
+        if (!audio) return
+        const maxTime = Number.isFinite(audio.duration) ? audio.duration : audio.currentTime + 5
+        audio.currentTime = Math.min(maxTime, audio.currentTime + 5)
+        return
+      }
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault()
+        const audio = audioRef.current
+        if (!audio) return
+        audio.currentTime = Math.max(0, audio.currentTime - 5)
+        return
+      }
+
+      if (e.key === "ArrowUp" && canGoPrev) {
+        e.preventDefault()
+        playPrev()
+        return
+      }
+
+      if (e.key === "ArrowDown" && canGoNext) {
+        e.preventDefault()
+        playNext()
+      }
     }
-  }, [song, duration, currentTime])
+
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [song, canGoPrev, canGoNext, playPrev, playNext, togglePlay])
+
+  useEffect(() => {
+    if (!song || !onPlaybackStateChange) return
+    emitPlaybackState(currentTime, playing)
+  }, [song, currentTime, playing, repeatMode, shuffleEnabled, emitPlaybackState, onPlaybackStateChange])
 
   const songId = song?.id ?? null
 
@@ -754,6 +594,9 @@ export default function Player({
       if (mobileExpandTimeoutRef.current) {
         clearTimeout(mobileExpandTimeoutRef.current)
       }
+      if (queueCloseTimeoutRef.current) {
+        clearTimeout(queueCloseTimeoutRef.current)
+      }
     }
   }, [])
 
@@ -794,7 +637,7 @@ export default function Player({
     return (
       <>
         <audio ref={audioRef} />
-        <div className="fixed bottom-0 left-0 right-0 bg-[#181818] border-t border-zinc-800 px-3 sm:px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+        <div className="fixed bottom-0 left-0 right-0 z-[70] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 sm:px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
           <div className="max-w-5xl mx-auto text-center text-zinc-600 text-sm">
             Select a song to play
           </div>
@@ -861,13 +704,36 @@ export default function Player({
   }
 
   function closeQueueSheet() {
+    if (queueCloseTimeoutRef.current) {
+      clearTimeout(queueCloseTimeoutRef.current)
+      queueCloseTimeoutRef.current = null
+    }
     queueTouchStartYRef.current = null
     setQueueDragOffset(0)
     setIsQueueDragging(false)
     setIsQueueSheetOpen(false)
   }
 
+  function closeQueueSheetWithAnimation() {
+    if (queueCloseTimeoutRef.current) {
+      clearTimeout(queueCloseTimeoutRef.current)
+      queueCloseTimeoutRef.current = null
+    }
+
+    const endOffset = typeof window === "undefined" ? 420 : Math.max(320, Math.floor(window.innerHeight * 0.72))
+    setIsQueueDragging(false)
+    setQueueDragOffset(endOffset)
+
+    queueCloseTimeoutRef.current = setTimeout(() => {
+      closeQueueSheet()
+    }, 220)
+  }
+
   function openQueueSheet() {
+    if (queueCloseTimeoutRef.current) {
+      clearTimeout(queueCloseTimeoutRef.current)
+      queueCloseTimeoutRef.current = null
+    }
     queueTouchStartYRef.current = null
     setQueueDragOffset(0)
     setIsQueueDragging(false)
@@ -876,7 +742,7 @@ export default function Player({
 
   function toggleQueueSheet() {
     if (isQueueSheetOpen) {
-      closeQueueSheet()
+      closeQueueSheetWithAnimation()
       return
     }
     openQueueSheet()
@@ -1034,17 +900,23 @@ export default function Player({
     }
 
     e.preventDefault()
-    setQueueDragOffset(Math.min(deltaY, 280))
+    const maxDrag = typeof window === "undefined" ? 420 : Math.max(320, Math.floor(window.innerHeight * 0.72))
+    setQueueDragOffset(Math.min(deltaY, maxDrag))
   }
 
   function handleQueueSheetTouchEnd() {
     if (queueDragOffset > QUEUE_CLOSE_DRAG_THRESHOLD) {
-      closeQueueSheet()
+      closeQueueSheetWithAnimation()
       return
     }
     queueTouchStartYRef.current = null
     setQueueDragOffset(0)
     setIsQueueDragging(false)
+  }
+
+  function removeQueueItem(songId: number, index: number) {
+    if (!onQueueRemove) return
+    onQueueRemove(songId, index)
   }
 
   if (isMobileViewport) {
@@ -1056,7 +928,7 @@ export default function Player({
       <>
         <audio ref={audioRef} />
         <div
-          className="fixed bottom-0 left-0 right-0 z-[60] bg-[#181818] border-t border-zinc-800 px-3 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]"
+          className="fixed bottom-0 left-0 right-0 z-[60] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]"
           style={{
             transform: `translateY(${miniDragOffset}px)`,
             opacity: miniOpacity,
@@ -1100,7 +972,7 @@ export default function Player({
             <button
               type="button"
               onClick={togglePlay}
-              className="h-12 w-12 flex items-center justify-center rounded-full bg-[#181818] text-white"
+              className="h-12 w-12 flex items-center justify-center text-white"
               aria-label={playing ? "Pause" : "Play"}
             >
               <PlayPauseIcon playing={playing} />
@@ -1272,7 +1144,7 @@ export default function Player({
                   <button
                     type="button"
                     onClick={togglePlay}
-                    className="h-[clamp(3.5rem,17vw,4.5rem)] w-[clamp(3.5rem,17vw,4.5rem)] shrink-0 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 transition-transform active:scale-95"
+                    className="h-[clamp(3.5rem,17vw,4.5rem)] w-[clamp(3.5rem,17vw,4.5rem)] shrink-0 flex items-center justify-center text-white hover:scale-105 transition-transform active:scale-95"
                   >
                     <PlayPauseIcon playing={playing} xlarge />
                   </button>
@@ -1303,203 +1175,74 @@ export default function Player({
           </div>
         )}
 
-        {isMobileExpanded && isQueueSheetOpen && (
-          <>
-            <div
-              className="fixed inset-0 z-[70] bg-black/45 transition-opacity duration-200"
-              onClick={closeQueueSheet}
-              aria-hidden="true"
-            />
-
-            <section
-              className="fixed inset-x-0 bottom-0 z-[75] mx-2 sm:mx-4 max-h-[72vh] rounded-t-2xl border border-zinc-800 bg-zinc-950 shadow-[0_-18px_48px_rgba(0,0,0,0.6)] overflow-hidden animate-[queue-sheet-in_260ms_cubic-bezier(0.22,1,0.36,1)]"
-              aria-label="Queue"
-            >
-              <div
-                style={{
-                  transform: `translate3d(0, ${queueDragOffset}px, 0)`,
-                  transition: isQueueDragging
-                    ? "none"
-                    : `transform 220ms ${MOBILE_EXPAND_EASE}`,
-                }}
-              >
-                <div
-                  className="px-4 pt-3 pb-2 border-b border-zinc-800"
-                  onTouchStart={handleQueueSheetTouchStart}
-                  onTouchMove={handleQueueSheetTouchMove}
-                  onTouchEnd={handleQueueSheetTouchEnd}
-                  onTouchCancel={handleQueueSheetTouchEnd}
-                >
-                  {/* Fix #10: drag handle indicator */}
-                  <div className="flex justify-center pb-2">
-                    <div className="h-1 w-8 rounded-full bg-zinc-700" />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold text-zinc-100">Queue</h3>
-                      <p className="text-xs text-zinc-500">{songs.length} tracks</p>
-                    </div>
-                  </div>
-                </div>
-
-                {songs.length === 0 ? (
-                  <div className="px-4 py-5 text-sm text-zinc-500">
-                    Queue is empty.
-                  </div>
-                ) : (
-                  <div className="max-h-[calc(72vh-4.6rem)] overflow-y-auto px-2 py-2">
-                    {songs.map((queueSong, index) => {
-                      const isCurrent = queueSong.id === songId
-                      return (
-                        <button
-                          key={`${queueSong.id}-${index}`}
-                          type="button"
-                          onClick={() => {
-                            onSongChange(queueSong)
-                            closeQueueSheet()
-                          }}
-                          className={`w-full text-left rounded-lg px-3 py-2 mb-1 border transition-colors ${
-                            isCurrent
-                              ? "bg-blue-600/20 border-blue-500/40"
-                              : "bg-zinc-900 border-zinc-800 hover:bg-zinc-800"
-                          }`}
-                        >
-                          <p className={`text-sm truncate ${isCurrent ? "text-blue-300" : "text-white"}`}>
-                            {index + 1}. {queueSong.title}
-                          </p>
-                          <p className="text-xs text-zinc-500 truncate">
-                            {queueSong.artist || "Unknown Artist"}
-                          </p>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </section>
-          </>
-        )}
+        <MobileQueueSheet
+          isVisible={isMobileExpanded && isQueueSheetOpen}
+          songs={songs}
+          currentSongId={songId}
+          queuePosition={queuePosition}
+          queueDragOffset={queueDragOffset}
+          isQueueDragging={isQueueDragging}
+          transitionEase={MOBILE_EXPAND_EASE}
+          onClose={closeQueueSheet}
+          onCloseAnimated={closeQueueSheetWithAnimation}
+          onTouchStart={handleQueueSheetTouchStart}
+          onTouchMove={handleQueueSheetTouchMove}
+          onTouchEnd={handleQueueSheetTouchEnd}
+          onSelectSong={(queueSong) => onSongChange(queueSong)}
+          onRemoveItem={removeQueueItem}
+          onClear={() => {
+            onQueueClear?.()
+            closeQueueSheet()
+          }}
+        />
       </>
     )
   }
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 bg-[#181818] border-t border-zinc-800 px-3 sm:px-4 lg:px-6 pt-3 lg:pt-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+      className="fixed bottom-0 left-0 right-0 z-[70] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 sm:px-4 lg:px-6 pt-3 lg:pt-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
     >
       <audio ref={audioRef} />
-      <div className="max-w-6xl mx-auto flex flex-col gap-3 lg:gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] sm:items-center">
-        <div className="flex items-center gap-3 min-w-0 lg:gap-4">
-          <div className="w-12 h-12 rounded overflow-hidden bg-zinc-800 shrink-0 flex items-center justify-center lg:h-14 lg:w-14">
-            {coverSrc ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={coverSrc}
-                alt={`${song.title} cover`}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <span className="text-zinc-500 text-xs">♪</span>
-            )}
-          </div>
-          <div className="min-w-0">
-            <ScrollingTitle
-              text={song.title}
-              className="text-sm font-medium text-white lg:text-base"
-              speed={20}
-            />
-            <p className="text-xs text-zinc-500 truncate lg:text-sm">{song.artist || "Unknown"}</p>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2 lg:gap-2.5 sm:px-4">
-          <div className="flex items-center justify-center gap-2.5 lg:gap-3">
-            <button
-              type="button"
-              onClick={() => setShuffleEnabled((prev) => !prev)}
-              className={`h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center transition-all lg:h-12 lg:min-w-12 ${
-                shuffleEnabled
-                  ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-              }`}
-              title="Shuffle"
-              aria-label={shuffleEnabled ? "Disable shuffle" : "Enable shuffle"}
-            >
-              <ShuffleIcon className="h-[1.1rem] w-[1.1rem] lg:h-[1.45rem] lg:w-[1.45rem]" />
-            </button>
-            <button
-              type="button"
-              onClick={playPrev}
-              disabled={!canGoPrev}
-              className="h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center text-zinc-300 hover:text-white hover:bg-zinc-800 hover:scale-105 disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:scale-100 transition-all lg:h-12 lg:min-w-12"
-            >
-              <PrevIcon className="h-[1.4rem] w-[1.4rem] lg:h-[1.9rem] lg:w-[1.9rem]" />
-            </button>
-            <button
-              type="button"
-              onClick={togglePlay}
-              className="h-11 w-11 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-transform lg:h-14 lg:w-14"
-            >
-              <PlayPauseIcon playing={playing} large />
-            </button>
-            <button
-              type="button"
-              onClick={playNext}
-              disabled={!canGoNext}
-              className="h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center text-zinc-300 hover:text-white hover:bg-zinc-800 hover:scale-105 disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:scale-100 transition-all lg:h-12 lg:min-w-12"
-            >
-              <NextIcon className="h-[1.4rem] w-[1.4rem] lg:h-[1.9rem] lg:w-[1.9rem]" />
-            </button>
-            <button
-              type="button"
-              onClick={cycleRepeatMode}
-              className={`h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center transition-all lg:h-12 lg:min-w-12 ${
-                repeatMode !== "off"
-                  ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-              }`}
-              title={repeatTitle}
-              aria-label={repeatTitle}
-            >
-              <RepeatIcon mode={repeatMode} className="h-[1.1rem] w-[1.1rem] lg:h-[1.45rem] lg:w-[1.45rem]" />
-            </button>
-          </div>
-
-          <div className="w-full flex items-center gap-2 lg:gap-2.5">
-            <span className="text-[11px] text-zinc-500 w-9 text-right lg:w-10 lg:text-xs">{formatTime(currentTime)}</span>
-            <div
-              ref={desktopSeekBarRef}
-              className="flex-1 h-1.5 bg-zinc-700 rounded-full cursor-pointer group lg:h-2"
-              onClick={handleDesktopSeekClick}
-              onTouchStart={handleDesktopSeekTouchStart}
-              onTouchMove={handleDesktopSeekTouchMove}
-              onTouchEnd={handleDesktopSeekTouchEnd}
-              onTouchCancel={handleDesktopSeekTouchEnd}
-            >
-              <div
-                className="h-full bg-emerald-500 rounded-full relative group-hover:bg-emerald-400 transition-colors"
-                style={{ width: `${progress}%` }}
-              >
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity lg:h-3.5 lg:w-3.5" />
-              </div>
-            </div>
-            <span className="text-[11px] text-zinc-500 w-9 lg:w-10 lg:text-xs">{formatTime(duration)}</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto sm:justify-end lg:gap-3">
-          <VolumeIcon className="h-[1.05rem] w-[1.05rem] text-zinc-400 lg:h-[1.6rem] lg:w-[1.6rem]" />
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            onChange={changeVolume}
-            className="w-full sm:w-28 lg:w-36 accent-emerald-500"
-          />
-        </div>
-      </div>
+      <DesktopPlayerBar
+        song={song}
+        songsLength={songs.length}
+        playing={playing}
+        shuffleEnabled={shuffleEnabled}
+        repeatMode={repeatMode}
+        repeatTitle={repeatTitle}
+        canGoPrev={canGoPrev}
+        canGoNext={canGoNext}
+        currentTime={currentTime}
+        duration={duration}
+        progress={progress}
+        volume={volume}
+        isQueueSheetOpen={isQueueSheetOpen}
+        coverSrc={coverSrc}
+        onToggleShuffle={() => setShuffleEnabled((prev) => !prev)}
+        onPlayPrev={playPrev}
+        onTogglePlay={togglePlay}
+        onPlayNext={playNext}
+        onCycleRepeat={cycleRepeatMode}
+        onVolumeChange={changeVolume}
+        onToggleQueue={toggleQueueSheet}
+        desktopSeekBarRef={desktopSeekBarRef}
+        onDesktopSeekClick={handleDesktopSeekClick}
+        onDesktopSeekTouchStart={handleDesktopSeekTouchStart}
+        onDesktopSeekTouchMove={handleDesktopSeekTouchMove}
+        onDesktopSeekTouchEnd={handleDesktopSeekTouchEnd}
+      />
+      {isQueueSheetOpen && (
+        <DesktopQueuePanel
+          songs={songs}
+          currentSongId={songId}
+          queuePosition={queuePosition}
+          onClose={closeQueueSheet}
+          onSelectSong={(queueSong) => onSongChange(queueSong)}
+          onRemove={(queueSongId, index) => removeQueueItem(queueSongId, index)}
+          onClear={() => onQueueClear?.()}
+        />
+      )}
     </div>
   )
 }

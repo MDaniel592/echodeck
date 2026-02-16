@@ -1,12 +1,19 @@
 "use client"
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import DownloadForm from "./components/DownloadForm"
 import SongList from "./components/SongList"
 import Player from "./components/Player"
+import LibraryManagementPanel from "./components/library/LibraryManagementPanel"
+import LibraryToolbar from "./components/library/LibraryToolbar"
+import LibraryGroupFolder from "./components/library/LibraryGroupFolder"
+import SongGridCards from "./components/library/SongGridCards"
+import MaintenancePanel from "./components/admin/MaintenancePanel"
 import { normalizeSongTitle } from "../lib/songTitle"
+import { removeQueueItem, reorderQueue } from "../lib/playbackQueue"
+import { groupSongsByScope } from "../lib/songGrouping"
 
 interface Song {
   id: number
@@ -21,6 +28,7 @@ interface Song {
   coverPath: string | null
   thumbnail: string | null
   fileSize: number | null
+  libraryId?: number | null
   playlistId: number | null
   createdAt: string
 }
@@ -32,26 +40,17 @@ interface Playlist {
   _count: { songs: number }
 }
 
+type RepeatMode = "off" | "all" | "one"
+type ScopeMode = "all" | "playlists" | "libraries"
+type ViewMode = "list" | "grid"
+
+interface LibrarySummary {
+  id: number
+  name: string
+}
+
 const QUEUE_STORAGE_KEY = "echodeck.queue.ids"
 const DEVICE_ID_STORAGE_KEY = "echodeck.device.id"
-
-function SearchIcon({ className = "h-4 w-4" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <circle cx="11" cy="11" r="7" />
-      <path d="M20 20l-3.4-3.4" />
-    </svg>
-  )
-}
 
 function LogoutIcon() {
   return (
@@ -72,36 +71,33 @@ function LogoutIcon() {
   )
 }
 
-function CloseIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-3.5 w-3.5"
-      aria-hidden="true"
-    >
-      <path d="M6 6l12 12" />
-      <path d="M18 6L6 18" />
-    </svg>
-  )
-}
 
 export default function Home() {
   const router = useRouter()
   const [songs, setSongs] = useState<Song[]>([])
   const [playlists, setPlaylists] = useState<Playlist[]>([])
+  const [libraries, setLibraries] = useState<LibrarySummary[]>([])
   const [currentSongId, setCurrentSongId] = useState<number | null>(null)
   const [queueIds, setQueueIds] = useState<number[]>([])
-  const [activeTab, setActiveTab] = useState<"player" | "download">("player")
+  const [activeTab, setActiveTab] = useState<"player" | "download" | "manage" | "repair">("player")
+  const [scopeMode, setScopeMode] = useState<ScopeMode>("all")
+  const [viewMode, setViewMode] = useState<ViewMode>("grid")
+  const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null)
   const [selectedPlaylist, setSelectedPlaylist] = useState<string>("all")
   const [searchQuery, setSearchQuery] = useState("")
   const [loading, setLoading] = useState(true)
   const [deviceId, setDeviceId] = useState<string | null>(null)
-  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [playbackState, setPlaybackState] = useState<{
+    positionSec: number
+    isPlaying: boolean
+    repeatMode: RepeatMode
+    shuffle: boolean
+  }>({
+    positionSec: 0,
+    isPlaying: false,
+    repeatMode: "off",
+    shuffle: false,
+  })
   const hydratedPlaybackRef = useRef(false)
 
   const songById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs])
@@ -230,10 +226,27 @@ export default function Home() {
     }
   }, [])
 
+  const fetchLibraries = useCallback(async () => {
+    try {
+      const res = await fetch("/api/libraries", { cache: "no-store" })
+      if (!res.ok) return
+      const data = await res.json() as Array<{ id?: number; name?: string }>
+      if (!Array.isArray(data)) return
+      setLibraries(
+        data
+          .filter((library): library is { id: number; name: string } => Number.isInteger(library.id) && typeof library.name === "string")
+          .map((library) => ({ id: library.id, name: library.name }))
+      )
+    } catch (err) {
+      console.error("Failed to fetch libraries:", err)
+    }
+  }, [])
+
   useEffect(() => {
     fetchSongs()
     fetchPlaylists()
-  }, [fetchSongs, fetchPlaylists])
+    fetchLibraries()
+  }, [fetchSongs, fetchPlaylists, fetchLibraries])
 
   useEffect(() => {
     if (!deviceId || songs.length === 0 || hydratedPlaybackRef.current) return
@@ -246,7 +259,13 @@ export default function Home() {
         })
         if (!res.ok) return
         const payload = await res.json() as {
-          session?: { currentSong?: { id: number } | null } | null
+          session?: {
+            currentSong?: { id: number } | null
+            positionSec?: number
+            isPlaying?: boolean
+            repeatMode?: RepeatMode
+            shuffle?: boolean
+          } | null
           queue?: Array<{ song?: { id: number } }>
         }
         const queued = Array.isArray(payload.queue)
@@ -263,6 +282,15 @@ export default function Home() {
         if (typeof currentId === "number" && Number.isInteger(currentId) && songById.has(currentId)) {
           setCurrentSongId(currentId)
         }
+        setPlaybackState({
+          positionSec: typeof payload.session?.positionSec === "number" ? Math.max(0, payload.session.positionSec) : 0,
+          isPlaying: Boolean(payload.session?.isPlaying),
+          repeatMode:
+            payload.session?.repeatMode === "all" || payload.session?.repeatMode === "one"
+              ? payload.session.repeatMode
+              : "off",
+          shuffle: Boolean(payload.session?.shuffle),
+        })
       } catch (error) {
         console.error("Failed to hydrate playback session:", error)
       } finally {
@@ -305,10 +333,10 @@ export default function Home() {
           body: JSON.stringify({
             deviceId,
             currentSongId,
-            positionSec: 0,
-            isPlaying: false,
-            repeatMode: "off",
-            shuffle: false,
+            positionSec: playbackState.positionSec,
+            isPlaying: playbackState.isPlaying,
+            repeatMode: playbackState.repeatMode,
+            shuffle: playbackState.shuffle,
           }),
         })
       } catch (error) {
@@ -317,7 +345,7 @@ export default function Home() {
     }
 
     void syncSession()
-  }, [deviceId, currentSongId])
+  }, [deviceId, currentSongId, playbackState])
 
   async function handleDeleteMany(ids: number[]) {
     const uniqueIds = Array.from(new Set(ids))
@@ -450,18 +478,21 @@ export default function Home() {
     }
   }
 
-  const playlistSongs = useMemo(() => songs.filter((song) => {
-    if (selectedPlaylist === "all") return true
-    if (selectedPlaylist === "none") return song.playlistId === null
-    const selectedId = Number.parseInt(selectedPlaylist, 10)
-    return song.playlistId === selectedId
-  }), [songs, selectedPlaylist])
+  const scopedSongs = useMemo(() => {
+    if (scopeMode === "libraries") return songs
+    return songs.filter((song) => {
+      if (selectedPlaylist === "all") return true
+      if (selectedPlaylist === "none") return song.playlistId === null
+      const selectedId = Number.parseInt(selectedPlaylist, 10)
+      return song.playlistId === selectedId
+    })
+  }, [songs, selectedPlaylist, scopeMode])
 
   const normalizedSearch = searchQuery.trim().toLowerCase()
 
   const visibleSongs = useMemo(() => {
-    if (!normalizedSearch) return playlistSongs
-    return playlistSongs.filter((song) => {
+    if (!normalizedSearch) return scopedSongs
+    return scopedSongs.filter((song) => {
       const haystack = [
         song.title,
         song.artist ?? "",
@@ -473,7 +504,40 @@ export default function Home() {
         .toLowerCase()
       return haystack.includes(normalizedSearch)
     })
-  }, [playlistSongs, normalizedSearch])
+  }, [scopedSongs, normalizedSearch])
+
+  const playlistNameById = useMemo(
+    () => new Map(playlists.map((playlist) => [playlist.id, playlist.name])),
+    [playlists]
+  )
+  const libraryNameById = useMemo(
+    () => new Map(libraries.map((library) => [library.id, library.name])),
+    [libraries]
+  )
+
+  const groupedVisibleSongs = useMemo(
+    () => groupSongsByScope(visibleSongs, scopeMode, playlistNameById, libraryNameById),
+    [scopeMode, visibleSongs, playlistNameById, libraryNameById]
+  )
+
+  useEffect(() => {
+    if (scopeMode === "all") {
+      setExpandedGroupKey(null)
+      return
+    }
+
+    if (groupedVisibleSongs.length === 0) {
+      setExpandedGroupKey(null)
+      return
+    }
+
+    setExpandedGroupKey((prev) => {
+      if (prev && groupedVisibleSongs.some((group) => group.key === prev)) {
+        return prev
+      }
+      return groupedVisibleSongs[0].key
+    })
+  }, [scopeMode, groupedVisibleSongs])
 
   function handleAddToQueue(song: Song) {
     setQueueIds((prev) => (prev.includes(song.id) ? prev : [...prev, song.id]))
@@ -509,11 +573,87 @@ export default function Home() {
     })
   }
 
+  function handleQueueReorder(fromIndex: number, toIndex: number) {
+    setQueueIds((prev) => reorderQueue(prev, fromIndex, toIndex))
+  }
+
+  function handleQueueRemove(songId: number, index: number) {
+    setQueueIds((prev) => {
+      const next = removeQueueItem(prev, songId, index)
+      if (next === prev) return prev
+      if (currentSongId !== null && !next.includes(currentSongId)) {
+        setCurrentSongId(next[0] ?? null)
+      }
+      return next
+    })
+  }
+
+  function renderGroupFolders(children: (group: { key: string; label: string; songs: Song[] }, isOpen: boolean) => ReactNode) {
+    return (
+      <div className="space-y-3">
+        {groupedVisibleSongs.map((group) => {
+          const isOpen = expandedGroupKey === group.key
+          return (
+            <LibraryGroupFolder
+              key={group.key}
+              label={group.label}
+              count={group.songs.length}
+              isOpen={isOpen}
+              onToggle={() => setExpandedGroupKey((prev) => (prev === group.key ? null : group.key))}
+            >
+              {children(group, isOpen)}
+            </LibraryGroupFolder>
+          )
+        })}
+      </div>
+    )
+  }
+
+  function renderGroupedGrid() {
+    if (scopeMode !== "all") {
+      return renderGroupFolders((group) => (
+        <SongGridCards
+          songs={group.songs}
+          currentSongId={currentSongId}
+          onPlay={handlePlaySong}
+          onPlayNext={handlePlayNext}
+          onAddToQueue={handleAddToQueue}
+        />
+      ))
+    }
+
+    return (
+      <div className="space-y-5">
+        {groupedVisibleSongs.map((group) => (
+          <section key={group.key} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:p-4">
+            {scopeMode !== "all" && (
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold tracking-wide text-zinc-100">{group.label}</h3>
+                <span className="text-xs text-zinc-400 tabular-nums">{group.songs.length} tracks</span>
+              </div>
+            )}
+            <SongGridCards
+              songs={group.songs}
+              currentSongId={currentSongId}
+              onPlay={handlePlaySong}
+              onPlayNext={handlePlayNext}
+              onAddToQueue={handleAddToQueue}
+            />
+          </section>
+        ))}
+      </div>
+    )
+  }
+
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="relative h-full flex flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,#1d2a4a_0%,#111623_35%,#080a10_72%)] text-zinc-100">
+      <div className="pointer-events-none absolute inset-0 opacity-40">
+        <div className="absolute -top-28 left-[8%] h-72 w-72 rounded-full bg-sky-400/20 blur-3xl" />
+        <div className="absolute top-[30%] -right-16 h-64 w-64 rounded-full bg-emerald-400/15 blur-3xl" />
+      </div>
       {/* ── Header ── */}
-      <header className="sticky top-0 z-40 border-b border-zinc-800/60 bg-black/80 backdrop-blur-2xl">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#0a0f1a]/75 backdrop-blur-2xl">
+        <div className="w-full px-4 sm:px-6">
           {/* Top row: brand + tabs + actions */}
           <div className="flex h-12 items-center gap-3 md:h-14 lg:h-16">
             {/* Brand */}
@@ -527,13 +667,13 @@ export default function Home() {
             />
 
             {/* Tabs */}
-            <nav className="flex items-center gap-0.5 rounded-lg bg-zinc-900/80 p-0.5 md:p-1 lg:p-1.5">
+            <nav className="flex items-center gap-0.5 rounded-xl border border-white/10 bg-white/5 p-0.5 md:p-1 lg:p-1.5">
               <button
                 type="button"
                 onClick={() => setActiveTab("player")}
                 className={`rounded-md px-3.5 py-1.5 text-xs font-medium transition-all md:px-4 md:py-2 md:text-sm lg:px-5 lg:py-2.5 lg:text-base ${
                   activeTab === "player"
-                    ? "bg-zinc-100 text-zinc-900 shadow-sm"
+                    ? "bg-gradient-to-r from-sky-300 to-emerald-300 text-slate-900 shadow-sm"
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
@@ -544,7 +684,7 @@ export default function Home() {
                 onClick={() => setActiveTab("download")}
                 className={`rounded-md px-3.5 py-1.5 text-xs font-medium transition-all md:px-4 md:py-2 md:text-sm lg:px-5 lg:py-2.5 lg:text-base ${
                   activeTab === "download"
-                    ? "bg-zinc-100 text-zinc-900 shadow-sm"
+                    ? "bg-gradient-to-r from-sky-300 to-emerald-300 text-slate-900 shadow-sm"
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
@@ -556,22 +696,22 @@ export default function Home() {
             <div className="flex-1" />
 
             {/* Song count */}
-            <span className="hidden sm:inline text-xs text-zinc-500 tabular-nums md:text-sm lg:text-base">
+            <span className="hidden sm:inline text-xs text-zinc-400 tabular-nums md:text-sm lg:text-base">
               {songs.length} {songs.length === 1 ? "track" : "tracks"}
             </span>
 
             <button
               type="button"
-              onClick={() => router.push("/library")}
-              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-zinc-800 px-3 text-xs text-zinc-300 hover:bg-zinc-900 md:text-sm"
+              onClick={() => setActiveTab("manage")}
+              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
             >
               Manage
             </button>
 
             <button
               type="button"
-              onClick={() => router.push("/admin/maintenance")}
-              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-zinc-800 px-3 text-xs text-zinc-300 hover:bg-zinc-900 md:text-sm"
+              onClick={() => setActiveTab("repair")}
+              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
             >
               Repair
             </button>
@@ -580,7 +720,7 @@ export default function Home() {
             <button
               type="button"
               onClick={handleLogout}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-white/10 hover:text-zinc-100"
               aria-label="Logout"
               title="Logout"
             >
@@ -590,67 +730,57 @@ export default function Home() {
 
           {/* Toolbar row (library tab only) */}
           {activeTab === "player" && (
-            <div className="flex items-center gap-2 pb-2 pt-0 lg:gap-3">
-              {/* Search */}
-              <div className="relative flex-1 max-w-xs">
-                <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-2.5 text-zinc-500">
-                  <SearchIcon />
-                </span>
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search..."
-                  className="h-8 w-full rounded-lg border border-zinc-800 bg-zinc-900/80 pl-8 pr-3 text-sm text-white placeholder-zinc-600 transition-colors focus:border-zinc-600 focus:outline-none lg:h-10 lg:text-base"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery("")}
-                    className="absolute inset-y-0 right-0 flex items-center pr-2 text-zinc-500 hover:text-zinc-300"
-                    aria-label="Clear search"
-                  >
-                    <CloseIcon />
-                  </button>
-                )}
-              </div>
-
-              {/* Playlist filter */}
-              <select
-                value={selectedPlaylist}
-                onChange={(e) => setSelectedPlaylist(e.target.value)}
-                className="h-8 rounded-lg border border-zinc-800 bg-zinc-900/80 pl-2.5 text-xs text-zinc-300 transition-colors focus:border-zinc-600 focus:outline-none sm:min-w-[10rem] lg:h-10 lg:text-sm"
-              >
-                <option value="all">All Songs ({songs.length})</option>
-                <option value="none">
-                  Unassigned ({songs.filter((s) => s.playlistId === null).length})
-                </option>
-                {playlists.map((playlist) => (
-                  <option key={playlist.id} value={playlist.id}>
-                    {playlist.name} ({playlist._count.songs})
-                  </option>
-                ))}
-              </select>
-            </div>
+            <LibraryToolbar
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              onClearSearch={() => setSearchQuery("")}
+              scopeMode={scopeMode}
+              onScopeModeChange={setScopeMode}
+              selectedPlaylist={selectedPlaylist}
+              onSelectedPlaylistChange={setSelectedPlaylist}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              songsCount={songs.length}
+              unassignedCount={songs.filter((song) => song.playlistId === null).length}
+              playlists={playlists}
+            />
           )}
         </div>
       </header>
 
       {/* ── Main ── */}
-      <main className="custom-scrollbar flex-1 overflow-y-auto mx-auto w-full max-w-5xl px-4 pt-3 sm:px-6 pb-32 sm:pb-28">
+      <main className="custom-scrollbar relative z-10 flex-1 overflow-y-auto w-full px-4 pt-4 sm:px-6 pb-32 sm:pb-28">
         {activeTab === "download" && (
           <DownloadForm
             onDownloadStart={() => {}}
             onDownloadComplete={() => {
               fetchSongs()
               fetchPlaylists()
+              fetchLibraries()
             }}
           />
         )}
 
+        {activeTab === "manage" && <LibraryManagementPanel embedded />}
+
+        {activeTab === "repair" && <MaintenancePanel embedded />}
+
         {activeTab === "player" && (
-          <>
+          <div className="animate-[app-fade-in_450ms_ease-out]">
+            <section className="mb-4 hidden grid-cols-1 gap-3 md:grid md:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Library</p>
+                <p className="mt-1 text-xl font-semibold text-white tabular-nums">{songs.length}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Visible</p>
+                <p className="mt-1 text-xl font-semibold text-white tabular-nums">{visibleSongs.length}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Queue</p>
+                <p className="mt-1 text-xl font-semibold text-white tabular-nums">{queueSongs.length}</p>
+              </div>
+            </section>
             {loading ? (
               <div className="flex items-center justify-center py-20">
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-400" />
@@ -671,25 +801,49 @@ export default function Home() {
                 <p className="mt-1 text-xs text-zinc-500">
                   {searchQuery.trim()
                     ? "Try a different search term."
-                    : "Try a different playlist filter."}
+                    : scopeMode === "libraries"
+                      ? "Try a different scope."
+                      : "Try a different playlist filter."}
                 </p>
               </div>
             ) : (
-              <SongList
-                songs={visibleSongs}
-                playlists={playlists}
-                currentSongId={currentSongId}
-                onPlay={handlePlaySong}
-                onAddToQueue={handleAddToQueue}
-                onPlayNext={handlePlayNext}
-                onDelete={handleDelete}
-                onDeleteMany={handleDeleteMany}
-                onAssignPlaylist={handleAssignPlaylist}
-                onAssignPlaylistMany={handleAssignPlaylistMany}
-                onCreatePlaylist={createPlaylist}
-              />
+              <>
+                {viewMode === "grid" ? (
+                  renderGroupedGrid()
+                ) : scopeMode === "all" ? (
+                  <SongList
+                    songs={visibleSongs}
+                    playlists={playlists}
+                    currentSongId={currentSongId}
+                    onPlay={handlePlaySong}
+                    onAddToQueue={handleAddToQueue}
+                    onPlayNext={handlePlayNext}
+                    onDelete={handleDelete}
+                    onDeleteMany={handleDeleteMany}
+                    onAssignPlaylist={handleAssignPlaylist}
+                    onAssignPlaylistMany={handleAssignPlaylistMany}
+                    onCreatePlaylist={createPlaylist}
+                  />
+                ) : (
+                  renderGroupFolders((group) => (
+                    <SongList
+                      songs={group.songs}
+                      playlists={playlists}
+                      currentSongId={currentSongId}
+                      onPlay={handlePlaySong}
+                      onAddToQueue={handleAddToQueue}
+                      onPlayNext={handlePlayNext}
+                      onDelete={handleDelete}
+                      onDeleteMany={handleDeleteMany}
+                      onAssignPlaylist={handleAssignPlaylist}
+                      onAssignPlaylistMany={handleAssignPlaylistMany}
+                      onCreatePlaylist={createPlaylist}
+                    />
+                  ))
+                )}
+              </>
             )}
-          </>
+          </div>
         )}
       </main>
 
@@ -697,6 +851,13 @@ export default function Home() {
         song={currentSong}
         songs={queueSongs}
         onSongChange={(song) => setCurrentSongId(song.id)}
+        onQueueReorder={handleQueueReorder}
+        onQueueRemove={handleQueueRemove}
+        onQueueClear={() => {
+          setQueueIds([])
+          setCurrentSongId(null)
+        }}
+        onPlaybackStateChange={(nextState) => setPlaybackState(nextState)}
       />
     </div>
   )
