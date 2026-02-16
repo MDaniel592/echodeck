@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.1.1...echodeck-v1.1.2) (2026-02-16)
+
+
+### Bug Fixes
+
+* reproducible Docker setup and Prisma startup guardrails ([#10](https://github.com/MDaniel592/echodeck/issues/10)) ([8b336c1](https://github.com/MDaniel592/echodeck/commit/8b336c157c5bd46271504a0c5a97612d98afe5d7))
+
 ## [1.1.1](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.1.0...echodeck-v1.1.1) (2026-02-16)
 
 
