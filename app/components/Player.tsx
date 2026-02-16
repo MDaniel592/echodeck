@@ -331,7 +331,10 @@ export default function Player({
       ? songs.length > 1 || repeatMode === "all"
       : currentIndex < songs.length - 1 || repeatMode === "all")
   const queuePosition = queuePositionLabel(currentIndex, songs.length)
-  navRef.current = { canGoPrev, canGoNext, playPrev, playNext }
+
+  useEffect(() => {
+    navRef.current = { canGoPrev, canGoNext, playPrev, playNext }
+  }, [canGoPrev, canGoNext, playPrev, playNext])
 
   useEffect(() => {
     if (typeof document === "undefined") return
