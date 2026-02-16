@@ -273,7 +273,7 @@ export default function Home() {
         ? firstPayload
         : (Array.isArray(firstPayload.songs) ? firstPayload.songs : [])
 
-      let allSongs = [...firstSongs]
+      const allSongs = [...firstSongs]
       const totalPages =
         Array.isArray(firstPayload) || typeof firstPayload.totalPages !== "number" || firstPayload.totalPages < 2
           ? 1
