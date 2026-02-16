@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.0.1...echodeck-v1.0.2) (2026-02-16)
+
+
+### Bug Fixes
+
+* **release:** trigger on echodeck tags and support manual dispatch ([6ca39e8](https://github.com/MDaniel592/echodeck/commit/6ca39e8863dc750e9818123f720c057bbe9115a7))
+
 ## [1.0.1](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.0.0...echodeck-v1.0.1) (2026-02-15)
 
 
