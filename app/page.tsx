@@ -523,22 +523,26 @@ export default function Home() {
   }, [songs, selectedPlaylist, scopeMode])
 
   const normalizedSearch = searchQuery.trim().toLowerCase()
+  const searchableSongTextById = useMemo(
+    () =>
+      new Map(
+        songs.map((song) => [
+          song.id,
+          [song.title, song.artist ?? "", song.source, song.format, song.quality ?? ""]
+            .join(" ")
+            .toLowerCase(),
+        ])
+      ),
+    [songs]
+  )
 
   const visibleSongs = useMemo(() => {
     if (!normalizedSearch) return scopedSongs
     return scopedSongs.filter((song) => {
-      const haystack = [
-        song.title,
-        song.artist ?? "",
-        song.source,
-        song.format,
-        song.quality ?? "",
-      ]
-        .join(" ")
-        .toLowerCase()
+      const haystack = searchableSongTextById.get(song.id) ?? ""
       return haystack.includes(normalizedSearch)
     })
-  }, [scopedSongs, normalizedSearch])
+  }, [scopedSongs, normalizedSearch, searchableSongTextById])
 
   const playlistNameById = useMemo(
     () => new Map(playlists.map((playlist) => [playlist.id, playlist.name])),
