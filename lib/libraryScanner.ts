@@ -218,6 +218,31 @@ export async function runLibraryScan(
         continue
       }
 
+      const sourcePrefix = `library:${library.id}:${libraryPath.id}:`
+      const legacySourcePrefix = `library:${library.id}:`
+      const existingSongs = await prisma.song.findMany({
+        where: {
+          userId,
+          source: "library",
+          OR: [
+            { sourceUrl: { startsWith: sourcePrefix } },
+            { sourceUrl: { startsWith: legacySourcePrefix } },
+          ],
+        },
+        select: {
+          id: true,
+          sourceUrl: true,
+          relativePath: true,
+          fileMtime: true,
+          fileSize: true,
+        },
+      })
+      const existingBySourceUrl = new Map<string, (typeof existingSongs)[number]>()
+      for (const existing of existingSongs) {
+        if (!existing.sourceUrl) continue
+        existingBySourceUrl.set(existing.sourceUrl, existing)
+      }
+
       for (const file of files) {
         stats.scannedFiles += 1
         try {
@@ -229,15 +254,30 @@ export async function runLibraryScan(
 
           const sourceUrl = buildLibrarySourceUrl(library.id, libraryPath.id, relativePath)
           const legacySourceUrl = buildLegacyLibrarySourceUrl(library.id, relativePath)
-          const existing = await prisma.song.findFirst({
-            where: {
-              userId,
-              source: "library",
-              OR: [{ sourceUrl }, { sourceUrl: legacySourceUrl }],
-            },
-          })
+          const existing = existingBySourceUrl.get(sourceUrl) ?? existingBySourceUrl.get(legacySourceUrl)
 
           const fileStat = await fs.stat(file)
+          if (
+            existing &&
+            existing.relativePath === relativePath &&
+            existing.fileSize === fileStat.size &&
+            existing.fileMtime?.getTime() === fileStat.mtime.getTime()
+          ) {
+            stats.skippedSongs += 1
+            if (existing.sourceUrl !== sourceUrl) {
+              await prisma.song.update({
+                where: { id: existing.id },
+                data: { sourceUrl },
+              })
+              existingBySourceUrl.delete(legacySourceUrl)
+              existingBySourceUrl.set(sourceUrl, {
+                ...existing,
+                sourceUrl,
+              })
+            }
+            continue
+          }
+
           const destination = await ensureFileCopied(file, relativePath, userId, library.id)
           const extracted = await extractAudioMetadataFromFile(file)
           const inferred = inferArtistAndAlbum(relativePath)
@@ -335,9 +375,17 @@ export async function runLibraryScan(
                 libraryId: library.id,
               },
             })
+            existingBySourceUrl.delete(legacySourceUrl)
+            existingBySourceUrl.set(sourceUrl, {
+              ...existing,
+              sourceUrl,
+              relativePath,
+              fileMtime: fileStat.mtime,
+              fileSize: fileStat.size,
+            })
             stats.updatedSongs += 1
           } else {
-            await prisma.song.create({
+            const created = await prisma.song.create({
               data: {
                 userId,
                 title,
@@ -372,7 +420,17 @@ export async function runLibraryScan(
                   .update(`${fileStat.size}:${fileStat.mtimeMs}:${libraryPath.id}:${relativePath}`)
                   .digest("hex"),
               },
+              select: {
+                id: true,
+                sourceUrl: true,
+                relativePath: true,
+                fileMtime: true,
+                fileSize: true,
+              },
             })
+            if (created.sourceUrl) {
+              existingBySourceUrl.set(created.sourceUrl, created)
+            }
             stats.createdSongs += 1
           }
         } catch {
