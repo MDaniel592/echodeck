@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.2.0...echodeck-v1.2.1) (2026-02-16)
+
+
+### Bug Fixes
+
+* include pending docker/prisma hardening updates ([7ff103d](https://github.com/MDaniel592/echodeck/commit/7ff103d0b75d3c8bcf931b09a490f7feb026a446))
+
 ## [1.2.0](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.1.2...echodeck-v1.2.0) (2026-02-16)
 
 
