@@ -4,6 +4,7 @@ FROM node:22-trixie-slim AS builder
 WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV DATABASE_URL=file:./data/dev.db
 
 # Native build tooling for better-sqlite3
 RUN apt-get update \
