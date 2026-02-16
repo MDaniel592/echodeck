@@ -178,41 +178,45 @@ export default function Home() {
 
   const fetchSongs = useCallback(async () => {
     try {
-      const pageSize = 200
-      let page = 1
-      let totalPages = 1
-      const allSongs: Song[] = []
-      let fetchedAnyPage = false
+      const pageSize = 1000
+      const firstRes = await fetch(`/api/songs?page=1&limit=${pageSize}`, {
+        cache: "no-store",
+      })
+      if (!firstRes.ok) {
+        throw new Error(`Song fetch failed with HTTP ${firstRes.status}`)
+      }
 
-      while (page <= totalPages) {
-        const res = await fetch(`/api/songs?page=${page}&limit=${pageSize}`, {
-          cache: "no-store",
+      const firstPayload = await firstRes.json() as { songs?: Song[]; totalPages?: number } | Song[]
+      const firstSongs = Array.isArray(firstPayload)
+        ? firstPayload
+        : (Array.isArray(firstPayload.songs) ? firstPayload.songs : [])
+
+      let allSongs = [...firstSongs]
+      const totalPages =
+        Array.isArray(firstPayload) || typeof firstPayload.totalPages !== "number" || firstPayload.totalPages < 2
+          ? 1
+          : firstPayload.totalPages
+
+      if (totalPages > 1) {
+        const pagePromises = Array.from({ length: totalPages - 1 }, async (_, index) => {
+          const page = index + 2
+          const res = await fetch(`/api/songs?page=${page}&limit=${pageSize}`, { cache: "no-store" })
+          if (!res.ok) {
+            throw new Error(`Song fetch failed with HTTP ${res.status}`)
+          }
+          const payload = await res.json() as { songs?: Song[] } | Song[]
+          return Array.isArray(payload) ? payload : (Array.isArray(payload.songs) ? payload.songs : [])
         })
-        if (!res.ok) {
-          throw new Error(`Song fetch failed with HTTP ${res.status}`)
+        const pages = await Promise.all(pagePromises)
+        for (const songsPage of pages) {
+          allSongs.push(...songsPage)
         }
-
-        const data = await res.json() as { songs?: Song[]; totalPages?: number } | Song[]
-        const pageSongs = Array.isArray(data)
-          ? data
-          : (Array.isArray(data.songs) ? data.songs : [])
-        allSongs.push(...pageSongs)
-        fetchedAnyPage = true
-
-        if (!Array.isArray(data) && typeof data.totalPages === "number" && data.totalPages > 0) {
-          totalPages = data.totalPages
-        } else {
-          totalPages = page
-        }
-        page += 1
       }
 
-      if (fetchedAnyPage) {
-        setSongs(allSongs.map((song) => ({
-          ...song,
-          title: normalizeSongTitle(song.title || "Unknown title"),
-        })))
-      }
+      setSongs(allSongs.map((song) => ({
+        ...song,
+        title: normalizeSongTitle(song.title || "Unknown title"),
+      })))
     } catch (err) {
       console.error("Failed to fetch songs:", err)
     } finally {
