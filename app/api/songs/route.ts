@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     // Pagination
     const page = Math.max(1, Number.parseInt(searchParams.get("page") || "1", 10) || 1)
     const limit = Math.min(
-      200,
+      1000,
       Math.max(1, Number.parseInt(searchParams.get("limit") || "100", 10) || 100)
     )
     const skip = (page - 1) * limit
@@ -48,6 +48,10 @@ export async function GET(request: NextRequest) {
       where.OR = [
         { title: { contains: search } },
         { artist: { contains: search } },
+        { album: { contains: search } },
+        { source: { contains: search } },
+        { format: { contains: search } },
+        { quality: { contains: search } },
       ]
     }
 
@@ -85,6 +89,14 @@ export async function GET(request: NextRequest) {
         if (Number.isInteger(parsed) && parsed > 0) {
           where.playlistId = parsed
         }
+      }
+    }
+
+    const libraryId = searchParams.get("libraryId")
+    if (libraryId !== null && libraryId !== undefined) {
+      const parsed = Number.parseInt(libraryId, 10)
+      if (Number.isInteger(parsed) && parsed > 0) {
+        where.libraryId = parsed
       }
     }
 

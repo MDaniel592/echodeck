@@ -117,21 +117,13 @@ export async function PATCH(
       updateData.discNumber = discNumber
     }
 
-    const updatedCount = await prisma.song.updateMany({
-      where: { id: songId, userId: auth.userId },
+    const updatedSong = await prisma.song.update({
+      where: { id: songId },
       data: updateData,
     })
-    if (updatedCount.count === 0) {
-      return NextResponse.json({ error: "Song not found" }, { status: 404 })
-    }
 
     if (hasPlaylistId) {
       await assignSongToPlaylistForUser(auth.userId, songId, playlistId)
-    }
-
-    const updatedSong = await prisma.song.findFirst({ where: { id: songId, userId: auth.userId } })
-    if (!updatedSong) {
-      return NextResponse.json({ error: "Song not found" }, { status: 404 })
     }
 
     return NextResponse.json(sanitizeSong(updatedSong))

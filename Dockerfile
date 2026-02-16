@@ -1,16 +1,16 @@
-FROM node:22-trixie-slim
+# ---- Builder stage ----
+FROM node:22-trixie-slim AS builder
 
 WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3000
 
-# better-sqlite3 may need native build tooling depending on platform.
+# Native build tooling for better-sqlite3
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy only install-critical files first for better layer caching.
+# Copy install-critical files first for better layer caching.
 COPY package.json package-lock.json ./
 COPY scripts ./scripts
 COPY tsconfig.json ./tsconfig.json
@@ -23,12 +23,55 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 
-RUN mkdir -p /app/data /app/downloads
+# Download downloader binaries during build so they are cached in the image.
+RUN npm run setup
 
+# ---- Runner stage ----
+FROM node:22-trixie-slim
+
+WORKDIR /app
+
+ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 ENV DATABASE_URL=file:./data/dev.db
+ENV PORT=3000
+ENV NODE_OPTIONS="--max-old-space-size=256"
+
+# ca-certificates needed for any outbound HTTPS (yt-dlp updates, etc.)
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+# Copy standalone output (includes only needed node_modules)
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+# Prisma schema + config (needed for db push at startup)
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
+
+# Generated Prisma client (standalone traces include it, but be explicit)
+COPY --from=builder /app/app/generated ./app/generated
+
+# Downloader binaries fetched during build
+COPY --from=builder /app/bin ./bin
+
+# better-sqlite3 native addon (serverExternalPackages)
+COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
+COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
+COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+COPY --from=builder /app/node_modules/prebuild-install ./node_modules/prebuild-install
+COPY --from=builder /app/node_modules/node-abi ./node_modules/node-abi
+
+# Prisma CLI (needed for db push at startup)
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv
+
+RUN mkdir -p /app/data /app/downloads
 
 EXPOSE 3000
 
-# Ensure downloader binaries and SQLite schema exist on container startup.
-CMD ["sh", "-c", "npm run setup && npm run db:push && npm run start"]
+# Push schema then start the standalone server.
+CMD ["sh", "-c", "npx prisma db push --skip-generate && node server.js"]

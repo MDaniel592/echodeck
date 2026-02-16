@@ -87,7 +87,12 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("")
   const [loading, setLoading] = useState(true)
   const [deviceId, setDeviceId] = useState<string | null>(null)
-  const [playbackState, setPlaybackState] = useState<{
+  const [searchResults, setSearchResults] = useState<Song[] | null>(null)
+  const searchAbortRef = useRef<AbortController | null>(null)
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hydratedPlaybackRef = useRef(false)
+  const currentSongIdRef = useRef<number | null>(null)
+  const playbackStateRef = useRef<{
     positionSec: number
     isPlaying: boolean
     repeatMode: RepeatMode
@@ -98,7 +103,7 @@ export default function Home() {
     repeatMode: "off",
     shuffle: false,
   })
-  const hydratedPlaybackRef = useRef(false)
+  const sessionSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const songById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs])
 
@@ -166,47 +171,139 @@ export default function Home() {
   }, [currentSongId, songById])
 
   useEffect(() => {
+    currentSongIdRef.current = currentSongId
+  }, [currentSongId])
+
+  useEffect(() => {
     if (activeTab === "player") return
     setSearchQuery("")
+    setSearchResults(null)
   }, [activeTab])
+
+  // Debounced server-side search
+  useEffect(() => {
+    const trimmed = searchQuery.trim()
+
+    // Clear results immediately when search is emptied
+    if (!trimmed) {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+        searchDebounceRef.current = null
+      }
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort()
+        searchAbortRef.current = null
+      }
+      setSearchResults(null)
+      return
+    }
+
+    // Debounce the API call
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current)
+    }
+
+    searchDebounceRef.current = setTimeout(() => {
+      searchDebounceRef.current = null
+
+      // Abort any in-flight search
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort()
+      }
+      const controller = new AbortController()
+      searchAbortRef.current = controller
+
+      const params = new URLSearchParams({
+        search: trimmed,
+        limit: "1000",
+      })
+
+      // Pass scope filters so server results respect current view
+      if (scopeMode !== "libraries" && selectedPlaylist !== "all") {
+        params.set("playlistId", selectedPlaylist)
+      }
+
+      fetch(`/api/songs?${params.toString()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`Search failed with HTTP ${res.status}`)
+          return res.json() as Promise<{ songs?: Song[] } | Song[]>
+        })
+        .then((payload) => {
+          const results = Array.isArray(payload)
+            ? payload
+            : Array.isArray(payload.songs)
+              ? payload.songs
+              : []
+          setSearchResults(
+            results.map((song) => ({
+              ...song,
+              title: normalizeSongTitle(song.title || "Unknown title"),
+            }))
+          )
+        })
+        .catch((err) => {
+          if (err instanceof DOMException && err.name === "AbortError") return
+          console.error("Search failed:", err)
+        })
+    }, 300)
+
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+        searchDebounceRef.current = null
+      }
+    }
+  }, [searchQuery, scopeMode, selectedPlaylist])
 
   const fetchSongs = useCallback(async () => {
     try {
-      const pageSize = 200
-      let page = 1
-      let totalPages = 1
-      const allSongs: Song[] = []
-      let fetchedAnyPage = false
-
-      while (page <= totalPages) {
-        const res = await fetch(`/api/songs?page=${page}&limit=${pageSize}`, {
-          cache: "no-store",
-        })
-        if (!res.ok) {
-          throw new Error(`Song fetch failed with HTTP ${res.status}`)
-        }
-
-        const data = await res.json() as { songs?: Song[]; totalPages?: number } | Song[]
-        const pageSongs = Array.isArray(data)
-          ? data
-          : (Array.isArray(data.songs) ? data.songs : [])
-        allSongs.push(...pageSongs)
-        fetchedAnyPage = true
-
-        if (!Array.isArray(data) && typeof data.totalPages === "number" && data.totalPages > 0) {
-          totalPages = data.totalPages
-        } else {
-          totalPages = page
-        }
-        page += 1
+      const pageSize = 1000
+      const firstRes = await fetch(`/api/songs?page=1&limit=${pageSize}`, {
+        cache: "no-store",
+      })
+      if (!firstRes.ok) {
+        throw new Error(`Song fetch failed with HTTP ${firstRes.status}`)
       }
 
-      if (fetchedAnyPage) {
-        setSongs(allSongs.map((song) => ({
-          ...song,
-          title: normalizeSongTitle(song.title || "Unknown title"),
-        })))
+      const firstPayload = await firstRes.json() as { songs?: Song[]; totalPages?: number } | Song[]
+      const firstSongs = Array.isArray(firstPayload)
+        ? firstPayload
+        : (Array.isArray(firstPayload.songs) ? firstPayload.songs : [])
+
+      const allSongs = [...firstSongs]
+      const totalPages =
+        Array.isArray(firstPayload) || typeof firstPayload.totalPages !== "number" || firstPayload.totalPages < 2
+          ? 1
+          : firstPayload.totalPages
+
+      if (totalPages > 1) {
+        const remainingPages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2)
+        const concurrency = 6
+        for (let i = 0; i < remainingPages.length; i += concurrency) {
+          const batch = remainingPages.slice(i, i + concurrency)
+          const pages = await Promise.all(
+            batch.map(async (page) => {
+              const res = await fetch(`/api/songs?page=${page}&limit=${pageSize}`, { cache: "no-store" })
+              if (!res.ok) {
+                throw new Error(`Song fetch failed with HTTP ${res.status}`)
+              }
+              const payload = await res.json() as { songs?: Song[] } | Song[]
+              return Array.isArray(payload) ? payload : (Array.isArray(payload.songs) ? payload.songs : [])
+            })
+          )
+          for (const songsPage of pages) {
+            allSongs.push(...songsPage)
+          }
+        }
       }
+
+      setSongs(allSongs.map((song) => ({
+        ...song,
+        title: normalizeSongTitle(song.title || "Unknown title"),
+      })))
     } catch (err) {
       console.error("Failed to fetch songs:", err)
     } finally {
@@ -282,7 +379,7 @@ export default function Home() {
         if (typeof currentId === "number" && Number.isInteger(currentId) && songById.has(currentId)) {
           setCurrentSongId(currentId)
         }
-        setPlaybackState({
+        playbackStateRef.current = {
           positionSec: typeof payload.session?.positionSec === "number" ? Math.max(0, payload.session.positionSec) : 0,
           isPlaying: Boolean(payload.session?.isPlaying),
           repeatMode:
@@ -290,7 +387,7 @@ export default function Home() {
               ? payload.session.repeatMode
               : "off",
           shuffle: Boolean(payload.session?.shuffle),
-        })
+        }
       } catch (error) {
         console.error("Failed to hydrate playback session:", error)
       } finally {
@@ -322,49 +419,77 @@ export default function Home() {
     void syncQueue()
   }, [deviceId, queueIds])
 
+  const syncPlaybackSession = useCallback(async () => {
+    if (!deviceId || !hydratedPlaybackRef.current) return
+    const snapshot = playbackStateRef.current
+
+    try {
+      await fetch("/api/playback/session", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deviceId,
+          currentSongId: currentSongIdRef.current,
+          positionSec: snapshot.positionSec,
+          isPlaying: snapshot.isPlaying,
+          repeatMode: snapshot.repeatMode,
+          shuffle: snapshot.shuffle,
+        }),
+      })
+    } catch (error) {
+      console.error("Failed to sync playback session:", error)
+    }
+  }, [deviceId])
+
+  const schedulePlaybackSessionSync = useCallback(() => {
+    if (sessionSyncTimeoutRef.current) {
+      clearTimeout(sessionSyncTimeoutRef.current)
+    }
+    sessionSyncTimeoutRef.current = setTimeout(() => {
+      sessionSyncTimeoutRef.current = null
+      void syncPlaybackSession()
+    }, 700)
+  }, [syncPlaybackSession])
+
   useEffect(() => {
     if (!deviceId || !hydratedPlaybackRef.current) return
+    void syncPlaybackSession()
+  }, [deviceId, currentSongId, syncPlaybackSession])
 
-    async function syncSession() {
-      try {
-        await fetch("/api/playback/session", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            deviceId,
-            currentSongId,
-            positionSec: playbackState.positionSec,
-            isPlaying: playbackState.isPlaying,
-            repeatMode: playbackState.repeatMode,
-            shuffle: playbackState.shuffle,
-          }),
-        })
-      } catch (error) {
-        console.error("Failed to sync playback session:", error)
-      }
+  useEffect(() => {
+    return () => {
+      if (!sessionSyncTimeoutRef.current) return
+      clearTimeout(sessionSyncTimeoutRef.current)
+      sessionSyncTimeoutRef.current = null
+      void syncPlaybackSession()
     }
-
-    void syncSession()
-  }, [deviceId, currentSongId, playbackState])
+  }, [syncPlaybackSession])
 
   async function handleDeleteMany(ids: number[]) {
     const uniqueIds = Array.from(new Set(ids))
     if (uniqueIds.length === 0) return
 
     try {
-      const results = await Promise.all(
-        uniqueIds.map(async (id) => {
-          const res = await fetch(`/api/songs/${id}`, { method: "DELETE" })
-          return { id, ok: res.ok }
-        })
-      )
-
-      const deletedIds = results.filter((result) => result.ok).map((result) => result.id)
-      if (deletedIds.length === 0) {
-        throw new Error("Failed to delete selected songs")
+      const res = await fetch("/api/songs/bulk", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: uniqueIds }),
+      })
+      const payload = await res.json().catch(() => null)
+      if (!res.ok) {
+        const message = payload && typeof payload.error === "string"
+          ? payload.error
+          : "Failed to delete selected songs"
+        throw new Error(message)
       }
 
+      const deletedIds = Array.isArray(payload?.deletedIds)
+        ? payload.deletedIds.filter((id: unknown): id is number => Number.isInteger(id))
+        : []
       const deletedSet = new Set(deletedIds)
+      if (deletedSet.size === 0) {
+        throw new Error("Failed to delete selected songs")
+      }
 
       setSongs((prev) => prev.filter((song) => !deletedSet.has(song.id)))
       setQueueIds((prev) => {
@@ -425,24 +550,26 @@ export default function Home() {
     if (uniqueIds.length === 0) return
 
     try {
-      const results = await Promise.all(
-        uniqueIds.map(async (songId) => {
-          const res = await fetch(`/api/songs/${songId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ playlistId }),
-          })
-
-          return { songId, ok: res.ok }
-        })
-      )
-
-      const updatedIds = results.filter((result) => result.ok).map((result) => result.songId)
-      if (updatedIds.length === 0) {
-        throw new Error("Failed to assign playlist")
+      const res = await fetch("/api/songs/bulk", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: uniqueIds, playlistId }),
+      })
+      const payload = await res.json().catch(() => null)
+      if (!res.ok) {
+        const message = payload && typeof payload.error === "string"
+          ? payload.error
+          : "Failed to assign playlist"
+        throw new Error(message)
       }
 
+      const updatedIds = Array.isArray(payload?.updatedIds)
+        ? payload.updatedIds.filter((id: unknown): id is number => Number.isInteger(id))
+        : []
       const updatedSet = new Set(updatedIds)
+      if (updatedSet.size === 0) {
+        throw new Error("Failed to assign playlist")
+      }
       setSongs((prev) =>
         prev.map((song) =>
           updatedSet.has(song.id)
@@ -488,23 +615,10 @@ export default function Home() {
     })
   }, [songs, selectedPlaylist, scopeMode])
 
-  const normalizedSearch = searchQuery.trim().toLowerCase()
-
   const visibleSongs = useMemo(() => {
-    if (!normalizedSearch) return scopedSongs
-    return scopedSongs.filter((song) => {
-      const haystack = [
-        song.title,
-        song.artist ?? "",
-        song.source,
-        song.format,
-        song.quality ?? "",
-      ]
-        .join(" ")
-        .toLowerCase()
-      return haystack.includes(normalizedSearch)
-    })
-  }, [scopedSongs, normalizedSearch])
+    if (searchResults !== null) return searchResults
+    return scopedSongs
+  }, [scopedSongs, searchResults])
 
   const playlistNameById = useMemo(
     () => new Map(playlists.map((playlist) => [playlist.id, playlist.name])),
@@ -513,6 +627,10 @@ export default function Home() {
   const libraryNameById = useMemo(
     () => new Map(libraries.map((library) => [library.id, library.name])),
     [libraries]
+  )
+  const unassignedCount = useMemo(
+    () => songs.reduce((count, song) => count + (song.playlistId === null ? 1 : 0), 0),
+    [songs]
   )
 
   const groupedVisibleSongs = useMemo(
@@ -741,7 +859,7 @@ export default function Home() {
               viewMode={viewMode}
               onViewModeChange={setViewMode}
               songsCount={songs.length}
-              unassignedCount={songs.filter((song) => song.playlistId === null).length}
+              unassignedCount={unassignedCount}
               playlists={playlists}
             />
           )}
@@ -857,7 +975,21 @@ export default function Home() {
           setQueueIds([])
           setCurrentSongId(null)
         }}
-        onPlaybackStateChange={(nextState) => setPlaybackState(nextState)}
+        onPlaybackStateChange={(nextState) => {
+          const prev = playbackStateRef.current
+          const prevBucket = Math.floor(Math.max(0, prev.positionSec) / 5)
+          const nextBucket = Math.floor(Math.max(0, nextState.positionSec) / 5)
+          const shouldSync =
+            prev.isPlaying !== nextState.isPlaying ||
+            prev.repeatMode !== nextState.repeatMode ||
+            prev.shuffle !== nextState.shuffle ||
+            prevBucket !== nextBucket
+
+          playbackStateRef.current = nextState
+          if (shouldSync) {
+            schedulePlaybackSessionSync()
+          }
+        }}
       />
     </div>
   )

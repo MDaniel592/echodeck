@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom"
 
 interface Song {
@@ -627,6 +627,10 @@ export default function SongList({
   }
 
   const selectedCount = selectedSongIds.size
+  const playlistById = useMemo(
+    () => new Map(playlists.map((playlist) => [playlist.id, playlist])),
+    [playlists]
+  )
   const allVisibleSelected =
     songs.length > 0 &&
     songs.every((song) => selectedSongIds.has(song.id))
@@ -804,7 +808,7 @@ export default function SongList({
             const assignedPlaylist =
               song.playlistId === null
                 ? null
-                : playlists.find((playlist) => playlist.id === song.playlistId) ?? null
+                : playlistById.get(song.playlistId) ?? null
 
             return (
               <div
@@ -814,6 +818,7 @@ export default function SongList({
                     ? "bg-blue-500/10"
                     : "hover:bg-zinc-800/50"
                 } ${!isPlaying && index % 2 === 0 ? "bg-zinc-900/30" : "bg-zinc-900/60"}`}
+                style={{ contentVisibility: "auto", containIntrinsicSize: "auto 72px" }}
                 onPointerDown={(e) => startLongPress(song.id, e)}
                 onPointerUp={cancelLongPress}
                 onPointerCancel={cancelLongPress}

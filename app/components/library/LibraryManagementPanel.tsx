@@ -47,6 +47,21 @@ export default function LibraryManagementPanel({ embedded = false }: LibraryMana
     return `${count} ${count === 1 ? "library" : "libraries"}`
   }, [libraries.length])
 
+  const applyLibraries = useCallback((librariesPayload: unknown) => {
+    const nextLibraries = Array.isArray(librariesPayload) ? librariesPayload : []
+    setLibraries(nextLibraries)
+
+    const nextScanState: Record<number, string> = {}
+    for (const library of nextLibraries) {
+      const latest = library.scanRuns?.[0]
+      if (!latest) continue
+      if (latest.status === "queued" || latest.status === "running") {
+        nextScanState[library.id] = latest.status
+      }
+    }
+    setScanState(nextScanState)
+  }, [])
+
   const fetchAll = useCallback(async () => {
     try {
       setError(null)
@@ -66,35 +81,68 @@ export default function LibraryManagementPanel({ embedded = false }: LibraryMana
       const artistsPayload = await artistsRes.json().catch(() => ({ artists: [] }))
       const albumsPayload = await albumsRes.json().catch(() => ({ albums: [] }))
 
-      const nextLibraries = Array.isArray(librariesPayload) ? librariesPayload : []
-      setLibraries(nextLibraries)
+      applyLibraries(librariesPayload)
       setArtists(Array.isArray(artistsPayload?.artists) ? artistsPayload.artists : [])
       setAlbums(Array.isArray(albumsPayload?.albums) ? albumsPayload.albums : [])
-
-      const nextScanState: Record<number, string> = {}
-      for (const library of nextLibraries) {
-        const latest = library.scanRuns?.[0]
-        if (!latest) continue
-        if (latest.status === "queued" || latest.status === "running") {
-          nextScanState[library.id] = latest.status
-        }
-      }
-      setScanState(nextScanState)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load library metadata")
     }
-  }, [router])
+  }, [applyLibraries, router])
+
+  const fetchLibrariesOnly = useCallback(async () => {
+    try {
+      const librariesRes = await fetch("/api/libraries", { cache: "no-store" })
+      if (librariesRes.status === 401) {
+        router.push("/login")
+        return
+      }
+      const librariesPayload = await librariesRes.json().catch(() => [])
+      applyLibraries(librariesPayload)
+    } catch {
+      // Ignore periodic polling failures.
+    }
+  }, [applyLibraries, router])
 
   useEffect(() => {
     void fetchAll()
   }, [fetchAll])
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      void fetchAll()
-    }, 7000)
-    return () => clearInterval(interval)
-  }, [fetchAll])
+    let interval: ReturnType<typeof setInterval> | null = null
+
+    const startPolling = () => {
+      if (interval) return
+      interval = setInterval(() => {
+        if (typeof document !== "undefined" && document.visibilityState !== "visible") return
+        void fetchLibrariesOnly()
+      }, 7000)
+    }
+
+    const stopPolling = () => {
+      if (!interval) return
+      clearInterval(interval)
+      interval = null
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void fetchLibrariesOnly()
+        startPolling()
+        return
+      }
+      stopPolling()
+    }
+
+    if (typeof document === "undefined" || document.visibilityState === "visible") {
+      startPolling()
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+
+    return () => {
+      stopPolling()
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+    }
+  }, [fetchLibrariesOnly])
 
   async function handleCreateLibrary() {
     if (!name.trim() || !inputPath.trim()) return

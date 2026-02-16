@@ -17,5 +17,7 @@ jobs:
         id: release
         uses: googleapis/release-please-action@v4
         with:
+          # Use a PAT when available so tag/release events can trigger downstream workflows.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN != '' && secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

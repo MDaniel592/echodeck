@@ -58,6 +58,8 @@ Configure these in GitHub `Settings`:
 1. `Settings -> Actions -> General -> Workflow permissions`
 - Set to `Read and write permissions`.
 - Enable `Allow GitHub Actions to create and approve pull requests`.
+- Add repository secret `RELEASE_PLEASE_TOKEN` (PAT with `repo` scope) so
+  `release-please` tag/release events can trigger downstream workflows.
 
 2. `Settings -> Branches -> Branch protection rules -> main`
 - Require a pull request before merging.
@@ -73,3 +75,12 @@ Configure these in GitHub `Settings`:
 
 4. `Packages (GHCR)`
 - Verify package visibility and access policy for `ghcr.io/<owner>/echodeck` matches your release intent (private/public).
+
+## If the release workflow did not trigger
+
+If the Release PR merged and tag exists but `.github/workflows/release.yml` did
+not run, trigger it manually:
+
+1. Open `Actions -> Release -> Run workflow`.
+2. Enter tag (for example `echodeck-v1.1.0`).
+3. Run the workflow.
