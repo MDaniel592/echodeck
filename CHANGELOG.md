@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.2.1...echodeck-v1.3.0) (2026-02-16)
+
+
+### Features
+
+* player UX redesign and main page refresh ([#6](https://github.com/MDaniel592/echodeck/issues/6)) ([f89813c](https://github.com/MDaniel592/echodeck/commit/f89813ca7276fcb464f03365b85674f778331af9))
+
+
+### Bug Fixes
+
+* include pending docker/prisma hardening updates ([7ff103d](https://github.com/MDaniel592/echodeck/commit/7ff103d0b75d3c8bcf931b09a490f7feb026a446))
+* release performance sweep ([efbab07](https://github.com/MDaniel592/echodeck/commit/efbab071485ce59239bd5b95432a44e0798c81cd))
+* **release:** document releasable commit requirement ([6401cd0](https://github.com/MDaniel592/echodeck/commit/6401cd02c279e302cddca2771d12bcb97bc02366))
+* **release:** trigger on echodeck tags and support manual dispatch ([6ca39e8](https://github.com/MDaniel592/echodeck/commit/6ca39e8863dc750e9818123f720c057bbe9115a7))
+* reproducible Docker setup and Prisma startup guardrails ([#10](https://github.com/MDaniel592/echodeck/issues/10)) ([8b336c1](https://github.com/MDaniel592/echodeck/commit/8b336c157c5bd46271504a0c5a97612d98afe5d7))
+
 ## [1.2.1](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.2.0...echodeck-v1.2.1) (2026-02-16)
 
 
