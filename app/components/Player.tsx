@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react"
 import { queuePositionLabel } from "../../lib/playbackQueue"
 import DesktopQueuePanel from "./player/DesktopQueuePanel"
 import DesktopPlayerBar from "./player/DesktopPlayerBar"
@@ -72,7 +72,6 @@ export default function Player({
   song,
   songs,
   onSongChange,
-  onQueueReorder,
   onQueueRemove,
   onQueueClear,
   onPlaybackStateChange,
@@ -87,6 +86,7 @@ export default function Player({
   const miniExpandTriggeredRef = useRef(false)
   const mobileCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mobileExpandTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const queueCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -108,6 +108,14 @@ export default function Player({
   const [artworkFlip, setArtworkFlip] = useState({ dx: 0, dy: 0, scale: 1 })
   const defaultDocumentTitleRef = useRef<string>("EchoDeck")
   const lastPlaybackSnapshotRef = useRef<string>("")
+  const mediaSessionSongIdRef = useRef<number | null>(null)
+  const mediaSessionMetadataReadyRef = useRef(false)
+  const mediaSessionLastSyncAtRef = useRef(0)
+  const navRef = useRef({ canGoPrev: false, canGoNext: false, playPrev: () => {}, playNext: () => {} })
+  const isBraveBrowser = useMemo(
+    () => (typeof navigator !== "undefined" ? /Brave\//i.test(navigator.userAgent) : false),
+    []
+  )
 
   const currentIndex = song ? songs.findIndex((s) => s.id === song.id) : -1
 
@@ -170,15 +178,49 @@ export default function Player({
     onPlaybackStateChange(payload)
   }, [onPlaybackStateChange, repeatMode, shuffleEnabled])
 
+  const clearMediaSessionPosition = useCallback(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return
+    if (typeof navigator.mediaSession.setPositionState !== "function") return
+    try {
+      navigator.mediaSession.setPositionState()
+      mediaSessionLastSyncAtRef.current = 0
+    } catch {
+      // ignored
+    }
+  }, [])
+
+  const syncMediaSessionPosition = useCallback((audio: HTMLAudioElement, force = false) => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return
+    if (typeof navigator.mediaSession.setPositionState !== "function") return
+    if (!mediaSessionMetadataReadyRef.current) return
+    const now = Date.now()
+    if (isBraveBrowser && !force && now - mediaSessionLastSyncAtRef.current < 900) return
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) return
+    try {
+      const safePlaybackRate = Math.abs(audio.playbackRate) > 0 ? audio.playbackRate : 1
+      navigator.mediaSession.setPositionState({
+        duration: audio.duration,
+        position: Math.max(0, Math.min(audio.currentTime, audio.duration)),
+        playbackRate: safePlaybackRate,
+      })
+      mediaSessionLastSyncAtRef.current = now
+    } catch {
+      // ignored
+    }
+  }, [isBraveBrowser])
+
   useEffect(() => {
     const audio = audioRef.current
     if (!audio || !song) return
 
+    clearMediaSessionPosition()
+    mediaSessionSongIdRef.current = song.id
+    mediaSessionMetadataReadyRef.current = false
     audio.src = `/api/stream/${song.id}`
     audio.currentTime = 0
     audio.volume = volume
     audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
-  }, [song?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [song?.id, clearMediaSessionPosition, syncMediaSessionPosition]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const audio = audioRef.current
@@ -188,14 +230,31 @@ export default function Player({
       setCurrentTime(audio.currentTime)
       emitPlaybackState(audio.currentTime, !audio.paused)
     }
-    const onDurationChange = () => setDuration(audio.duration)
+    const onDurationChange = () => {
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+      syncMediaSessionPosition(audio, true)
+    }
+    const onLoadedMetadata = () => {
+      if (mediaSessionSongIdRef.current !== song?.id) return
+      mediaSessionMetadataReadyRef.current = true
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+      syncMediaSessionPosition(audio, true)
+    }
     const onPlay = () => {
       setPlaying(true)
+      if (typeof window !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "playing"
+      }
       emitPlaybackState(audio.currentTime, true)
+      syncMediaSessionPosition(audio, true)
     }
     const onPause = () => {
       setPlaying(false)
+      if (typeof window !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "paused"
+      }
       emitPlaybackState(audio.currentTime, false)
+      syncMediaSessionPosition(audio, true)
     }
     const onEnded = () => {
       if (repeatMode === "one") {
@@ -212,20 +271,28 @@ export default function Player({
       onSongChange(songs[nextIndex])
     }
 
+    const onSeeked = () => {
+      syncMediaSessionPosition(audio, true)
+    }
+
     audio.addEventListener("timeupdate", onTimeUpdate)
     audio.addEventListener("durationchange", onDurationChange)
+    audio.addEventListener("loadedmetadata", onLoadedMetadata)
     audio.addEventListener("play", onPlay)
     audio.addEventListener("pause", onPause)
     audio.addEventListener("ended", onEnded)
+    audio.addEventListener("seeked", onSeeked)
 
     return () => {
       audio.removeEventListener("timeupdate", onTimeUpdate)
       audio.removeEventListener("durationchange", onDurationChange)
+      audio.removeEventListener("loadedmetadata", onLoadedMetadata)
       audio.removeEventListener("play", onPlay)
       audio.removeEventListener("pause", onPause)
       audio.removeEventListener("ended", onEnded)
+      audio.removeEventListener("seeked", onSeeked)
     }
-  }, [emitPlaybackState, getNextIndex, onSongChange, repeatMode, songs])
+  }, [emitPlaybackState, getNextIndex, onSongChange, repeatMode, song?.id, songs, syncMediaSessionPosition])
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
@@ -264,6 +331,7 @@ export default function Player({
       ? songs.length > 1 || repeatMode === "all"
       : currentIndex < songs.length - 1 || repeatMode === "all")
   const queuePosition = queuePositionLabel(currentIndex, songs.length)
+  navRef.current = { canGoPrev, canGoNext, playPrev, playNext }
 
   useEffect(() => {
     if (typeof document === "undefined") return
@@ -281,6 +349,15 @@ export default function Player({
     document.title = defaultDocumentTitleRef.current
   }, [song?.title])
 
+  // Update playback state independently — no handler teardown
+  useEffect(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return
+    navigator.mediaSession.playbackState = song
+      ? (playing ? "playing" : "paused")
+      : "none"
+  }, [song, playing])
+
+  // Set metadata + register action handlers
   useEffect(() => {
     if (typeof window === "undefined" || !("mediaSession" in navigator)) return
 
@@ -292,10 +369,6 @@ export default function Player({
         // Ignore unsupported actions per browser.
       }
     }
-
-    mediaSession.playbackState = song
-      ? (playing ? "playing" : "paused")
-      : "none"
 
     if (song && "MediaMetadata" in window) {
       const artworkUrl = song.coverPath
@@ -329,13 +402,22 @@ export default function Player({
       if (!audio) return
       audio.pause()
     })
-    setHandler("previoustrack", canGoPrev ? playPrev : null)
-    setHandler("nexttrack", canGoNext ? playNext : null)
+    setHandler("previoustrack", () => {
+      const n = navRef.current
+      if (!n.canGoPrev) return
+      n.playPrev()
+    })
+    setHandler("nexttrack", () => {
+      const n = navRef.current
+      if (!n.canGoNext) return
+      n.playNext()
+    })
     setHandler("seekbackward", (details) => {
       const audio = audioRef.current
       if (!audio) return
       const seekOffset = details.seekOffset ?? 10
       audio.currentTime = Math.max(0, audio.currentTime - seekOffset)
+      syncMediaSessionPosition(audio, true)
     })
     setHandler("seekforward", (details) => {
       const audio = audioRef.current
@@ -343,12 +425,14 @@ export default function Player({
       const seekOffset = details.seekOffset ?? 10
       const maxTime = Number.isFinite(audio.duration) ? audio.duration : audio.currentTime + seekOffset
       audio.currentTime = Math.min(maxTime, audio.currentTime + seekOffset)
+      syncMediaSessionPosition(audio, true)
     })
     setHandler("seekto", (details) => {
       const audio = audioRef.current
       if (!audio || details.seekTime === undefined) return
       const maxTime = Number.isFinite(audio.duration) ? audio.duration : details.seekTime
       audio.currentTime = Math.max(0, Math.min(details.seekTime, maxTime))
+      syncMediaSessionPosition(audio, true)
     })
 
     return () => {
@@ -356,7 +440,7 @@ export default function Player({
         setHandler(action, null)
       }
     }
-  }, [song, playing, canGoPrev, canGoNext, playPrev, playNext])
+  }, [song, syncMediaSessionPosition])
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -407,22 +491,6 @@ export default function Player({
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [song, canGoPrev, canGoNext, playPrev, playNext, togglePlay])
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !("mediaSession" in navigator)) return
-    if (!song || !Number.isFinite(duration) || duration <= 0) return
-    if (typeof navigator.mediaSession.setPositionState !== "function") return
-
-    try {
-      navigator.mediaSession.setPositionState({
-        duration,
-        position: Math.min(currentTime, duration),
-        playbackRate: 1,
-      })
-    } catch {
-      // Position state can throw when browser cannot determine timeline.
-    }
-  }, [song, duration, currentTime])
 
   useEffect(() => {
     if (!song || !onPlaybackStateChange) return
@@ -522,6 +590,9 @@ export default function Player({
       }
       if (mobileExpandTimeoutRef.current) {
         clearTimeout(mobileExpandTimeoutRef.current)
+      }
+      if (queueCloseTimeoutRef.current) {
+        clearTimeout(queueCloseTimeoutRef.current)
       }
     }
   }, [])
@@ -630,13 +701,36 @@ export default function Player({
   }
 
   function closeQueueSheet() {
+    if (queueCloseTimeoutRef.current) {
+      clearTimeout(queueCloseTimeoutRef.current)
+      queueCloseTimeoutRef.current = null
+    }
     queueTouchStartYRef.current = null
     setQueueDragOffset(0)
     setIsQueueDragging(false)
     setIsQueueSheetOpen(false)
   }
 
+  function closeQueueSheetWithAnimation() {
+    if (queueCloseTimeoutRef.current) {
+      clearTimeout(queueCloseTimeoutRef.current)
+      queueCloseTimeoutRef.current = null
+    }
+
+    const endOffset = typeof window === "undefined" ? 420 : Math.max(320, Math.floor(window.innerHeight * 0.72))
+    setIsQueueDragging(false)
+    setQueueDragOffset(endOffset)
+
+    queueCloseTimeoutRef.current = setTimeout(() => {
+      closeQueueSheet()
+    }, 220)
+  }
+
   function openQueueSheet() {
+    if (queueCloseTimeoutRef.current) {
+      clearTimeout(queueCloseTimeoutRef.current)
+      queueCloseTimeoutRef.current = null
+    }
     queueTouchStartYRef.current = null
     setQueueDragOffset(0)
     setIsQueueDragging(false)
@@ -645,7 +739,7 @@ export default function Player({
 
   function toggleQueueSheet() {
     if (isQueueSheetOpen) {
-      closeQueueSheet()
+      closeQueueSheetWithAnimation()
       return
     }
     openQueueSheet()
@@ -803,24 +897,18 @@ export default function Player({
     }
 
     e.preventDefault()
-    setQueueDragOffset(Math.min(deltaY, 280))
+    const maxDrag = typeof window === "undefined" ? 420 : Math.max(320, Math.floor(window.innerHeight * 0.72))
+    setQueueDragOffset(Math.min(deltaY, maxDrag))
   }
 
   function handleQueueSheetTouchEnd() {
     if (queueDragOffset > QUEUE_CLOSE_DRAG_THRESHOLD) {
-      closeQueueSheet()
+      closeQueueSheetWithAnimation()
       return
     }
     queueTouchStartYRef.current = null
     setQueueDragOffset(0)
     setIsQueueDragging(false)
-  }
-
-  function moveQueueItem(fromIndex: number, toIndex: number) {
-    if (!onQueueReorder) return
-    if (fromIndex < 0 || toIndex < 0 || fromIndex >= songs.length || toIndex >= songs.length) return
-    if (fromIndex === toIndex) return
-    onQueueReorder(fromIndex, toIndex)
   }
 
   function removeQueueItem(songId: number, index: number) {
@@ -1093,11 +1181,11 @@ export default function Player({
           isQueueDragging={isQueueDragging}
           transitionEase={MOBILE_EXPAND_EASE}
           onClose={closeQueueSheet}
+          onCloseAnimated={closeQueueSheetWithAnimation}
           onTouchStart={handleQueueSheetTouchStart}
           onTouchMove={handleQueueSheetTouchMove}
           onTouchEnd={handleQueueSheetTouchEnd}
           onSelectSong={(queueSong) => onSongChange(queueSong)}
-          onMoveItem={moveQueueItem}
           onRemoveItem={removeQueueItem}
           onClear={() => {
             onQueueClear?.()
