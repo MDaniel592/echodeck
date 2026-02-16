@@ -18,6 +18,7 @@
     "artwork:refresh": "tsx scripts/refresh-lowres-covers.ts",
     "check-deps": "tsx scripts/check-deps.ts",
     "verify:prod": "bash scripts/verify-production-guardrails.sh",
+    "smoke:prisma-cli": "bash scripts/prisma-cli-smoke.sh",
     "validate-env": "tsx scripts/validate-env.ts",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",

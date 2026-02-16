@@ -52,10 +52,14 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy standalone output (includes only needed node_modules)
+# Copy standalone output.
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+
+# Copy complete node_modules from builder so Prisma CLI has its full
+# dependency tree at runtime (avoids selective-copy drift).
+COPY --from=builder /app/node_modules ./node_modules
 
 # Prisma schema + config (needed for db push at startup)
 COPY --from=builder /app/prisma ./prisma
@@ -67,22 +71,9 @@ COPY --from=builder /app/app/generated ./app/generated
 # Downloader binaries fetched during build
 COPY --from=builder /app/bin ./bin
 
-# better-sqlite3 native addon (serverExternalPackages)
-COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
-COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
-COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
-COPY --from=builder /app/node_modules/prebuild-install ./node_modules/prebuild-install
-COPY --from=builder /app/node_modules/node-abi ./node_modules/node-abi
-
-# Prisma CLI (needed for db push at startup)
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv
-COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
-
 RUN mkdir -p /app/data /app/downloads
 
 EXPOSE 3000
 
 # Push schema then start the standalone server.
-CMD ["sh", "-c", "test -x ./node_modules/.bin/prisma && ./node_modules/.bin/prisma db push --skip-generate && node server.js"]
+CMD ["sh", "-c", "npx --no-install prisma db push && exec node server.js"]

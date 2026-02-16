@@ -1,5 +1,10 @@
+networks:
+  internal:
+    external: true
+
 services:
   echodeck:
+    container_name: echodeck
     build:
       context: .
       dockerfile: Dockerfile
@@ -8,8 +13,8 @@ services:
         SPOTDL_VERSION: ${SPOTDL_VERSION:?SPOTDL_VERSION is required for reproducible builds}
         YTDLP_SHA256: ${YTDLP_SHA256:-}
         SPOTDL_SHA256: ${SPOTDL_SHA256:-}
-    ports:
-      - "${APP_PORT:-3000}:3000"
+    # ports:
+    #   - "${APP_PORT:-3000}:3000"
     environment:
       DATABASE_URL: file:./data/dev.db
       NODE_ENV: production
@@ -21,10 +26,15 @@ services:
       SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
       SPOTIFY_AUTH_TOKEN: ${SPOTIFY_AUTH_TOKEN:-}
     volumes:
-      - echodeck_data:/app/data
-      - echodeck_downloads:/app/downloads
+      - ./db:/app/data
+      - ./downloads:/app/downloads
     restart: unless-stopped
-
-volumes:
-  echodeck_data:
-  echodeck_downloads:
+    networks:
+      - internal
+    labels:
+      traefik.enable: true
+      traefik.docker.network: internal
+      traefik.http.routers.echodeck.rule: Host(`echodeck.peaky-blinders.dedyn.io`)
+      traefik.http.routers.echodeck.entrypoints: websecure
+      traefik.http.routers.echodeck.tls.certresolver: desec
+      traefik.http.services.echodeck.loadbalancer.server.port: 3000
