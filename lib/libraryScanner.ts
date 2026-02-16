@@ -208,6 +208,23 @@ export async function runLibraryScan(
   const artistCache = new Map<string, number>()
   const albumCache = new Map<string, number>()
 
+  const [existingArtists, existingAlbums] = await Promise.all([
+    prisma.artist.findMany({
+      where: { userId },
+      select: { id: true, name: true },
+    }),
+    prisma.album.findMany({
+      where: { userId },
+      select: { id: true, title: true, albumArtist: true },
+    }),
+  ])
+  for (const artist of existingArtists) {
+    artistCache.set(artist.name.toLowerCase(), artist.id)
+  }
+  for (const album of existingAlbums) {
+    albumCache.set(`${album.title.toLowerCase()}::${(album.albumArtist || "").toLowerCase()}`, album.id)
+  }
+
   try {
     for (const libraryPath of library.paths) {
       let files: string[] = []

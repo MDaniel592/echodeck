@@ -818,7 +818,7 @@ export default function SongList({
                     ? "bg-blue-500/10"
                     : "hover:bg-zinc-800/50"
                 } ${!isPlaying && index % 2 === 0 ? "bg-zinc-900/30" : "bg-zinc-900/60"}`}
-                style={{ contentVisibility: "auto", containIntrinsicSize: "72px" }}
+                style={{ contentVisibility: "auto", containIntrinsicSize: "auto 72px" }}
                 onPointerDown={(e) => startLongPress(song.id, e)}
                 onPointerUp={cancelLongPress}
                 onPointerCancel={cancelLongPress}

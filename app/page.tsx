@@ -198,18 +198,23 @@ export default function Home() {
           : firstPayload.totalPages
 
       if (totalPages > 1) {
-        const pagePromises = Array.from({ length: totalPages - 1 }, async (_, index) => {
-          const page = index + 2
-          const res = await fetch(`/api/songs?page=${page}&limit=${pageSize}`, { cache: "no-store" })
-          if (!res.ok) {
-            throw new Error(`Song fetch failed with HTTP ${res.status}`)
+        const remainingPages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2)
+        const concurrency = 6
+        for (let i = 0; i < remainingPages.length; i += concurrency) {
+          const batch = remainingPages.slice(i, i + concurrency)
+          const pages = await Promise.all(
+            batch.map(async (page) => {
+              const res = await fetch(`/api/songs?page=${page}&limit=${pageSize}`, { cache: "no-store" })
+              if (!res.ok) {
+                throw new Error(`Song fetch failed with HTTP ${res.status}`)
+              }
+              const payload = await res.json() as { songs?: Song[] } | Song[]
+              return Array.isArray(payload) ? payload : (Array.isArray(payload.songs) ? payload.songs : [])
+            })
+          )
+          for (const songsPage of pages) {
+            allSongs.push(...songsPage)
           }
-          const payload = await res.json() as { songs?: Song[] } | Song[]
-          return Array.isArray(payload) ? payload : (Array.isArray(payload.songs) ? payload.songs : [])
-        })
-        const pages = await Promise.all(pagePromises)
-        for (const songsPage of pages) {
-          allSongs.push(...songsPage)
         }
       }
 
@@ -373,8 +378,10 @@ export default function Home() {
     return () => {
       if (!sessionSyncTimeoutRef.current) return
       clearTimeout(sessionSyncTimeoutRef.current)
+      sessionSyncTimeoutRef.current = null
+      void syncPlaybackSession()
     }
-  }, [])
+  }, [syncPlaybackSession])
 
   async function handleDeleteMany(ids: number[]) {
     const uniqueIds = Array.from(new Set(ids))
