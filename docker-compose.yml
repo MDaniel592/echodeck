@@ -34,7 +34,7 @@ services:
     labels:
       traefik.enable: true
       traefik.docker.network: internal
-      traefik.http.routers.echodeck.rule: Host(`echodeck.peaky-blinders.dedyn.io`)
+      traefik.http.routers.echodeck.rule: Host(`music.example.com`)
       traefik.http.routers.echodeck.entrypoints: websecure
       traefik.http.routers.echodeck.tls.certresolver: desec
       traefik.http.services.echodeck.loadbalancer.server.port: 3000
