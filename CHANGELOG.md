@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.1.0...echodeck-v1.1.1) (2026-02-16)
+
+
+### Bug Fixes
+
+* release performance sweep ([efbab07](https://github.com/MDaniel592/echodeck/commit/efbab071485ce59239bd5b95432a44e0798c81cd))
+
 ## [1.1.0](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.0.1...echodeck-v1.1.0) (2026-02-16)
 
 
