@@ -90,10 +90,40 @@ export default function LibraryManagementPanel({ embedded = false }: LibraryMana
   }, [fetchAll])
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      void fetchAll()
-    }, 7000)
-    return () => clearInterval(interval)
+    let interval: ReturnType<typeof setInterval> | null = null
+
+    const startPolling = () => {
+      if (interval) return
+      interval = setInterval(() => {
+        if (typeof document !== "undefined" && document.visibilityState !== "visible") return
+        void fetchAll()
+      }, 7000)
+    }
+
+    const stopPolling = () => {
+      if (!interval) return
+      clearInterval(interval)
+      interval = null
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void fetchAll()
+        startPolling()
+        return
+      }
+      stopPolling()
+    }
+
+    if (typeof document === "undefined" || document.visibilityState === "visible") {
+      startPolling()
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+
+    return () => {
+      stopPolling()
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+    }
   }, [fetchAll])
 
   async function handleCreateLibrary() {
