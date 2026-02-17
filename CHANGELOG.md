@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.3.0...echodeck-v1.3.1) (2026-02-17)
+
+
+### Bug Fixes
+
+* pass downloader build args in release docker workflow ([#19](https://github.com/MDaniel592/echodeck/issues/19)) ([7343eba](https://github.com/MDaniel592/echodeck/commit/7343ebafef8b47f348e27f5236b2a3b709630e4f))
+
 ## [1.3.0](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.2.1...echodeck-v1.3.0) (2026-02-17)
 
 
