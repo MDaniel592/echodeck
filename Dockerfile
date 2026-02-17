@@ -13,6 +13,7 @@ ENV YTDLP_VERSION=${YTDLP_VERSION}
 ENV SPOTDL_VERSION=${SPOTDL_VERSION}
 ENV YTDLP_SHA256=${YTDLP_SHA256}
 ENV SPOTDL_SHA256=${SPOTDL_SHA256}
+ENV SKIP_SETUP=1
 
 # Native build tooling for better-sqlite3
 RUN apt-get update \
@@ -24,17 +25,16 @@ COPY package.json package-lock.json ./
 COPY scripts ./scripts
 COPY tsconfig.json ./tsconfig.json
 
-RUN npm ci
+RUN npm ci --no-audit --no-fund
 
 # Copy app source and build.
 COPY . .
 
-RUN npx prisma generate
-RUN npm run build
+RUN npx prisma generate && npm run build
 
 # Download downloader binaries during build so they are cached in the image.
 RUN test -n "$YTDLP_VERSION" && test -n "$SPOTDL_VERSION"
-RUN npm run setup
+RUN SKIP_SETUP=0 npm run setup
 
 # ---- Runner stage ----
 FROM node:22-trixie-slim
