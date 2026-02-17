@@ -21,6 +21,7 @@ type MaintenanceAction =
   | "backfill_metadata"
   | "dedupe_library_imports"
   | "normalize_titles"
+  | "clean_youtube_titles"
   | "fill_missing_covers"
   | "refresh_file_metadata"
   | "fetch_missing_lyrics"
@@ -70,6 +71,11 @@ const ACTIONS: Array<{ id: MaintenanceAction; label: string; description: string
     description: "Clean malformed numeric prefixes from song titles.",
   },
   {
+    id: "clean_youtube_titles",
+    label: "Clean YouTube Titles",
+    description: "Strip YouTube noise (Official Video, 4K, etc.) and extract real titles from 'ARTIST - TITLE' patterns. Keeps musical tags like (Slowed + Reverb).",
+  },
+  {
     id: "fill_missing_covers",
     label: "Fill Missing Covers",
     description: "Reuse known cover paths from matching songs when coverPath is missing.",
@@ -96,11 +102,70 @@ const ACTIONS: Array<{ id: MaintenanceAction; label: string; description: string
   },
 ]
 
+const ACTION_LABELS = new Map<MaintenanceAction, string>(ACTIONS.map((action) => [action.id, action.label]))
+
+const ACTION_GROUPS: Array<{ title: string; description: string; actions: MaintenanceAction[] }> = [
+  {
+    title: "Foundation",
+    description: "Build clean references and remove structural duplicates first.",
+    actions: ["attach_library", "backfill_metadata", "dedupe_library_imports"],
+  },
+  {
+    title: "Title Cleanup",
+    description: "Normalize malformed titles and remove YouTube noise for better matching.",
+    actions: ["normalize_titles", "clean_youtube_titles"],
+  },
+  {
+    title: "Metadata & Enrichment",
+    description: "Fill artwork, tags, lyrics and origin metadata for better browsing.",
+    actions: ["fill_missing_covers", "refresh_file_metadata", "fetch_missing_lyrics", "refresh_origin_metadata"],
+  },
+  {
+    title: "Download Recovery",
+    description: "Queue weak/missing files for re-download after metadata cleanup.",
+    actions: ["queue_redownload_candidates"],
+  },
+]
+
+const WORKFLOWS: Array<{ id: string; label: string; description: string; actions: MaintenanceAction[] }> = [
+  {
+    id: "safe_cleanup",
+    label: "Guided Cleanup",
+    description: "Recommended order for most libraries.",
+    actions: [
+      "attach_library",
+      "backfill_metadata",
+      "dedupe_library_imports",
+      "normalize_titles",
+      "clean_youtube_titles",
+      "fill_missing_covers",
+      "refresh_file_metadata",
+      "fetch_missing_lyrics",
+      "refresh_origin_metadata",
+    ],
+  },
+  {
+    id: "metadata_only",
+    label: "Metadata Only",
+    description: "No re-download queue. Just improve browse quality.",
+    actions: [
+      "backfill_metadata",
+      "normalize_titles",
+      "clean_youtube_titles",
+      "refresh_file_metadata",
+      "fill_missing_covers",
+      "fetch_missing_lyrics",
+      "refresh_origin_metadata",
+    ],
+  },
+]
+
 export default function MaintenancePanel({ embedded = false }: MaintenancePanelProps) {
   const router = useRouter()
   const [audit, setAudit] = useState<MaintenanceAudit | null>(null)
   const [loadingAudit, setLoadingAudit] = useState(true)
   const [runningAction, setRunningAction] = useState<MaintenanceAction | null>(null)
+  const [runningWorkflow, setRunningWorkflow] = useState<string | null>(null)
   const [error, setError] = useState("")
   const [resultLog, setResultLog] = useState<MaintenanceResult[]>([])
   const [progress, setProgress] = useState<MaintenanceProgress | null>(null)
@@ -296,6 +361,21 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
     }
   }
 
+  async function runWorkflow(workflowId: string, actions: MaintenanceAction[], dryRun: boolean) {
+    setRunningWorkflow(workflowId)
+    setError("")
+    try {
+      for (const action of actions) {
+        await runAction(action, dryRun)
+      }
+      if (!dryRun) {
+        await refreshAudit()
+      }
+    } finally {
+      setRunningWorkflow(null)
+    }
+  }
+
   const cards = useMemo(
     () =>
       audit
@@ -362,40 +442,91 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
           </div>
 
           <div className="mt-6 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
-            <h2 className="text-sm font-semibold">Fix Actions</h2>
-            <div className="mt-3 space-y-3">
-              {ACTIONS.map((action) => {
-                const isRunning = runningAction === action.id
-                return (
-                  <div
-                    key={action.id}
-                    className="flex flex-col gap-2 rounded-lg border border-zinc-800 bg-black/40 p-3 md:flex-row md:items-center md:justify-between"
-                  >
-                    <div>
-                      <div className="text-sm font-medium">{action.label}</div>
-                      <div className="text-xs text-zinc-400">{action.description}</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        disabled={Boolean(runningAction)}
-                        onClick={() => runAction(action.id, true)}
-                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-60"
-                      >
-                        {isRunning ? "Running..." : "Dry Run"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={Boolean(runningAction)}
-                        onClick={() => runAction(action.id, false)}
-                        className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-                      >
-                        Apply
-                      </button>
-                    </div>
+            <h2 className="text-sm font-semibold">Guided Workflows</h2>
+            <p className="mt-1 text-xs text-zinc-400">
+              Actions can be run independently, but these presets run them in a safer order.
+            </p>
+            <div className="mt-3 space-y-2">
+              {WORKFLOWS.map((workflow) => (
+                <div
+                  key={workflow.id}
+                  className="flex flex-col gap-2 rounded-lg border border-zinc-800 bg-black/40 p-3 md:flex-row md:items-center md:justify-between"
+                >
+                  <div>
+                    <div className="text-sm font-medium">{workflow.label}</div>
+                    <div className="text-xs text-zinc-400">{workflow.description}</div>
                   </div>
-                )
-              })}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={Boolean(runningAction) || Boolean(runningWorkflow)}
+                      onClick={() => runWorkflow(workflow.id, workflow.actions, true)}
+                      className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-60"
+                    >
+                      Dry Run Workflow
+                    </button>
+                    <button
+                      type="button"
+                      disabled={Boolean(runningAction) || Boolean(runningWorkflow)}
+                      onClick={() => runWorkflow(workflow.id, workflow.actions, false)}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      Apply Workflow
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+            <h2 className="text-sm font-semibold">Fix Actions</h2>
+            <p className="mt-1 text-xs text-zinc-400">Advanced mode: run a single action if you know exactly what you need.</p>
+            <div className="mt-3 space-y-4">
+              {ACTION_GROUPS.map((group) => (
+                <div key={group.title}>
+                  <div className="mb-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-300">{group.title}</h3>
+                    <p className="text-xs text-zinc-500">{group.description}</p>
+                  </div>
+                  <div className="space-y-3">
+                    {group.actions.map((actionId) => {
+                      const action = ACTIONS.find((entry) => entry.id === actionId)
+                      if (!action) return null
+                      const isRunning = runningAction === action.id
+                      return (
+                        <div
+                          key={action.id}
+                          className="flex flex-col gap-2 rounded-lg border border-zinc-800 bg-black/40 p-3 md:flex-row md:items-center md:justify-between"
+                        >
+                          <div>
+                            <div className="text-sm font-medium">{action.label}</div>
+                            <div className="text-xs text-zinc-400">{action.description}</div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              disabled={Boolean(runningAction) || Boolean(runningWorkflow)}
+                              onClick={() => runAction(action.id, true)}
+                              className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-60"
+                            >
+                              {isRunning ? "Running..." : "Dry Run"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={Boolean(runningAction) || Boolean(runningWorkflow)}
+                              onClick={() => runAction(action.id, false)}
+                              className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                            >
+                              Apply
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -414,7 +545,8 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
                   panelMode === "error" ? "text-red-100" : panelMode === "complete" ? "text-emerald-100" : "text-blue-100"
                 }`}
               >
-                <span className="font-medium">Running: {runningAction}</span>
+                <span className="font-medium">Running: {runningAction ? (ACTION_LABELS.get(runningAction) || runningAction) : "Maintenance"}</span>
+                {runningWorkflow ? <span>Workflow: {runningWorkflow}</span> : null}
                 <span>Elapsed: {elapsedSeconds}s</span>
                 {progress && typeof progress.processed === "number" && typeof progress.total === "number" ? (
                   <span>

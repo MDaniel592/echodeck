@@ -64,6 +64,7 @@ model Song {
   bookmarks Bookmark[]
   sharedEntries ShareEntry[] @relation("ShareEntrySong")
   playlistEntries PlaylistSong[]
+  tagAssignments SongTagAssignment[]
   createdAt DateTime @default(now())
 
   @@unique([userId, source, sourceUrl])
@@ -102,6 +103,8 @@ model User {
   bookmarks    Bookmark[]
   shares       Share[]
   shareEntries ShareEntry[]
+  smartPlaylists SmartPlaylist[]
+  songTags     SongTag[]
 }
 
 model Playlist {
@@ -116,6 +119,19 @@ model Playlist {
   sharedEntries ShareEntry[] @relation("ShareEntryPlaylist")
 
   @@unique([userId, name])
+}
+
+model SmartPlaylist {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  ruleJson    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, name])
+  @@index([userId, updatedAt])
 }
 
 model PlaylistSong {
@@ -337,4 +353,30 @@ model LibraryScanRun {
   error      String?
 
   @@index([libraryId, startedAt])
+}
+
+model SongTag {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  color       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  songs       SongTagAssignment[]
+
+  @@unique([userId, name])
+  @@index([userId, updatedAt])
+}
+
+model SongTagAssignment {
+  id        Int      @id @default(autoincrement())
+  songId    Int
+  song      Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       SongTag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([songId, tagId])
+  @@index([tagId, createdAt])
 }

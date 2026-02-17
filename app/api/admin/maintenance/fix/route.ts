@@ -11,6 +11,7 @@ const SUPPORTED_ACTIONS: MaintenanceAction[] = [
   "backfill_metadata",
   "dedupe_library_imports",
   "normalize_titles",
+  "clean_youtube_titles",
   "fill_missing_covers",
   "refresh_file_metadata",
   "fetch_missing_lyrics",
@@ -47,48 +48,70 @@ export async function POST(request: NextRequest) {
       const startedAt = Date.now()
       const readable = new ReadableStream<Uint8Array>({
         start(controller) {
-          controller.enqueue(
-            encodeNdjsonLine({
+          let closed = false
+          const close = () => {
+            if (closed) return
+            closed = true
+            try {
+              controller.close()
+            } catch {
+              // Ignore close errors when stream is already closed.
+            }
+          }
+          const emit = (payload: unknown): boolean => {
+            if (closed) return false
+            try {
+              controller.enqueue(encodeNdjsonLine(payload))
+              return true
+            } catch {
+              closed = true
+              return false
+            }
+          }
+
+          request.signal.addEventListener("abort", close, { once: true })
+          if (
+            !emit({
               type: "started",
               action,
               dryRun,
               startedAt,
             })
-          )
+          ) {
+            close()
+            return
+          }
 
           void runMaintenanceAction(
             auth.userId,
             action,
             dryRun,
             (event: MaintenanceProgress) => {
-              controller.enqueue(
-                encodeNdjsonLine({
-                  type: "progress",
-                  event,
-                })
-              )
+              emit({
+                type: "progress",
+                event,
+              })
             }
           )
             .then((result) => {
-              controller.enqueue(
-                encodeNdjsonLine({
-                  type: "result",
-                  result,
-                  startedAt,
-                  finishedAt: Date.now(),
-                })
-              )
-              controller.close()
+              emit({
+                type: "result",
+                result,
+                startedAt,
+                finishedAt: Date.now(),
+              })
+              close()
             })
             .catch((error) => {
-              controller.enqueue(
-                encodeNdjsonLine({
-                  type: "error",
-                  error: error instanceof Error ? error.message : "Maintenance action failed.",
-                })
-              )
-              controller.close()
+              emit({
+                type: "error",
+                error: error instanceof Error ? error.message : "Maintenance action failed.",
+              })
+              close()
             })
+        },
+        cancel() {
+          // Stream consumer disconnected; run continues server-side but stop emitting.
         },
       })
 

@@ -7,6 +7,7 @@ import { getVideoInfo } from "../lib/ytdlp"
 type SongRow = {
   id: number
   title: string
+  filePath: string
   sourceUrl: string | null
   thumbnail: string | null
   coverPath: string | null
@@ -37,7 +38,7 @@ async function refreshSongArtwork(song: SongRow): Promise<RefreshResult> {
     return { kind: "failed", reason: "no_thumbnail" }
   }
 
-  const newCoverPath = await downloadSongArtwork(song.id, thumbnail)
+  const newCoverPath = await downloadSongArtwork(song.id, thumbnail, song.filePath)
   if (!newCoverPath) {
     return { kind: "failed", reason: "download_failed" }
   }
@@ -63,6 +64,7 @@ async function main() {
     select: {
       id: true,
       title: true,
+      filePath: true,
       sourceUrl: true,
       thumbnail: true,
       coverPath: true,

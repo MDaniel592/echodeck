@@ -2,7 +2,7 @@ import path from "path"
 import fs from "fs/promises"
 import prisma from "./prisma"
 import { extractAudioMetadataFromFile } from "./audioMetadata"
-import { normalizeSongTitle } from "./songTitle"
+import { normalizeSongTitle, cleanYouTubeTitle } from "./songTitle"
 import { getVideoInfo } from "./ytdlp"
 import { downloadSongArtwork, getSpotifyThumbnail } from "./artwork"
 import { ensureArtistAlbumRefs } from "./artistAlbumRefs"
@@ -21,6 +21,7 @@ export type MaintenanceAction =
   | "backfill_metadata"
   | "dedupe_library_imports"
   | "normalize_titles"
+  | "clean_youtube_titles"
   | "fill_missing_covers"
   | "refresh_file_metadata"
   | "fetch_missing_lyrics"
@@ -70,7 +71,11 @@ const ORIGIN_METADATA_CONCURRENCY = Math.max(
 )
 const LYRICS_LOOKUP_CONCURRENCY = Math.max(
   1,
-  Math.min(12, Number.parseInt(process.env.LYRICS_LOOKUP_CONCURRENCY || "6", 10) || 6)
+  Math.min(8, Number.parseInt(process.env.LYRICS_LOOKUP_CONCURRENCY || "3", 10) || 3)
+)
+const LYRICS_DELAY_MS = Math.max(
+  0,
+  Math.min(5000, Number.parseInt(process.env.LYRICS_DELAY_MS || "300", 10) || 300)
 )
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -235,12 +240,14 @@ async function runAttachLibrary(
     orderBy: { createdAt: "asc" },
     select: { id: true, name: true },
   })
+  let libraryCreated = false
 
   if (!library && !dryRun) {
     library = await prisma.library.create({
       data: { userId, name: "Main Library" },
       select: { id: true, name: true },
     })
+    libraryCreated = true
   }
 
   const targetLibraryId = library?.id || 0
@@ -300,7 +307,7 @@ async function runAttachLibrary(
     action: "attach_library",
     dryRun,
     details: {
-      libraryCreated: !library ? 1 : 0,
+      libraryCreated: libraryCreated ? 1 : 0,
       targetLibraryId,
       songsAttached: songsToAttach.length,
       relativePathUpdated,
@@ -556,6 +563,66 @@ async function runNormalizeTitles(
   }
 }
 
+async function runCleanYouTubeTitles(
+  userId: number,
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
+): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("clean_youtube_titles", dryRun, onProgress)
+  progress({ phase: "start", message: "Scanning YouTube/SoundCloud titles for noise." })
+  const songs = await prisma.song.findMany({
+    where: {
+      userId,
+      source: { in: ["youtube", "soundcloud"] },
+    },
+    select: { id: true, title: true, artist: true },
+  })
+
+  const candidates = songs
+    .map((song) => ({
+      id: song.id,
+      title: song.title,
+      artist: song.artist || "",
+      cleaned: cleanYouTubeTitle(song.title, song.artist || ""),
+    }))
+    .filter((song) => song.cleaned !== song.title)
+
+  progress({
+    phase: "scan",
+    processed: 0,
+    total: candidates.length,
+    message: `Found ${candidates.length} titles to clean (of ${songs.length} YouTube/SoundCloud songs).`,
+  })
+
+  if (!dryRun) {
+    for (let i = 0; i < candidates.length; i += 1) {
+      const song = candidates[i]
+      await prisma.song.update({
+        where: { id: song.id },
+        data: { title: song.cleaned.slice(0, 500) },
+      })
+      if (shouldReportProgress(i + 1, candidates.length)) {
+        progress({
+          phase: "apply",
+          processed: i + 1,
+          total: candidates.length,
+          message: `Cleaned: ${i + 1}/${candidates.length}`,
+        })
+      }
+    }
+  }
+
+  return {
+    action: "clean_youtube_titles",
+    dryRun,
+    details: {
+      totalYouTubeSongs: songs.length,
+      candidateSongs: candidates.length,
+      updatedSongs: dryRun ? 0 : candidates.length,
+    },
+  }
+}
+
 async function runFillMissingCovers(
   userId: number,
   dryRun: boolean,
@@ -566,7 +633,7 @@ async function runFillMissingCovers(
   const [withoutCover, withCover] = await Promise.all([
     prisma.song.findMany({
       where: { userId, coverPath: null },
-      select: { id: true, filePath: true, title: true, artist: true },
+      select: { id: true, filePath: true, title: true, artist: true, thumbnail: true },
     }),
     prisma.song.findMany({
       where: { userId, coverPath: { not: null } },
@@ -582,24 +649,67 @@ async function runFillMissingCovers(
     byTitleArtist.set(`${song.title}::${song.artist || ""}`, song.coverPath)
   }
 
-  const candidates = withoutCover
-    .map((song) => ({
-      id: song.id,
-      coverPath:
-        byBase.get(normalizeImportBasename(song.filePath)) ||
-        byTitleArtist.get(`${song.title}::${song.artist || ""}`) ||
-        null,
-    }))
-    .filter((song) => song.coverPath)
+  type CoverFillCandidate = {
+    id: number
+    filePath: string
+    strategy: "copy" | "download"
+    coverPath: string | null
+    thumbnail: string | null
+  }
+
+  const candidates: CoverFillCandidate[] = []
+  for (const song of withoutCover) {
+    const copiedCoverPath =
+      byBase.get(normalizeImportBasename(song.filePath)) ||
+      byTitleArtist.get(`${song.title}::${song.artist || ""}`) ||
+      null
+
+    if (copiedCoverPath) {
+      candidates.push({
+        id: song.id,
+        filePath: song.filePath,
+        strategy: "copy",
+        coverPath: copiedCoverPath,
+        thumbnail: song.thumbnail,
+      })
+      continue
+    }
+
+    if (song.thumbnail) {
+      candidates.push({
+        id: song.id,
+        filePath: song.filePath,
+        strategy: "download",
+        coverPath: null,
+        thumbnail: song.thumbnail,
+      })
+    }
+  }
+
+  const copyCandidates = candidates.filter((song) => song.strategy === "copy").length
+  const thumbnailCandidates = candidates.filter((song) => song.strategy === "download").length
   progress({ phase: "scan", processed: 0, total: candidates.length, message: "Cover fill candidates loaded." })
 
+  let updatedSongs = 0
   if (!dryRun) {
     for (let i = 0; i < candidates.length; i += 1) {
       const song = candidates[i]
-      await prisma.song.update({
-        where: { id: song.id },
-        data: { coverPath: song.coverPath },
-      })
+      if (song.strategy === "copy" && song.coverPath) {
+        await prisma.song.update({
+          where: { id: song.id },
+          data: { coverPath: song.coverPath },
+        })
+        updatedSongs += 1
+      } else if (song.strategy === "download") {
+        const downloadedCoverPath = await downloadSongArtwork(song.id, song.thumbnail || null, song.filePath)
+        if (downloadedCoverPath) {
+          await prisma.song.update({
+            where: { id: song.id },
+            data: { coverPath: downloadedCoverPath },
+          })
+          updatedSongs += 1
+        }
+      }
       if (shouldReportProgress(i + 1, candidates.length)) {
         progress({
           phase: "apply",
@@ -616,7 +726,9 @@ async function runFillMissingCovers(
     dryRun,
     details: {
       candidateSongs: candidates.length,
-      updatedSongs: dryRun ? candidates.length : candidates.length,
+      copiedFromExisting: copyCandidates,
+      downloadableFromThumbnail: thumbnailCandidates,
+      updatedSongs: dryRun ? candidates.length : updatedSongs,
     },
   }
 }
@@ -821,12 +933,17 @@ async function runFetchMissingLyrics(
   let updatedSongs = 0
   let noMatch = 0
   let failedSongs = 0
+  let timeoutSongs = 0
+  let networkErrors = 0
   let skippedSongs = 0
   let completedSongs = 0
+  let loggedFailures = 0
 
   progress({ phase: "scan", processed: 0, total: songs.length, message: "Looking up lyrics for tracks." })
 
   await runWithConcurrency(songs, LYRICS_LOOKUP_CONCURRENCY, async (song) => {
+    // Throttle to avoid lrclib rate limiting
+    if (LYRICS_DELAY_MS > 0) await new Promise((r) => setTimeout(r, LYRICS_DELAY_MS))
     checkedSongs += 1
     const title = song.title.trim()
     const artist = song.artist?.trim() || ""
@@ -838,23 +955,20 @@ async function runFetchMissingLyrics(
           phase: dryRun ? "scan" : "apply",
           processed: completedSongs,
           total: songs.length,
-          message: "Looking up lyrics for tracks.",
+          message: `Found: ${updatedSongs} | No match: ${noMatch} | Failed: ${failedSongs}`,
         })
       }
       return
     }
 
     try {
-      const lyrics = await withTimeout(
-        lookupLyrics({
-          title,
-          artist,
-          album: song.album,
-          duration: song.duration,
-        }),
-        LYRICS_LOOKUP_TIMEOUT_MS,
-        "lyrics lookup"
-      )
+      const lyrics = await lookupLyrics({
+        title,
+        artist,
+        album: song.album,
+        duration: song.duration,
+        timeoutMs: LYRICS_LOOKUP_TIMEOUT_MS,
+      })
 
       if (!lyrics) {
         noMatch += 1
@@ -868,8 +982,18 @@ async function runFetchMissingLyrics(
         })
       }
       updatedSongs += 1
-    } catch {
+    } catch (error) {
       failedSongs += 1
+      const msg = error instanceof Error ? error.message : String(error)
+      if (/timed?\s*out|abort/i.test(msg)) {
+        timeoutSongs += 1
+      } else if (/fetch|network|connect|ECONNREFUSED|ENOTFOUND|socket/i.test(msg)) {
+        networkErrors += 1
+      }
+      if (loggedFailures < 10) {
+        loggedFailures += 1
+        console.warn(`[lyrics] Failed for "${title}" by "${artist}": ${msg}`)
+      }
     } finally {
       completedSongs += 1
       if (shouldReportProgress(completedSongs, songs.length)) {
@@ -877,7 +1001,7 @@ async function runFetchMissingLyrics(
           phase: dryRun ? "scan" : "apply",
           processed: completedSongs,
           total: songs.length,
-          message: "Looking up lyrics for tracks.",
+          message: `Found: ${updatedSongs} | No match: ${noMatch} | Failed: ${failedSongs}`,
         })
       }
     }
@@ -891,6 +1015,8 @@ async function runFetchMissingLyrics(
       updatedSongs,
       noMatch,
       failedSongs,
+      timeoutSongs,
+      networkErrors,
       skippedSongs,
       concurrency: LYRICS_LOOKUP_CONCURRENCY,
     },
@@ -1042,6 +1168,7 @@ async function runRefreshOriginMetadata(
       duration: true,
       thumbnail: true,
       coverPath: true,
+      filePath: true,
     },
     orderBy: { id: "asc" },
   })
@@ -1148,7 +1275,7 @@ async function runRefreshOriginMetadata(
       if (metadataChanged) updatedSongs += 1
 
       if (!dryRun && nextThumbnail) {
-        const coverPath = await downloadSongArtwork(song.id, nextThumbnail)
+        const coverPath = await downloadSongArtwork(song.id, nextThumbnail, song.filePath)
         if (coverPath && coverPath !== song.coverPath) {
           await prisma.song.update({
             where: { id: song.id },
@@ -1197,6 +1324,7 @@ export async function runMaintenanceAction(
   else if (action === "backfill_metadata") result = await runBackfillMetadata(userId, dryRun, onProgress)
   else if (action === "dedupe_library_imports") result = await runDedupeLibraryImports(userId, dryRun, onProgress)
   else if (action === "normalize_titles") result = await runNormalizeTitles(userId, dryRun, onProgress)
+  else if (action === "clean_youtube_titles") result = await runCleanYouTubeTitles(userId, dryRun, onProgress)
   else if (action === "fill_missing_covers") result = await runFillMissingCovers(userId, dryRun, onProgress)
   else if (action === "refresh_file_metadata") result = await runRefreshFileMetadata(userId, dryRun, onProgress)
   else if (action === "fetch_missing_lyrics") result = await runFetchMissingLyrics(userId, dryRun, onProgress)

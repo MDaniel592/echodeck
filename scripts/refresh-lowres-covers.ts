@@ -6,6 +6,7 @@ import { getVideoInfo } from "../lib/ytdlp"
 type SongRow = {
   id: number
   title: string
+  filePath: string
   sourceUrl: string | null
   thumbnail: string | null
   coverPath: string | null
@@ -94,7 +95,7 @@ async function refreshSongArtwork(song: SongRow): Promise<{ refreshed: boolean; 
   }
 
   for (const candidate of candidates) {
-    const newCoverPath = await downloadSongArtwork(song.id, candidate)
+    const newCoverPath = await downloadSongArtwork(song.id, candidate, song.filePath)
     if (!newCoverPath) continue
 
     await prisma.song.update({
@@ -124,6 +125,7 @@ async function main() {
     select: {
       id: true,
       title: true,
+      filePath: true,
       sourceUrl: true,
       thumbnail: true,
       coverPath: true,

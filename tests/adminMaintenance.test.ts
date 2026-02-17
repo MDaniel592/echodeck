@@ -2,9 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => {
   const prisma = {
+    library: {
+      findFirst: vi.fn(),
+      create: vi.fn(),
+    },
+    libraryPath: {
+      upsert: vi.fn(),
+    },
     song: {
       findMany: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   }
 
@@ -58,6 +66,32 @@ vi.mock("../lib/downloadTasks", () => ({
 }))
 
 import { runMaintenanceAction, type MaintenanceProgress } from "../lib/adminMaintenance"
+
+describe("adminMaintenance attach_library", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.prisma.library.findFirst.mockResolvedValue(null)
+    mocks.prisma.library.create.mockResolvedValue({ id: 7, name: "Main Library" })
+    mocks.prisma.song.findMany.mockResolvedValue([{ id: 1, filePath: "/tmp/song.mp3" }])
+    mocks.prisma.song.updateMany.mockResolvedValue({ count: 1 })
+    mocks.prisma.song.update.mockResolvedValue({})
+    mocks.prisma.libraryPath.upsert.mockResolvedValue({})
+  })
+
+  it("reports libraryCreated when creating the default library", async () => {
+    const result = await runMaintenanceAction(1, "attach_library", false)
+    expect(result.action).toBe("attach_library")
+    expect(result.details.libraryCreated).toBe(1)
+    expect(mocks.prisma.library.create).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not report libraryCreated during dry-run", async () => {
+    const result = await runMaintenanceAction(1, "attach_library", true)
+    expect(result.action).toBe("attach_library")
+    expect(result.details.libraryCreated).toBe(0)
+    expect(mocks.prisma.library.create).not.toHaveBeenCalled()
+  })
+})
 
 describe("adminMaintenance refresh_origin_metadata", () => {
   beforeEach(() => {
