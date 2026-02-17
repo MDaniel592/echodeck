@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # ---- Builder stage ----
 FROM node:22-trixie-slim AS builder
 
@@ -25,7 +26,7 @@ COPY package.json package-lock.json ./
 COPY scripts ./scripts
 COPY tsconfig.json ./tsconfig.json
 
-RUN npm ci --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 
 # Copy app source and build.
 COPY . .
@@ -33,8 +34,8 @@ COPY . .
 RUN npx prisma generate && npm run build
 
 # Download downloader binaries during build so they are cached in the image.
-RUN test -n "$YTDLP_VERSION" && test -n "$SPOTDL_VERSION"
-RUN SKIP_SETUP=0 npm run setup
+RUN test -n "$YTDLP_VERSION" && test -n "$SPOTDL_VERSION" \
+  && SKIP_SETUP=0 npm run setup
 
 # ---- Runner stage ----
 FROM node:22-trixie-slim
@@ -52,24 +53,29 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy standalone output.
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+# Install only Prisma CLI runtime dependencies used by the startup db push.
+# Resolve exact versions from the lockfile to avoid runtime drift.
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm PRISMA_VERSION="$(node -p 'require("./package-lock.json").packages["node_modules/prisma"].version')" \
+  && DOTENV_VERSION="$(node -p 'require("./package-lock.json").packages["node_modules/dotenv"].version')" \
+  && npm install --no-save --no-audit --no-fund --ignore-scripts \
+    "prisma@${PRISMA_VERSION}" \
+    "dotenv@${DOTENV_VERSION}"
 
-# Copy complete node_modules from builder so Prisma CLI has its full
-# dependency tree at runtime (avoids selective-copy drift).
-COPY --from=builder /app/node_modules ./node_modules
+# Copy standalone output.
+COPY --link --from=builder /app/.next/standalone ./
+COPY --link --from=builder /app/.next/static ./.next/static
+COPY --link --from=builder /app/public ./public
 
 # Prisma schema + config (needed for db push at startup)
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
+COPY --link --from=builder /app/prisma ./prisma
+COPY --link --from=builder /app/prisma.config.ts ./prisma.config.ts
 
 # Generated Prisma client (standalone traces include it, but be explicit)
-COPY --from=builder /app/app/generated ./app/generated
+COPY --link --from=builder /app/app/generated ./app/generated
 
 # Downloader binaries fetched during build
-COPY --from=builder /app/bin ./bin
+COPY --link --from=builder /app/bin ./bin
 
 RUN mkdir -p /app/data /app/downloads
 
