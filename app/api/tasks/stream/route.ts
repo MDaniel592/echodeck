@@ -54,16 +54,37 @@ async function getTasksSnapshot(request: NextRequest, userId: number) {
           orderBy: { createdAt: "desc" },
           take: 1,
         },
+        songs: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            title: true,
+            coverPath: true,
+            thumbnail: true,
+          },
+        },
       },
     }),
     prisma.downloadTask.count({ where }),
   ])
 
   return {
-    tasks: tasks.map((task) => ({
-      ...task,
-      lastEvent: task.events[0] || null,
-    })),
+    tasks: tasks.map((task) => {
+      const previewSong = task.songs[0] || null
+      const previewImageUrl =
+        previewSong?.coverPath
+          ? `/api/cover/${previewSong.id}`
+          : previewSong?.thumbnail || null
+      const previewTitle = previewSong?.title || null
+      const { events, ...rest } = task
+      return {
+        ...rest,
+        lastEvent: events[0] || null,
+        previewImageUrl,
+        previewTitle,
+      }
+    }),
     total,
     page,
     limit,

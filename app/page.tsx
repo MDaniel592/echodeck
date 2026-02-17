@@ -11,6 +11,7 @@ import LibraryToolbar from "./components/library/LibraryToolbar"
 import LibraryGroupFolder from "./components/library/LibraryGroupFolder"
 import SongGridCards from "./components/library/SongGridCards"
 import MaintenancePanel from "./components/admin/MaintenancePanel"
+import OrganizationPanel from "./components/organization/OrganizationPanel"
 import { normalizeSongTitle } from "../lib/songTitle"
 import { removeQueueItem, reorderQueue } from "../lib/playbackQueue"
 import { groupSongsByScope } from "../lib/songGrouping"
@@ -44,6 +45,13 @@ interface Playlist {
   _count: { songs: number }
 }
 
+interface SongTag {
+  id: number
+  name: string
+  color?: string | null
+  _count?: { songs: number }
+}
+
 type RepeatMode = "off" | "all" | "one"
 type ScopeMode = "all" | "playlists" | "libraries"
 type ViewMode = "list" | "grid"
@@ -55,6 +63,7 @@ interface LibrarySummary {
 
 const QUEUE_STORAGE_KEY = "echodeck.queue.ids"
 const DEVICE_ID_STORAGE_KEY = "echodeck.device.id"
+const GRID_CARD_SCALE_STORAGE_KEY = "echodeck.grid.card.scale"
 
 function LogoutIcon() {
   return (
@@ -75,19 +84,51 @@ function LogoutIcon() {
   )
 }
 
+function GitHubIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+      <path d="M12 0C5.37 0 0 5.37 0 12a12 12 0 0 0 8.2 11.4c.6.1.82-.26.82-.58v-2.25c-3.34.72-4.04-1.42-4.04-1.42-.54-1.39-1.33-1.76-1.33-1.76-1.08-.74.08-.73.08-.73 1.2.09 1.83 1.23 1.83 1.23 1.06 1.83 2.79 1.3 3.48.99.11-.77.42-1.3.76-1.6-2.67-.3-5.47-1.34-5.47-5.95 0-1.31.47-2.38 1.23-3.22-.12-.3-.53-1.53.12-3.2 0 0 1-.32 3.3 1.23.96-.27 1.99-.4 3.02-.4s2.06.14 3.02.4c2.3-1.55 3.3-1.23 3.3-1.23.66 1.67.25 2.9.12 3.2.77.84 1.23 1.91 1.23 3.22 0 4.62-2.8 5.64-5.48 5.95.43.38.82 1.12.82 2.26v3.35c0 .32.21.69.83.58A12 12 0 0 0 24 12C24 5.37 18.63 0 12 0Z" />
+    </svg>
+  )
+}
+
+function LibraryTabIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5" aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M3 12h18" />
+      <path d="M3 18h18" />
+    </svg>
+  )
+}
+
+function DownloadTabIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M4 21h16" />
+    </svg>
+  )
+}
+
 
 export default function Home() {
   const router = useRouter()
   const [songs, setSongs] = useState<Song[]>([])
   const [playlists, setPlaylists] = useState<Playlist[]>([])
+  const [tags, setTags] = useState<SongTag[]>([])
   const [libraries, setLibraries] = useState<LibrarySummary[]>([])
   const [currentSongId, setCurrentSongId] = useState<number | null>(null)
   const [queueIds, setQueueIds] = useState<number[]>([])
-  const [activeTab, setActiveTab] = useState<"player" | "download" | "manage" | "repair">("player")
+  const [activeTab, setActiveTab] = useState<"player" | "download" | "manage" | "organize" | "repair">("player")
   const [scopeMode, setScopeMode] = useState<ScopeMode>("all")
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
+  const [gridCardScale, setGridCardScale] = useState(100)
   const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null)
   const [selectedPlaylist, setSelectedPlaylist] = useState<string>("all")
+  const [selectedTag, setSelectedTag] = useState<string>("all")
+  const [tagFilteredSongIds, setTagFilteredSongIds] = useState<Set<number> | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [loading, setLoading] = useState(true)
   const [deviceId, setDeviceId] = useState<string | null>(null)
@@ -160,6 +201,26 @@ export default function Home() {
   }, [queueIds])
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(GRID_CARD_SCALE_STORAGE_KEY)
+      const parsed = Number.parseInt(raw || "", 10)
+      if (Number.isInteger(parsed)) {
+        setGridCardScale(Math.max(80, Math.min(190, parsed)))
+      }
+    } catch {
+      // ignore storage access failures
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GRID_CARD_SCALE_STORAGE_KEY, String(gridCardScale))
+    } catch {
+      // ignore storage access failures
+    }
+  }, [gridCardScale])
+
+  useEffect(() => {
     if (loading) return
     setQueueIds((prev) => {
       const filtered = prev.filter((id) => songById.has(id))
@@ -226,6 +287,9 @@ export default function Home() {
       if (scopeMode !== "libraries" && selectedPlaylist !== "all") {
         params.set("playlistId", selectedPlaylist)
       }
+      if (selectedTag !== "all") {
+        params.set("tagId", selectedTag)
+      }
 
       fetch(`/api/songs?${params.toString()}`, {
         cache: "no-store",
@@ -260,7 +324,7 @@ export default function Home() {
         searchDebounceRef.current = null
       }
     }
-  }, [searchQuery, scopeMode, selectedPlaylist])
+  }, [searchQuery, scopeMode, selectedPlaylist, selectedTag])
 
   const fetchSongs = useCallback(async () => {
     try {
@@ -343,11 +407,70 @@ export default function Home() {
     }
   }, [])
 
+  const fetchTags = useCallback(async () => {
+    try {
+      const res = await fetch("/api/song-tags", { cache: "no-store" })
+      if (!res.ok) return
+      const data = await res.json() as SongTag[]
+      if (!Array.isArray(data)) return
+      setTags(
+        data
+          .filter((tag): tag is SongTag => Number.isInteger(tag.id) && typeof tag.name === "string")
+          .sort((a, b) => a.name.localeCompare(b.name))
+      )
+    } catch (err) {
+      console.error("Failed to fetch song tags:", err)
+    }
+  }, [])
+
   useEffect(() => {
     fetchSongs()
     fetchPlaylists()
     fetchLibraries()
-  }, [fetchSongs, fetchPlaylists, fetchLibraries])
+    fetchTags()
+  }, [fetchSongs, fetchPlaylists, fetchLibraries, fetchTags])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function hydrateTagFilter() {
+      if (selectedTag === "all") {
+        setTagFilteredSongIds(null)
+        return
+      }
+
+      try {
+        const limit = 1000
+        let page = 1
+        let totalPages = 1
+        const ids = new Set<number>()
+
+        while (page <= totalPages) {
+          const res = await fetch(`/api/song-tags/${selectedTag}/songs?page=${page}&limit=${limit}`, { cache: "no-store" })
+          if (!res.ok) break
+          const payload = await res.json() as { songs?: Array<{ id: number }>; totalPages?: number }
+          const rows = Array.isArray(payload.songs) ? payload.songs : []
+          for (const row of rows) {
+            if (Number.isInteger(row.id)) ids.add(row.id)
+          }
+          totalPages = typeof payload.totalPages === "number" && payload.totalPages > 0 ? payload.totalPages : 1
+          page += 1
+        }
+
+        if (!cancelled) {
+          setTagFilteredSongIds(ids)
+        }
+      } catch (error) {
+        console.error("Failed to hydrate tag filter songs:", error)
+        if (!cancelled) setTagFilteredSongIds(new Set())
+      }
+    }
+
+    void hydrateTagFilter()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedTag])
 
   useEffect(() => {
     if (!deviceId || songs.length === 0 || hydratedPlaybackRef.current) return
@@ -610,14 +733,16 @@ export default function Home() {
   }
 
   const scopedSongs = useMemo(() => {
-    if (scopeMode === "libraries") return songs
-    return songs.filter((song) => {
+    const byPlaylist = scopeMode === "libraries" ? songs : songs.filter((song) => {
       if (selectedPlaylist === "all") return true
       if (selectedPlaylist === "none") return song.playlistId === null
       const selectedId = Number.parseInt(selectedPlaylist, 10)
       return song.playlistId === selectedId
     })
-  }, [songs, selectedPlaylist, scopeMode])
+
+    if (!tagFilteredSongIds) return byPlaylist
+    return byPlaylist.filter((song) => tagFilteredSongIds.has(song.id))
+  }, [songs, selectedPlaylist, scopeMode, tagFilteredSongIds])
 
   const visibleSongs = useMemo(() => {
     if (searchResults !== null) return searchResults
@@ -740,30 +865,20 @@ export default function Home() {
           onPlay={handlePlaySong}
           onPlayNext={handlePlayNext}
           onAddToQueue={handleAddToQueue}
+          cardScale={gridCardScale}
         />
       ))
     }
 
     return (
-      <div className="space-y-5">
-        {groupedVisibleSongs.map((group) => (
-          <section key={group.key} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:p-4">
-            {scopeMode !== "all" && (
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold tracking-wide text-zinc-100">{group.label}</h3>
-                <span className="text-xs text-zinc-400 tabular-nums">{group.songs.length} tracks</span>
-              </div>
-            )}
-            <SongGridCards
-              songs={group.songs}
-              currentSongId={currentSongId}
-              onPlay={handlePlaySong}
-              onPlayNext={handlePlayNext}
-              onAddToQueue={handleAddToQueue}
-            />
-          </section>
-        ))}
-      </div>
+      <SongGridCards
+        songs={visibleSongs}
+        currentSongId={currentSongId}
+        onPlay={handlePlaySong}
+        onPlayNext={handlePlayNext}
+        onAddToQueue={handleAddToQueue}
+        cardScale={gridCardScale}
+      />
     )
   }
 
@@ -775,9 +890,9 @@ export default function Home() {
       </div>
       {/* ── Header ── */}
       <header className="sticky top-0 z-40 border-b border-white/10 bg-[#0a0f1a]/75 backdrop-blur-2xl">
-        <div className="w-full px-4 sm:px-6">
+        <div className="w-full px-2.5 sm:px-6">
           {/* Top row: brand + tabs + actions */}
-          <div className="flex h-12 items-center gap-3 md:h-14 lg:h-16">
+          <div className="flex h-10 items-center gap-2 md:h-14 md:gap-3 lg:h-16">
             {/* Brand */}
             <Image
               src="/EchoDeck.png"
@@ -785,31 +900,34 @@ export default function Home() {
               width={542}
               height={391}
               priority
-              className="h-6 w-auto select-none shrink-0 md:h-7 lg:h-8"
+              className="h-5 w-auto select-none shrink-0 md:h-7 lg:h-8"
             />
 
             {/* Tabs */}
-            <nav className="flex items-center gap-0.5 rounded-xl border border-white/10 bg-white/5 p-0.5 md:p-1 lg:p-1.5">
+            <nav className="flex items-center rounded-xl px-0.5 py-0.5 md:px-1.5 md:py-1 lg:px-2 lg:py-1.5">
               <button
                 type="button"
                 onClick={() => setActiveTab("player")}
-                className={`rounded-md px-3.5 py-1.5 text-xs font-medium transition-all md:px-4 md:py-2 md:text-sm lg:px-5 lg:py-2.5 lg:text-base ${
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-all md:gap-1.5 md:px-4 md:py-2 md:text-sm lg:px-5 lg:py-2.5 lg:text-base ${
                   activeTab === "player"
                     ? "bg-gradient-to-r from-sky-300 to-emerald-300 text-slate-900 shadow-sm"
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
+                <LibraryTabIcon />
                 Library
               </button>
+              <span className="mx-1 h-5 w-px bg-white/15 md:h-6 lg:h-7" aria-hidden="true" />
               <button
                 type="button"
                 onClick={() => setActiveTab("download")}
-                className={`rounded-md px-3.5 py-1.5 text-xs font-medium transition-all md:px-4 md:py-2 md:text-sm lg:px-5 lg:py-2.5 lg:text-base ${
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-all md:gap-1.5 md:px-4 md:py-2 md:text-sm lg:px-5 lg:py-2.5 lg:text-base ${
                   activeTab === "download"
                     ? "bg-gradient-to-r from-sky-300 to-emerald-300 text-slate-900 shadow-sm"
                     : "text-zinc-400 hover:text-white"
                 }`}
               >
+                <DownloadTabIcon />
                 Download
               </button>
             </nav>
@@ -832,17 +950,37 @@ export default function Home() {
 
             <button
               type="button"
+              onClick={() => setActiveTab("organize")}
+              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
+            >
+              Organize
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab("repair")}
               className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
             >
               Repair
             </button>
 
+            <a
+              href="https://github.com/MDaniel592/echodeck"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 text-[11px] text-zinc-200 transition-colors hover:bg-white/10 md:h-8 md:gap-2 md:px-3 md:text-sm"
+              aria-label="Open EchoDeck GitHub repository"
+              title="GitHub repository"
+            >
+              <GitHubIcon />
+              <span className="hidden md:inline">GitHub</span>
+            </a>
+
             {/* Logout */}
             <button
               type="button"
               onClick={handleLogout}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-white/10 hover:text-zinc-100"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-white/10 hover:text-zinc-100 md:h-8 md:w-8"
               aria-label="Logout"
               title="Logout"
             >
@@ -860,18 +998,23 @@ export default function Home() {
               onScopeModeChange={setScopeMode}
               selectedPlaylist={selectedPlaylist}
               onSelectedPlaylistChange={setSelectedPlaylist}
+              selectedTag={selectedTag}
+              onSelectedTagChange={setSelectedTag}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
+              cardScale={gridCardScale}
+              onCardScaleChange={setGridCardScale}
               songsCount={songs.length}
               unassignedCount={unassignedCount}
               playlists={playlists}
+              tags={tags}
             />
           )}
         </div>
       </header>
 
       {/* ── Main ── */}
-      <main className="custom-scrollbar relative z-10 flex-1 overflow-y-auto w-full px-4 pt-4 sm:px-6 pb-32 sm:pb-28">
+      <main className="custom-scrollbar relative z-10 flex-1 overflow-y-auto w-full px-2.5 pt-2 sm:px-6 sm:pt-4 pb-32 sm:pb-28">
         {activeTab === "download" && (
           <DownloadForm
             onDownloadStart={() => {}}
@@ -884,6 +1027,27 @@ export default function Home() {
         )}
 
         {activeTab === "manage" && <LibraryManagementPanel embedded />}
+
+        {activeTab === "organize" && (
+          <OrganizationPanel
+            songs={songs.map((song) => ({
+              id: song.id,
+              title: song.title,
+              artist: song.artist,
+              playlistId: song.playlistId,
+            }))}
+            playlists={playlists.map((playlist) => ({
+              id: playlist.id,
+              name: playlist.name,
+            }))}
+            selectedPlaylist={selectedPlaylist}
+            onAssignPlaylistMany={handleAssignPlaylistMany}
+            onDeleteMany={handleDeleteMany}
+            onCreatePlaylist={createPlaylist}
+            onRefreshSongs={fetchSongs}
+            onRefreshPlaylists={fetchPlaylists}
+          />
+        )}
 
         {activeTab === "repair" && <MaintenancePanel embedded />}
 

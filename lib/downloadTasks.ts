@@ -146,7 +146,11 @@ export async function appendTaskEvent(
   message: string,
   payload?: unknown
 ) {
-  const safeMessage = redactSensitiveText(message.trim()).slice(0, 2000)
+  const normalizedMessage = message.trim()
+  const safeMessage =
+    level === "error"
+      ? redactSensitiveText(normalizedMessage).slice(0, 2000)
+      : normalizedMessage.slice(0, 2000)
   const rawPayload =
     payload === undefined
       ? null
@@ -156,7 +160,11 @@ export async function appendTaskEvent(
           }
           return value
         })
-  const safePayload = rawPayload ? redactSensitiveText(rawPayload).slice(0, 12000) : null
+  const safePayload = rawPayload
+    ? level === "error"
+      ? redactSensitiveText(rawPayload).slice(0, 12000)
+      : rawPayload.slice(0, 12000)
+    : null
 
   await prisma.downloadTaskEvent.create({
     data: {
@@ -222,7 +230,7 @@ const WORKER_PENDING_PID = -1
 
 function getMaxConcurrentWorkers(): number {
   const parsed = Number.parseInt(process.env.DOWNLOAD_TASK_MAX_WORKERS || "", 10)
-  if (!Number.isInteger(parsed)) return 3
+  if (!Number.isInteger(parsed)) return 4
   return Math.min(Math.max(parsed, 1), 20)
 }
 

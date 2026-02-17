@@ -55,7 +55,9 @@ On container start, the image runs `npm run setup` automatically so `yt-dlp` and
 | `JWT_SECRET` | Yes | Secret for signing auth tokens |
 | `SUBSONIC_PASSWORD_KEY` | No | Optional dedicated key for encrypted Subsonic password auth secret storage (falls back to `JWT_SECRET`) |
 | `TRUST_PROXY` | No | Set to `1` only behind a trusted reverse proxy (enables forwarded IP headers for login rate limiting) |
-| `DOWNLOAD_TASK_MAX_WORKERS` | No | Max concurrent detached download workers (default: `3`) |
+| `DOWNLOAD_TASK_MAX_WORKERS` | No | Max concurrent detached download workers (default: `4`) |
+| `EXPORT_LRC_SIDECAR` | No | Set `1`/`true` to export `.lrc` lyrics sidecar files next to downloaded audio |
+| `DOWNLOAD_ASCII_FILENAMES` | No | Set `1`/`true` to normalize new downloaded folder/file names to ASCII |
 | `SETUP_SECRET` | Production | Required in production to protect first-user setup |
 | `TASK_SSE_POLL_MS` | No | SSE poll interval for live task updates (minimum: `2000`) |
 | `TASK_SSE_MAX_CLIENTS` | No | Max concurrent clients for `/api/tasks/stream` |
@@ -91,6 +93,7 @@ Run `npm run validate-env` to check your configuration.
 | `npm test` | Run tests |
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run test:integration` | Run end-to-end API smoke test against a running app |
+| `npm run test:diagnostic` | Run slower DB/network diagnostic integration tests |
 | `npm run subsonic:smoke` | Run Subsonic compatibility smoke checks (requires env vars) |
 | `npm run typecheck` | TypeScript type check |
 | `npm run lint` | ESLint |
@@ -104,6 +107,8 @@ Run `npm run validate-env` to check your configuration.
 | `npm run db:verify-ownership` | Fail if any rows still have missing ownership |
 | `npm run db:backfill-playlist-entries` | Backfill playlist join entries from legacy song playlist links |
 | `npm run db:ensure-subsonic-tokens` | Ensure each user has a Subsonic token |
+| `npm run db:organize-layout` | Dry-run local file layout normalization and DB path updates |
+| `npm run db:organize-layout:apply` | Move files to normalized layout and persist DB path changes |
 | `npm run db:studio` | Open Prisma Studio GUI |
 
 ## API Highlights

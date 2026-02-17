@@ -10,6 +10,10 @@ export interface VideoInfo {
   artist: string | null
   album: string | null
   albumArtist: string | null
+  trackNumber: number | null
+  discNumber: number | null
+  genre: string | null
+  isrc: string | null
   year: number | null
   duration: number | null
   thumbnail: string | null
@@ -67,7 +71,14 @@ interface RawAudioFormat {
 
 interface ParsedVideoInfo {
   title?: string
+  track?: string
+  track_number?: number | string
+  disc_number?: number | string
+  genre?: string
+  genres?: string[]
+  isrc?: string
   artist?: string
+  creator?: string
   uploader?: string
   album?: string
   album_artist?: string
@@ -148,6 +159,28 @@ function parseTimestampYear(value: unknown): number | null {
   return year >= 1000 && year <= 9999 ? year : null
 }
 
+function parsePositiveInt(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const parsed = Math.trunc(value)
+    return parsed > 0 ? parsed : null
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value.trim(), 10)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+  return null
+}
+
+function pickGenre(info: ParsedVideoInfo): string | null {
+  if (typeof info.genre === "string" && info.genre.trim()) return info.genre.trim()
+  if (Array.isArray(info.genres)) {
+    for (const item of info.genres) {
+      if (typeof item === "string" && item.trim()) return item.trim()
+    }
+  }
+  return null
+}
+
 function inferYearFromParsedInfo(info: ParsedVideoInfo): number | null {
   return (
     parseYearValue(info.release_year) ||
@@ -160,7 +193,7 @@ function inferYearFromParsedInfo(info: ParsedVideoInfo): number | null {
 async function getPreferredAudioFormatId(
   url: string,
   preference: "auto" | "opus" | "aac"
-): Promise<{ formatId: string; summary: string } | null> {
+): Promise<{ formatId: string; summary: string; audioCodec: string | null } | null> {
   return new Promise((resolve, reject) => {
     const bin = getYtdlpPath()
     if (!fs.existsSync(bin)) {
@@ -226,6 +259,7 @@ async function getPreferredAudioFormatId(
         const selected = audioOnly[0]
         resolve({
           formatId: selected.format_id as string,
+          audioCodec: typeof selected.acodec === "string" ? selected.acodec : null,
           summary: `${selected.format_id} ${selected.ext || "audio"} ${selected.acodec || "unknown"} ${Math.round(
             numeric(selected.abr) || numeric(selected.tbr)
           )}k`,
@@ -521,10 +555,14 @@ export async function getVideoInfo(url: string): Promise<VideoInfo> {
   }
 
   return {
-    title: primaryInfo.title || "Unknown",
-    artist: primaryInfo.artist || primaryInfo.uploader || null,
+    title: primaryInfo.track || primaryInfo.title || "Unknown",
+    artist: primaryInfo.artist || primaryInfo.creator || primaryInfo.uploader || null,
     album: primaryInfo.album || null,
-    albumArtist: primaryInfo.album_artist || primaryInfo.artist || primaryInfo.uploader || null,
+    albumArtist: primaryInfo.album_artist || primaryInfo.artist || primaryInfo.creator || primaryInfo.uploader || null,
+    trackNumber: parsePositiveInt(primaryInfo.track_number),
+    discNumber: parsePositiveInt(primaryInfo.disc_number),
+    genre: pickGenre(primaryInfo),
+    isrc: typeof primaryInfo.isrc === "string" && primaryInfo.isrc.trim() ? primaryInfo.isrc.trim() : null,
     year: inferYearFromParsedInfo(primaryInfo),
     duration: primaryInfo.duration ? Math.round(primaryInfo.duration) : null,
     thumbnail: pickBestThumbnail(thumbnailCandidates),
@@ -551,25 +589,39 @@ export function downloadAudio(
 
     const ffmpegLocation = getFfmpegDir()
 
-    const runDownload = (formatSelector: string) => {
+    const runDownload = (
+      formatSelector: string,
+      transcode?: {
+        format: "mp3" | "flac" | "wav" | "ogg" | "opus"
+        quality?: "best" | "320" | "256" | "192" | "128"
+        sampleRate?: number
+      }
+    ) => {
       const args = [
         "--output", outputTemplate,
         "--no-playlist",
         "--newline",
       ]
 
-      if (quality === "best") {
+      if (quality === "best" && !transcode) {
         // Download source audio directly without transcoding.
         args.push("-f", formatSelector)
       } else {
+        const targetFormat = transcode?.format || format
+        const targetQuality = transcode?.quality || quality
         args.push(
+          "-f", formatSelector,
           "-x",
-          "--audio-format", format,
+          "--audio-format", targetFormat,
           "--ffmpeg-location", ffmpegLocation
         )
 
-        if (format === "mp3") {
-          args.push("--audio-quality", `${quality}k`)
+        if (targetFormat === "mp3" && targetQuality !== "best") {
+          args.push("--audio-quality", `${targetQuality}k`)
+        }
+
+        if (transcode?.sampleRate && Number.isFinite(transcode.sampleRate) && transcode.sampleRate > 0) {
+          args.push("--postprocessor-args", `ExtractAudio+ffmpeg_o:-ar ${Math.round(transcode.sampleRate)}`)
         }
       }
 
@@ -659,25 +711,46 @@ export function downloadAudio(
       ])
         .then((result) => {
           if (result.kind === "timeout") {
-            onProgress("Format selection timed out, falling back to bestaudio/best")
-            runDownload("bestaudio/best")
+            if (bestAudioPreference === "opus") {
+              onProgress("Format selection timed out, downloading and converting to Opus (48 kHz)")
+              runDownload("bestaudio/best", { format: "opus", sampleRate: 48000 })
+            } else {
+              onProgress("Format selection timed out, falling back to bestaudio/best")
+              runDownload("bestaudio/best")
+            }
             return
           }
 
           if (result.selection) {
-            onProgress(`Selected audio format: ${result.selection.summary}`)
-            runDownload(result.selection.formatId)
+            const codec = (result.selection.audioCodec || "").toLowerCase()
+            const selectedIsOpus = codec.includes("opus")
+            if (bestAudioPreference === "opus" && !selectedIsOpus) {
+              onProgress(`Selected ${result.selection.summary}; converting to Opus (48 kHz)`)
+              runDownload(result.selection.formatId, { format: "opus", sampleRate: 48000 })
+            } else {
+              onProgress(`Selected audio format: ${result.selection.summary}`)
+              runDownload(result.selection.formatId)
+            }
             return
           }
 
-          onProgress("Could not rank audio formats, falling back to bestaudio/best")
-          runDownload("bestaudio/best")
+          if (bestAudioPreference === "opus") {
+            onProgress("Could not rank formats, downloading and converting to Opus (48 kHz)")
+            runDownload("bestaudio/best", { format: "opus", sampleRate: 48000 })
+          } else {
+            onProgress("Could not rank audio formats, falling back to bestaudio/best")
+            runDownload("bestaudio/best")
+          }
         })
         .catch((error) => {
-          onProgress(
-            `Format selection failed (${error instanceof Error ? error.message : "unknown error"}), falling back`
-          )
-          runDownload("bestaudio/best")
+          const reason = error instanceof Error ? error.message : "unknown error"
+          if (bestAudioPreference === "opus") {
+            onProgress(`Format selection failed (${reason}), downloading and converting to Opus (48 kHz)`)
+            runDownload("bestaudio/best", { format: "opus", sampleRate: 48000 })
+          } else {
+            onProgress(`Format selection failed (${reason}), falling back`)
+            runDownload("bestaudio/best")
+          }
         })
       return
     }

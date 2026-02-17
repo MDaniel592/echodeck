@@ -11,6 +11,7 @@ interface DownloadTaskEvent {
   id: number
   level: string
   message: string
+  payload?: string | null
   createdAt: string
 }
 
@@ -36,6 +37,8 @@ interface DownloadTaskSummary {
   completedAt: string | null
   updatedAt: string
   lastEvent: DownloadTaskEvent | null
+  previewImageUrl?: string | null
+  previewTitle?: string | null
 }
 
 interface DownloadTaskDetail extends DownloadTaskSummary {
@@ -80,6 +83,52 @@ function statusClassName(status: string): string {
   if (status === "failed") return "bg-red-500/15 text-red-300 border border-red-500/30"
   if (status === "running") return "bg-blue-500/15 text-blue-300 border border-blue-500/30"
   return "bg-zinc-700/30 text-zinc-300 border border-zinc-600/60"
+}
+
+type ProgressPayload = {
+  kind?: string
+  percent?: number | null
+  speed?: string | null
+  eta?: string | null
+  attempt?: number
+  maxAttempts?: number
+}
+
+function parseEventPayload(payload: string | null | undefined): ProgressPayload | null {
+  if (!payload) return null
+  try {
+    const parsed = JSON.parse(payload) as ProgressPayload
+    return parsed && typeof parsed === "object" ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function sourceLabel(source: string): string {
+  if (source === "spotify") return "Spotify"
+  if (source === "soundcloud") return "SoundCloud"
+  if (source === "youtube") return "YouTube"
+  return "Download"
+}
+
+function taskProgressPercent(task: DownloadTaskSummary): number | null {
+  const total = task.totalItems ?? 0
+  if (total > 0) {
+    return Math.max(0, Math.min(100, Math.round((task.processedItems / total) * 1000) / 10))
+  }
+  const payload = parseEventPayload(task.lastEvent?.payload)
+  if (payload?.kind === "ytdlp_progress" && typeof payload.percent === "number") {
+    return Math.max(0, Math.min(100, Math.round(payload.percent * 10) / 10))
+  }
+  return null
+}
+
+function taskDisplayName(task: DownloadTaskSummary): string {
+  const playlistName = task.playlistTitle?.trim()
+  if (playlistName) return playlistName
+  const trackName = task.previewTitle?.trim()
+  if (trackName) return trackName
+  return `${sourceLabel(task.source)} download`
 }
 
 function MusicIcon() {
@@ -163,11 +212,12 @@ function InfoIcon() {
 }
 
 export default function DownloadForm({ onDownloadStart, onDownloadComplete }: DownloadFormProps) {
-  const TASKS_PAGE_SIZE = 30
+  const TASKS_PAGE_SIZE = 3
   const [url, setUrl] = useState("")
   const [format, setFormat] = useState("mp3")
   const [quality, setQuality] = useState("best")
-  const [bestAudioPreference, setBestAudioPreference] = useState<"auto" | "opus" | "aac">("auto")
+  const [bestAudioPreference, setBestAudioPreference] = useState<"auto" | "opus" | "aac">("opus")
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [queueMessage, setQueueMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -178,30 +228,13 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
   const [taskPage, setTaskPage] = useState(1)
   const [taskTotalPages, setTaskTotalPages] = useState(1)
   const [taskTotal, setTaskTotal] = useState(0)
+  const [mobileTaskView, setMobileTaskView] = useState<"history" | "detail">("history")
+  const [showLogs, setShowLogs] = useState(false)
   const [playlists, setPlaylists] = useState<PlaylistOption[]>([])
   const [playlistChoice, setPlaylistChoice] = useState("__none__")
   const [newPlaylistName, setNewPlaylistName] = useState("")
   const seenStatusesRef = useRef<Map<number, string>>(new Map())
   const hasFetchedTasksRef = useRef(false)
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("download.bestAudioPreference")
-      if (saved === "auto" || saved === "opus" || saved === "aac") {
-        setBestAudioPreference(saved)
-      }
-    } catch {
-      // ignore storage access failures
-    }
-  }, [])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("download.bestAudioPreference", bestAudioPreference)
-    } catch {
-      // ignore storage access failures
-    }
-  }, [bestAudioPreference])
 
   const normalizedUrl = url.trim().toLowerCase()
   const isSpotify = normalizedUrl.includes("spotify.com")
@@ -233,6 +266,34 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
     () => tasks.some((task) => !isTerminalTaskStatus(task.status)),
     [tasks]
   )
+  const featuredTask = useMemo(() => {
+    return tasks.find((task) => !isTerminalTaskStatus(task.status)) ?? null
+  }, [tasks])
+  const featuredTaskPercent = useMemo(
+    () => (featuredTask ? taskProgressPercent(featuredTask) : null),
+    [featuredTask]
+  )
+  const selectedTaskInsights = useMemo(() => {
+    if (!selectedTask) return null
+
+    let retryCount = 0
+    let transientErrorCount = 0
+    let latestProgress: ProgressPayload | null = null
+
+    for (let i = selectedTask.events.length - 1; i >= 0; i -= 1) {
+      const payload = parseEventPayload(selectedTask.events[i]?.payload)
+      if (!payload) continue
+
+      if (payload.kind === "retry") retryCount += 1
+      if (payload.kind === "transient_error") transientErrorCount += 1
+
+      if (!latestProgress && payload.kind === "ytdlp_progress") {
+        latestProgress = payload
+      }
+    }
+
+    return { retryCount, transientErrorCount, latestProgress }
+  }, [selectedTask])
 
   const applyTaskSnapshot = useCallback((nextTasks: DownloadTaskSummary[]) => {
     setTasks(nextTasks)
@@ -418,6 +479,12 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
   }, [selectedTaskId, fetchTaskDetail])
 
   useEffect(() => {
+    if (selectedTaskId === null && mobileTaskView === "detail") {
+      setMobileTaskView("history")
+    }
+  }, [mobileTaskView, selectedTaskId])
+
+  useEffect(() => {
     if (selectedTaskId === null) return
 
     const streamUrl = `/api/tasks/${selectedTaskId}/stream?eventLimit=350&songLimit=200`
@@ -540,7 +607,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
   }
 
   return (
-    <div className="rounded-xl border border-zinc-800/60 bg-zinc-900/50 p-3.5 sm:p-4">
+    <div className="rounded-none border-0 bg-transparent p-0 md:rounded-xl md:border md:border-zinc-800/60 md:bg-zinc-900/50 md:p-4">
       <div className="mb-3 flex items-center gap-2">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600/20 text-blue-400 lg:h-10 lg:w-10">
           <MusicIcon />
@@ -602,117 +669,137 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
           )}
         </div>
 
-        {/* Format & Quality Settings */}
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <div>
-            <label htmlFor="download-format" className="mb-1.5 block text-xs text-zinc-400">
-              Format
-            </label>
-            <select
-              id="download-format"
-              value={format}
-              onChange={(e) => setFormat(e.target.value)}
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={submitting || (!isSpotify && quality === "best")}
-              aria-label="Audio format"
-            >
-              <option value="mp3">MP3</option>
-              <option value="flac">FLAC (lossless)</option>
-              <option value="wav">WAV (lossless)</option>
-              <option value="ogg">OGG Vorbis</option>
-            </select>
-          </div>
-
-          {!isSpotify && (
-            <div>
-              <label htmlFor="download-quality" className="mb-1.5 block text-xs text-zinc-400">
-                Quality
-              </label>
-              <select
-                id="download-quality"
-                value={quality}
-                onChange={(e) => setQuality(e.target.value)}
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={submitting}
-                aria-label="Audio quality"
-              >
-                <option value="best">Best Available</option>
-                <option value="320">320 kbps</option>
-                <option value="256">256 kbps</option>
-                <option value="192">192 kbps</option>
-                <option value="128">128 kbps</option>
-              </select>
-            </div>
-          )}
+        <div className="pt-0.5">
+          <button
+            type="button"
+            onClick={() => setShowAdvancedOptions((current) => !current)}
+            className="text-xs text-zinc-400 underline decoration-zinc-600 underline-offset-2 transition-colors hover:text-zinc-200"
+          >
+            {showAdvancedOptions ? "Hide advanced options" : "Show advanced options"}
+          </button>
         </div>
 
-        {/* Best Audio Preference (YouTube/SoundCloud only) */}
-        {!isSpotify && quality === "best" && (
-          <div className="rounded-lg border border-zinc-700/50 bg-zinc-800/50 p-2">
-            <label htmlFor="best-audio-pref" className="mb-1.5 block text-xs text-zinc-400">
-              Best Audio Preference
-            </label>
-            <select
-              id="best-audio-pref"
-              value={bestAudioPreference}
-              onChange={(e) => setBestAudioPreference(e.target.value as "auto" | "opus" | "aac")}
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={submitting}
-              aria-label="Preferred audio codec for best quality"
-            >
-              <option value="auto">Auto (highest quality)</option>
-              <option value="opus">Prefer Opus</option>
-              <option value="aac">Prefer AAC/M4A</option>
-            </select>
-            <p className="mt-1.5 flex items-start gap-1.5 text-xs text-zinc-500">
-              <InfoIcon />
-              <span>
-                {format === "mp3" || format === "ogg"
-                  ? "Source audio will be converted to the selected format."
-                  : "Downloads the original audio format without transcoding."}
-              </span>
-            </p>
-          </div>
+        {showAdvancedOptions && (
+          <>
+            {/* Format & Quality Settings */}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div>
+                <label htmlFor="download-format" className="mb-1.5 block text-xs text-zinc-400">
+                  Format
+                </label>
+                <select
+                  id="download-format"
+                  value={format}
+                  onChange={(e) => setFormat(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={submitting || (!isSpotify && quality === "best")}
+                  aria-label="Audio format"
+                >
+                  <option value="mp3">MP3</option>
+                  <option value="flac">FLAC (lossless)</option>
+                  <option value="wav">WAV (lossless)</option>
+                  <option value="ogg">OGG Vorbis</option>
+                </select>
+              </div>
+
+              {!isSpotify && (
+                <div>
+                  <label htmlFor="download-quality" className="mb-1.5 block text-xs text-zinc-400">
+                    Quality
+                  </label>
+                  <select
+                    id="download-quality"
+                    value={quality}
+                    onChange={(e) => setQuality(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={submitting}
+                    aria-label="Audio quality"
+                  >
+                    <option value="best">Best Available</option>
+                    <option value="320">320 kbps</option>
+                    <option value="256">256 kbps</option>
+                    <option value="192">192 kbps</option>
+                    <option value="128">128 kbps</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Best Audio Preference (YouTube/SoundCloud only) */}
+            {!isSpotify && quality === "best" && (
+              <div className="rounded-lg border border-zinc-700/50 bg-zinc-800/50 p-2">
+                <label htmlFor="best-audio-pref" className="mb-1.5 block text-xs text-zinc-400">
+                  Best Audio Preference
+                </label>
+                <select
+                  id="best-audio-pref"
+                  value={bestAudioPreference}
+                  onChange={(e) => setBestAudioPreference(e.target.value as "auto" | "opus" | "aac")}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={submitting}
+                  aria-label="Preferred audio codec for best quality"
+                >
+                  <option value="opus">Prefer Opus (recommended)</option>
+                  <option value="auto">Auto (highest quality)</option>
+                  <option value="aac">Prefer AAC/M4A</option>
+                </select>
+                <p className="mt-1.5 flex items-start gap-1.5 text-xs text-zinc-500">
+                  <InfoIcon />
+                  <span>
+                    Opus is prioritized. If unavailable, audio is converted to Opus at 48 kHz.
+                  </span>
+                </p>
+              </div>
+            )}
+
+            <div>
+              <div className="rounded-lg border border-zinc-700/50 bg-zinc-800/50 p-2">
+                <label htmlFor="download-playlist" className="mb-1.5 block text-xs text-zinc-400">
+                  Save To Playlist
+                </label>
+                <select
+                  id="download-playlist"
+                  value={playlistChoice}
+                  onChange={(e) => setPlaylistChoice(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={submitting}
+                >
+                  <option value="__none__">No playlist</option>
+                  {playlists.map((playlist) => (
+                    <option key={playlist.id} value={playlist.id}>
+                      {playlist.name}
+                    </option>
+                  ))}
+                  <option value="__new__">+ Create new playlist</option>
+                </select>
+
+                {creatingPlaylist && (
+                  <div className="mt-2">
+                    <label htmlFor="download-playlist-new" className="mb-1.5 block text-xs text-zinc-400">
+                      New Playlist Name
+                    </label>
+                    <input
+                      id="download-playlist-new"
+                      type="text"
+                      value={newPlaylistName}
+                      onChange={(e) => setNewPlaylistName(e.target.value)}
+                      placeholder="My playlist"
+                      maxLength={80}
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white placeholder-zinc-500 transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={submitting}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
         )}
 
-        <div className="rounded-lg border border-zinc-700/50 bg-zinc-800/50 p-2">
-          <label htmlFor="download-playlist" className="mb-1.5 block text-xs text-zinc-400">
-            Save To Playlist
-          </label>
-          <select
-            id="download-playlist"
-            value={playlistChoice}
-            onChange={(e) => setPlaylistChoice(e.target.value)}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={submitting}
-          >
-            <option value="__none__">No playlist</option>
-            {playlists.map((playlist) => (
-              <option key={playlist.id} value={playlist.id}>
-                {playlist.name}
-              </option>
-            ))}
-            <option value="__new__">+ Create new playlist</option>
-          </select>
-
-          {creatingPlaylist && (
-            <div className="mt-2">
-              <label htmlFor="download-playlist-new" className="mb-1.5 block text-xs text-zinc-400">
-                New Playlist Name
-              </label>
-              <input
-                id="download-playlist-new"
-                type="text"
-                value={newPlaylistName}
-                onChange={(e) => setNewPlaylistName(e.target.value)}
-                placeholder="My playlist"
-                maxLength={80}
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white placeholder-zinc-500 transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={submitting}
-              />
-            </div>
-          )}
-        </div>
+        {!showAdvancedOptions && (
+          <p className="text-xs text-zinc-500">
+            Default mode queues the link with best quality, prioritizing Opus.
+          </p>
+        )}
 
         {/* Action Buttons */}
         <div className="flex gap-2">
@@ -755,94 +842,405 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
         </div>
       )}
 
-      <div className="mt-3 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/50">
-        <div className="border-b border-zinc-800/60 bg-zinc-900/50 px-2.5 py-1.5">
+      {featuredTask && (
+        <div className="mt-2 rounded-md bg-zinc-900/40 p-2 md:hidden">
+          <div className="flex items-start gap-2.5">
+            {featuredTask.previewImageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={featuredTask.previewImageUrl}
+                alt={taskDisplayName(featuredTask)}
+                className="h-10 w-10 shrink-0 rounded-lg object-cover"
+              />
+            ) : (
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-cyan-300">
+                {featuredTask.source === "spotify" && <SpotifyIcon />}
+                {featuredTask.source === "youtube" && <YouTubeIcon />}
+                {featuredTask.source === "soundcloud" && <SoundCloudIcon />}
+                {featuredTask.source !== "spotify" &&
+                  featuredTask.source !== "youtube" &&
+                  featuredTask.source !== "soundcloud" && <MusicIcon />}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-wide text-cyan-300/90">Downloading</p>
+              <p className="truncate text-sm font-semibold text-zinc-100">
+                {taskDisplayName(featuredTask)}
+              </p>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all"
+                  style={{ width: `${featuredTaskPercent ?? 0}%` }}
+                />
+              </div>
+            </div>
+            <div className="text-right text-[10px] text-zinc-400">
+              {featuredTask.processedItems}
+              {featuredTask.totalItems ? `/${featuredTask.totalItems}` : ""} · {featuredTaskPercent ?? 0}%
+            </div>
+          </div>
+          {featuredTask.lastEvent?.message && (
+            <p className="mt-1 truncate text-[11px] text-zinc-500">{featuredTask.lastEvent.message}</p>
+          )}
+        </div>
+      )}
+
+      <div className="mt-2 md:hidden">
+        <div className="px-0.5 py-1">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-zinc-400 lg:text-sm">Task History</span>
-              <span className="text-[10px] text-zinc-500 lg:text-xs">{taskTotal} total</span>
+              <span className="text-xs font-medium text-zinc-300">Tasks</span>
+              <span className="text-[10px] text-zinc-500">{taskTotal} total</span>
               {hasActiveTasks && (
                 <span className="rounded-full border border-blue-500/40 bg-blue-500/20 px-1.5 py-0.5 text-[10px] text-blue-300">
                   Live
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-1">
+            <div className="rounded-md bg-zinc-900/50 p-0.5">
               <button
                 type="button"
-                onClick={() => setTaskPage((prev) => Math.max(1, prev - 1))}
-                disabled={taskPage <= 1}
-                className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => setMobileTaskView("history")}
+                className={`rounded px-2 py-1 text-[10px] ${
+                  mobileTaskView === "history" ? "bg-zinc-700 text-zinc-100" : "text-zinc-400"
+                }`}
               >
-                Prev
+                History
               </button>
-              <span className="text-[10px] text-zinc-500">
-                {taskPage}/{taskTotalPages}
-              </span>
               <button
                 type="button"
-                onClick={() => setTaskPage((prev) => Math.min(taskTotalPages, prev + 1))}
-                disabled={taskPage >= taskTotalPages}
-                className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => setMobileTaskView("detail")}
+                className={`rounded px-2 py-1 text-[10px] ${
+                  mobileTaskView === "detail" ? "bg-zinc-700 text-zinc-100" : "text-zinc-400"
+                }`}
               >
-                Next
+                Detail
               </button>
             </div>
           </div>
         </div>
-        {tasks.length === 0 ? (
-          <div className="p-2 text-xs text-zinc-500 lg:text-base">No tasks yet.</div>
-        ) : (
-          <div className="max-h-52 overflow-y-auto">
-            {tasks.map((task) => {
-              const selected = task.id === selectedTaskId
-              const total = task.totalItems ?? 0
-              return (
+
+        {mobileTaskView === "history" ? (
+          <>
+            <div className="px-0.5 py-1">
+              <div className="flex items-center justify-end gap-1">
                 <button
-                  key={task.id}
                   type="button"
-                  onClick={() => setSelectedTaskId(task.id)}
-                  className={`w-full border-b border-zinc-900 px-2.5 py-1.5 text-left transition-colors last:border-b-0 ${
-                    selected ? "bg-zinc-800/70" : "hover:bg-zinc-900/70"
-                  }`}
+                  onClick={() => setTaskPage((prev) => Math.max(1, prev - 1))}
+                  disabled={taskPage <= 1}
+                  className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] font-medium text-zinc-200 lg:text-base">
-                      #{task.id} {task.playlistTitle || task.sourceUrl}
-                    </p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md lg:text-sm ${statusClassName(task.status)}`}>
-                      {statusLabel(task.status)}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-[10px] text-zinc-400 lg:text-sm">
-                    {task.processedItems}
-                    {total > 0 ? `/${total}` : ""} processed, {task.successfulItems} success, {task.failedItems} failed
-                  </p>
-                  {task.playlist?.name && (
-                    <p className="mt-0.5 text-[10px] text-zinc-500 lg:text-sm">Playlist: {task.playlist.name}</p>
-                  )}
-                  {task.lastEvent?.message && (
-                    <p className="mt-0.5 truncate text-[10px] text-zinc-500 lg:text-sm">{task.lastEvent.message}</p>
-                  )}
+                  Prev
                 </button>
-              )
-            })}
-          </div>
+                <span className="text-[10px] text-zinc-500">
+                  {taskPage}/{taskTotalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setTaskPage((prev) => Math.min(taskTotalPages, prev + 1))}
+                  disabled={taskPage >= taskTotalPages}
+                  className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+            {tasks.length === 0 ? (
+              <div className="py-2 text-xs text-zinc-500">No tasks yet.</div>
+            ) : (
+              <div className="divide-y divide-zinc-900/80">
+                {tasks.map((task) => {
+                  const selected = task.id === selectedTaskId
+                  const total = task.totalItems ?? 0
+                  const progressPercent = taskProgressPercent(task)
+                  return (
+                    <button
+                      key={task.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedTaskId(task.id)
+                        setMobileTaskView("detail")
+                      }}
+                      className={`w-full px-1 py-2 text-left transition-colors ${
+                        selected ? "bg-zinc-900/60" : "hover:bg-zinc-900/40"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="flex items-center gap-1.5 text-xs font-medium text-zinc-200">
+                          {task.source === "spotify" && <SpotifyIcon />}
+                          {task.source === "youtube" && <YouTubeIcon />}
+                          {task.source === "soundcloud" && <SoundCloudIcon />}
+                          {taskDisplayName(task)}
+                        </p>
+                        <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${statusClassName(task.status)}`}>
+                          {statusLabel(task.status)}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[10px] text-zinc-500">
+                        {task.processedItems}
+                        {total > 0 ? `/${total}` : ""} processed
+                      </p>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all"
+                          style={{ width: `${progressPercent ?? 0}%` }}
+                        />
+                      </div>
+                      {progressPercent !== null && (
+                        <p className="mt-0.5 text-[11px] text-blue-300">
+                          {progressPercent}%
+                        </p>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </>
+        ) : selectedTask ? (
+          <>
+            <div className="flex items-center justify-between px-0.5 py-1.5">
+              <span className="text-xs font-medium text-zinc-300">Task detail</span>
+              <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${statusClassName(selectedTask.status)}`}>
+                {statusLabel(selectedTask.status)}
+              </span>
+            </div>
+            {selectedTaskInsights && (
+              <div className="flex flex-wrap items-center gap-1.5 px-0.5 py-1.5 text-[10px] text-zinc-300">
+                <span className="rounded border border-zinc-700 bg-zinc-800/70 px-1.5 py-0.5">
+                  Retries: {selectedTaskInsights.retryCount}
+                </span>
+                <span className="rounded border border-zinc-700 bg-zinc-800/70 px-1.5 py-0.5">
+                  Success: {selectedTask.successfulItems}
+                </span>
+                <span className="rounded border border-zinc-700 bg-zinc-800/70 px-1.5 py-0.5">
+                  Failed: {selectedTask.failedItems}
+                </span>
+                {selectedTaskInsights.latestProgress &&
+                  typeof selectedTaskInsights.latestProgress.percent === "number" && (
+                    <span className="rounded border border-blue-700/70 bg-blue-900/20 px-1.5 py-0.5 text-blue-300">
+                      {Math.round(selectedTaskInsights.latestProgress.percent * 10) / 10}%
+                    </span>
+                  )}
+              </div>
+            )}
+            <div className="px-0.5 py-1.5">
+              <button
+                type="button"
+                onClick={() => setShowLogs(true)}
+                className="w-full rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
+              >
+                Open logs
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="py-2 text-xs text-zinc-500">Select a task from history to view detail.</div>
         )}
       </div>
 
-      {selectedTask && (
-        <div className="mt-3 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/50">
-          <div className="flex items-center justify-between border-b border-zinc-800/60 bg-zinc-900/50 px-2.5 py-1.5">
-            <span className="text-xs font-medium text-zinc-400 lg:text-sm">
-              Task #{selectedTask.id} Logs
-            </span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-md lg:text-xs ${statusClassName(selectedTask.status)}`}>
-              {statusLabel(selectedTask.status)}
-            </span>
+      <div className="mt-3 hidden gap-3 md:grid md:grid-cols-12">
+        <div className="col-span-8 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/50">
+          <div className="border-b border-zinc-800/60 bg-zinc-900/50 px-2.5 py-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-zinc-400 lg:text-sm">Task History</span>
+                <span className="text-[10px] text-zinc-500 lg:text-xs">{taskTotal} total</span>
+                {hasActiveTasks && (
+                  <span className="rounded-full border border-blue-500/40 bg-blue-500/20 px-1.5 py-0.5 text-[10px] text-blue-300">
+                    Live
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setTaskPage((prev) => Math.max(1, prev - 1))}
+                  disabled={taskPage <= 1}
+                  className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Prev
+                </button>
+                <span className="text-[10px] text-zinc-500">
+                  {taskPage}/{taskTotalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setTaskPage((prev) => Math.min(taskTotalPages, prev + 1))}
+                  disabled={taskPage >= taskTotalPages}
+                  className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="max-h-44 space-y-1 overflow-y-auto p-2 font-mono text-[11px] text-zinc-400 lg:text-[13px]">
-            {selectedTask.events.length === 0 ? (
+          {tasks.length === 0 ? (
+            <div className="p-2 text-xs text-zinc-500 lg:text-base">No tasks yet.</div>
+          ) : (
+            <div>
+              {tasks.map((task) => {
+                const selected = task.id === selectedTaskId
+                const total = task.totalItems ?? 0
+                const lastPayload = parseEventPayload(task.lastEvent?.payload)
+                const progressPercent = taskProgressPercent(task)
+                return (
+                  <button
+                    key={task.id}
+                    type="button"
+                    onClick={() => setSelectedTaskId(task.id)}
+                    className={`w-full border-b border-zinc-900 px-2.5 py-1.5 text-left transition-colors last:border-b-0 ${
+                      selected ? "bg-zinc-800/70" : "hover:bg-zinc-900/70"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-200 lg:text-base">
+                        {task.source === "spotify" && <SpotifyIcon />}
+                        {task.source === "youtube" && <YouTubeIcon />}
+                        {task.source === "soundcloud" && <SoundCloudIcon />}
+                        {taskDisplayName(task)}
+                      </p>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md lg:text-sm ${statusClassName(task.status)}`}>
+                        {statusLabel(task.status)}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[10px] text-zinc-400 lg:text-sm">
+                      {task.processedItems}
+                      {total > 0 ? `/${total}` : ""} processed, {task.successfulItems} success, {task.failedItems} failed
+                    </p>
+                    {task.playlist?.name && (
+                      <p className="mt-0.5 text-[10px] text-zinc-500 lg:text-sm">Playlist: {task.playlist.name}</p>
+                    )}
+                    {task.lastEvent?.message && (
+                      <p className="mt-0.5 truncate text-sm text-zinc-500">{task.lastEvent.message}</p>
+                    )}
+                    {progressPercent !== null && (
+                      <p className="mt-0.5 text-sm text-blue-300">
+                        Progress: {progressPercent}%
+                        {lastPayload?.speed ? ` @ ${lastPayload.speed}` : ""}
+                        {lastPayload?.eta ? ` ETA ${lastPayload.eta}` : ""}
+                      </p>
+                    )}
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all"
+                        style={{ width: `${progressPercent ?? 0}%` }}
+                      />
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="col-span-4 space-y-3">
+          {featuredTask && (
+            <div className="overflow-hidden rounded-xl border border-cyan-700/40 bg-gradient-to-br from-cyan-900/25 to-zinc-900/80">
+              <div className="flex items-start gap-3 p-3">
+                {featuredTask.previewImageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={featuredTask.previewImageUrl}
+                    alt={taskDisplayName(featuredTask)}
+                    className="h-14 w-14 shrink-0 rounded-xl object-cover shadow-[0_0_24px_rgba(34,211,238,0.15)]"
+                  />
+                ) : (
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-cyan-500/30 bg-zinc-900 text-cyan-300 shadow-[0_0_24px_rgba(34,211,238,0.15)]">
+                    {featuredTask.source === "spotify" && <SpotifyIcon />}
+                    {featuredTask.source === "youtube" && <YouTubeIcon />}
+                    {featuredTask.source === "soundcloud" && <SoundCloudIcon />}
+                    {featuredTask.source !== "spotify" &&
+                      featuredTask.source !== "youtube" &&
+                      featuredTask.source !== "soundcloud" && <MusicIcon />}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] uppercase tracking-wide text-cyan-300/90">Now Downloading</p>
+                  <p className="mt-0.5 truncate text-sm font-semibold text-zinc-100">
+                    {taskDisplayName(featuredTask)}
+                  </p>
+                </div>
+              </div>
+              <div className="px-3 pb-3">
+                <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
+                  <span>
+                    {featuredTask.processedItems}
+                    {featuredTask.totalItems ? `/${featuredTask.totalItems}` : ""} processed
+                  </span>
+                  <span>{featuredTaskPercent !== null ? `${featuredTaskPercent}%` : statusLabel(featuredTask.status)}</span>
+                </div>
+                <div className="h-2.5 overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all"
+                    style={{ width: `${featuredTaskPercent ?? 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/50">
+            <div className="flex items-center justify-between border-b border-zinc-800/60 bg-zinc-900/50 px-2.5 py-1.5">
+              <span className="text-xs font-medium text-zinc-300">Selection</span>
+              {selectedTask && (
+                <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${statusClassName(selectedTask.status)}`}>
+                  {statusLabel(selectedTask.status)}
+                </span>
+              )}
+            </div>
+            {!selectedTask ? (
+              <div className="p-3 text-xs text-zinc-500">Select a task from history to inspect it.</div>
+            ) : (
+              <div className="space-y-2 p-3">
+                <p className="flex items-center gap-1.5 truncate text-sm font-medium text-zinc-200">
+                  {selectedTask.source === "spotify" && <SpotifyIcon />}
+                  {selectedTask.source === "youtube" && <YouTubeIcon />}
+                  {selectedTask.source === "soundcloud" && <SoundCloudIcon />}
+                  {taskDisplayName(selectedTask)}
+                </p>
+                <div className="flex flex-wrap gap-1.5 text-[10px] text-zinc-300">
+                  <span className="rounded border border-zinc-700 bg-zinc-800/70 px-1.5 py-0.5">
+                    Success: {selectedTask.successfulItems}
+                  </span>
+                  <span className="rounded border border-zinc-700 bg-zinc-800/70 px-1.5 py-0.5">
+                    Failed: {selectedTask.failedItems}
+                  </span>
+                  {selectedTaskInsights && (
+                    <span className="rounded border border-zinc-700 bg-zinc-800/70 px-1.5 py-0.5">
+                      Retries: {selectedTaskInsights.retryCount}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowLogs(true)}
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
+                >
+                  Open logs
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 border-t border-zinc-800/60 pt-2 md:overflow-hidden md:rounded-lg md:border md:bg-zinc-950/60 md:pt-0">
+        <button
+          type="button"
+          onClick={() => setShowLogs((prev) => !prev)}
+          className="flex w-full items-center justify-between px-0.5 py-1.5 text-left md:border-b md:border-zinc-800/60 md:bg-zinc-900/50 md:px-2.5"
+        >
+          <span className="text-xs font-medium text-zinc-300 lg:text-sm">
+            Logs {selectedTask ? `(Task #${selectedTask.id})` : ""}
+          </span>
+          <span className="text-[10px] text-zinc-500">{showLogs ? "Hide" : "Show"}</span>
+        </button>
+        {showLogs && (
+          <div className="max-h-52 space-y-1 overflow-y-auto px-0.5 pb-4 pt-1 font-mono text-xs text-zinc-300 md:max-h-72 md:p-2.5 md:pb-4 md:text-sm">
+            {!selectedTask ? (
+              <div className="text-zinc-500">Select a task to view logs.</div>
+            ) : selectedTask.events.length === 0 ? (
               <div className="text-zinc-500">No events yet.</div>
             ) : (
               selectedTask.events.map((event) => (
@@ -852,8 +1250,8 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
               ))
             )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {historyError && (
         <div className="mt-3 rounded-lg border border-amber-800/60 bg-amber-900/20 p-2.5 text-xs text-amber-300">

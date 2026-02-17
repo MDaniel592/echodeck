@@ -9,6 +9,12 @@ interface PlaylistOption {
   _count: { songs: number }
 }
 
+interface TagOption {
+  id: number
+  name: string
+  _count?: { songs: number }
+}
+
 function SearchIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
     <svg
@@ -77,11 +83,16 @@ interface LibraryToolbarProps {
   onScopeModeChange: (value: ScopeMode) => void
   selectedPlaylist: string
   onSelectedPlaylistChange: (value: string) => void
+  selectedTag: string
+  onSelectedTagChange: (value: string) => void
   viewMode: ViewMode
   onViewModeChange: (value: ViewMode) => void
+  cardScale: number
+  onCardScaleChange: (value: number) => void
   songsCount: number
   unassignedCount: number
   playlists: PlaylistOption[]
+  tags: TagOption[]
 }
 
 export default function LibraryToolbar({
@@ -92,11 +103,16 @@ export default function LibraryToolbar({
   onScopeModeChange,
   selectedPlaylist,
   onSelectedPlaylistChange,
+  selectedTag,
+  onSelectedTagChange,
   viewMode,
   onViewModeChange,
+  cardScale,
+  onCardScaleChange,
   songsCount,
   unassignedCount,
   playlists,
+  tags,
 }: LibraryToolbarProps) {
   return (
     <div className="flex flex-wrap items-center gap-2 pb-2 pt-0 lg:gap-3">
@@ -150,6 +166,19 @@ export default function LibraryToolbar({
         </select>
       )}
 
+      <select
+        value={selectedTag}
+        onChange={(e) => onSelectedTagChange(e.target.value)}
+        className="h-8 rounded-lg border border-white/10 bg-white/5 pl-2.5 text-xs text-zinc-200 transition-colors focus:border-sky-300/50 focus:outline-none sm:min-w-[10rem] lg:h-10 lg:text-sm"
+      >
+        <option value="all">Tag: Any</option>
+        {tags.map((tag) => (
+          <option key={tag.id} value={tag.id}>
+            {tag.name} ({tag._count?.songs ?? 0})
+          </option>
+        ))}
+      </select>
+
       <div className="inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 p-0.5 lg:h-10">
         <button
           type="button"
@@ -178,6 +207,22 @@ export default function LibraryToolbar({
           Grid
         </button>
       </div>
+
+      {viewMode === "grid" && (
+        <div className="inline-flex h-8 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2.5 lg:h-10">
+          <span className="text-[10px] uppercase tracking-wide text-zinc-400 lg:text-xs">Card Size</span>
+          <input
+            type="range"
+            min={80}
+            max={190}
+            step={5}
+            value={cardScale}
+            onChange={(e) => onCardScaleChange(Number.parseInt(e.target.value, 10))}
+            className="h-1.5 w-20 accent-sky-300 lg:w-28"
+            aria-label="Grid card size"
+          />
+        </div>
+      )}
     </div>
   )
 }

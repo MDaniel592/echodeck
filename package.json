@@ -3,7 +3,7 @@
   "version": "1.3.3",
   "private": true,
   "scripts": {
-    "predev": "npm run db:backfill-ownership && npm run db:push && npm run db:generate && npm run db:backfill-ownership && npm run db:verify-ownership && npm run db:backfill-playlist-entries && npm run db:ensure-subsonic-tokens",
+    "predev": "npm run setup && npm run db:backfill-ownership && npm run db:push && npm run db:generate && npm run db:backfill-ownership && npm run db:verify-ownership && npm run db:backfill-playlist-entries && npm run db:ensure-subsonic-tokens",
     "dev": "next dev",
     "build": "next build",
     "prestart": "npm run db:backfill-ownership && npm run db:push && npm run db:generate && npm run db:backfill-ownership && npm run db:verify-ownership && npm run db:backfill-playlist-entries && npm run db:ensure-subsonic-tokens",
@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "tsx scripts/integration-smoke.ts",
+    "test:diagnostic": "vitest run \"tests/**/*.integration.test.ts\"",
     "subsonic:smoke": "bash scripts/subsonic-smoke.sh",
     "setup": "tsx scripts/setup.ts",
     "artwork:refresh": "tsx scripts/refresh-lowres-covers.ts",
@@ -26,6 +27,8 @@
     "db:verify-ownership": "node --import tsx scripts/verify-ownership.ts",
     "db:backfill-playlist-entries": "node --import tsx scripts/backfill-playlist-entries.ts",
     "db:ensure-subsonic-tokens": "node --import tsx scripts/ensure-subsonic-tokens.ts",
+    "db:organize-layout": "node --import tsx scripts/organize-download-layout.ts",
+    "db:organize-layout:apply": "node --import tsx scripts/organize-download-layout.ts --apply",
     "db:studio": "prisma studio",
     "postinstall": "tsx scripts/setup.ts"
   },
