@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.3.2...echodeck-v1.3.3) (2026-02-17)
+
+
+### Performance
+
+* **docker:** minimize runtime deps and lock prisma install versions ([#27](https://github.com/MDaniel592/echodeck/issues/27)) ([4970a84](https://github.com/MDaniel592/echodeck/commit/4970a84d533c18fa781c48e6ed9a1f0858dcb91d))
+
 ## [1.3.2](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.3.1...echodeck-v1.3.2) (2026-02-17)
 
 
