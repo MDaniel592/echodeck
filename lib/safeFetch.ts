@@ -38,6 +38,10 @@ const ALLOWED_HOSTS = new Set([
   "hifi-two.spotisaver.net",
   "tidal.kinoplus.online",
   "tidal-api.binimum.org",
+  // Lyrics
+  "lrclib.net",
+  "www.lrclib.net",
+  "api.lyrics.ovh",
 ])
 
 const ALLOWED_HOST_SUFFIXES = [

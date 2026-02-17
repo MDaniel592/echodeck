@@ -7,6 +7,7 @@ import { getVideoInfo } from "./ytdlp"
 import { downloadSongArtwork, getSpotifyThumbnail } from "./artwork"
 import { ensureArtistAlbumRefs } from "./artistAlbumRefs"
 import { runWithConcurrency } from "./asyncPool"
+import { lookupLyrics } from "./lyricsProvider"
 import {
   drainQueuedTaskWorkers,
   enqueueDownloadTask,
@@ -22,6 +23,7 @@ export type MaintenanceAction =
   | "normalize_titles"
   | "fill_missing_covers"
   | "refresh_file_metadata"
+  | "fetch_missing_lyrics"
   | "queue_redownload_candidates"
   | "refresh_origin_metadata"
 
@@ -58,9 +60,14 @@ type MaintenanceProgressCallback = (event: MaintenanceProgress) => void
 const MALFORMED_PREFIX = /^[0-9]{10,}[\s-]+/
 const ORIGIN_LOOKUP_TIMEOUT_MS = 15_000
 const SPOTIFY_LOOKUP_TIMEOUT_MS = 7_000
+const LYRICS_LOOKUP_TIMEOUT_MS = 8_000
 const ORIGIN_METADATA_CONCURRENCY = Math.max(
   1,
   Math.min(8, Number.parseInt(process.env.ORIGIN_METADATA_CONCURRENCY || "4", 10) || 4)
+)
+const LYRICS_LOOKUP_CONCURRENCY = Math.max(
+  1,
+  Math.min(8, Number.parseInt(process.env.LYRICS_LOOKUP_CONCURRENCY || "3", 10) || 3)
 )
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -764,6 +771,109 @@ async function runRefreshFileMetadata(
   }
 }
 
+async function runFetchMissingLyrics(
+  userId: number,
+  dryRun: boolean,
+  onProgress?: MaintenanceProgressCallback
+): Promise<MaintenanceResult> {
+  const progress = createProgressReporter("fetch_missing_lyrics", dryRun, onProgress)
+  progress({ phase: "start", message: "Loading songs without lyrics." })
+  const songs = await prisma.song.findMany({
+    where: {
+      userId,
+      lyrics: null,
+      title: { not: "" },
+    },
+    select: {
+      id: true,
+      title: true,
+      artist: true,
+      album: true,
+      duration: true,
+    },
+    orderBy: { id: "asc" },
+  })
+
+  let checkedSongs = 0
+  let updatedSongs = 0
+  let noMatch = 0
+  let failedSongs = 0
+  let skippedSongs = 0
+  let completedSongs = 0
+
+  progress({ phase: "scan", processed: 0, total: songs.length, message: "Looking up lyrics for tracks." })
+
+  await runWithConcurrency(songs, LYRICS_LOOKUP_CONCURRENCY, async (song) => {
+    checkedSongs += 1
+    const title = song.title.trim()
+    const artist = song.artist?.trim() || ""
+    if (!title || !artist) {
+      skippedSongs += 1
+      completedSongs += 1
+      if (shouldReportProgress(completedSongs, songs.length)) {
+        progress({
+          phase: dryRun ? "scan" : "apply",
+          processed: completedSongs,
+          total: songs.length,
+          message: "Looking up lyrics for tracks.",
+        })
+      }
+      return
+    }
+
+    try {
+      const lyrics = await withTimeout(
+        lookupLyrics({
+          title,
+          artist,
+          album: song.album,
+          duration: song.duration,
+        }),
+        LYRICS_LOOKUP_TIMEOUT_MS,
+        "lyrics lookup"
+      )
+
+      if (!lyrics) {
+        noMatch += 1
+        return
+      }
+
+      if (!dryRun) {
+        await prisma.song.update({
+          where: { id: song.id },
+          data: { lyrics },
+        })
+      }
+      updatedSongs += 1
+    } catch {
+      failedSongs += 1
+    } finally {
+      completedSongs += 1
+      if (shouldReportProgress(completedSongs, songs.length)) {
+        progress({
+          phase: dryRun ? "scan" : "apply",
+          processed: completedSongs,
+          total: songs.length,
+          message: "Looking up lyrics for tracks.",
+        })
+      }
+    }
+  })
+
+  return {
+    action: "fetch_missing_lyrics",
+    dryRun,
+    details: {
+      checkedSongs,
+      updatedSongs,
+      noMatch,
+      failedSongs,
+      skippedSongs,
+      concurrency: LYRICS_LOOKUP_CONCURRENCY,
+    },
+  }
+}
+
 async function runQueueRedownloadCandidates(
   userId: number,
   dryRun: boolean,
@@ -1066,6 +1176,7 @@ export async function runMaintenanceAction(
   else if (action === "normalize_titles") result = await runNormalizeTitles(userId, dryRun, onProgress)
   else if (action === "fill_missing_covers") result = await runFillMissingCovers(userId, dryRun, onProgress)
   else if (action === "refresh_file_metadata") result = await runRefreshFileMetadata(userId, dryRun, onProgress)
+  else if (action === "fetch_missing_lyrics") result = await runFetchMissingLyrics(userId, dryRun, onProgress)
   else if (action === "queue_redownload_candidates") result = await runQueueRedownloadCandidates(userId, dryRun, onProgress)
   else if (action === "refresh_origin_metadata") result = await runRefreshOriginMetadata(userId, dryRun, onProgress)
   else throw new Error(`Unsupported action: ${action}`)

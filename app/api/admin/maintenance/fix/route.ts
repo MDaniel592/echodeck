@@ -13,6 +13,7 @@ const SUPPORTED_ACTIONS: MaintenanceAction[] = [
   "normalize_titles",
   "fill_missing_covers",
   "refresh_file_metadata",
+  "fetch_missing_lyrics",
   "queue_redownload_candidates",
   "refresh_origin_metadata",
 ]

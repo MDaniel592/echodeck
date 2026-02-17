@@ -23,6 +23,7 @@ type MaintenanceAction =
   | "normalize_titles"
   | "fill_missing_covers"
   | "refresh_file_metadata"
+  | "fetch_missing_lyrics"
   | "queue_redownload_candidates"
   | "refresh_origin_metadata"
 
@@ -77,6 +78,11 @@ const ACTIONS: Array<{ id: MaintenanceAction; label: string; description: string
     id: "refresh_file_metadata",
     label: "Refresh File Metadata",
     description: "Run ffprobe on local files and update title/tag/technical metadata fields from audio tags.",
+  },
+  {
+    id: "fetch_missing_lyrics",
+    label: "Fetch Missing Lyrics",
+    description: "Look up lyrics by title/artist and store them for tracks that currently have no lyrics.",
   },
   {
     id: "queue_redownload_candidates",
