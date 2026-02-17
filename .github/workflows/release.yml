@@ -74,6 +74,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Always build release assets from the resolved release tag.
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Build source tarball
@@ -102,6 +104,9 @@ jobs:
       SPOTDL_SHA256: ${{ vars.SPOTDL_SHA256 || 'f3b93e62972dd19f2b8b75c0c9e14bb35371132305190e4141d5eb7047054c8e' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Always build container images from the resolved release tag.
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
