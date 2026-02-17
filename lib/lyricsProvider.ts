@@ -104,7 +104,7 @@ async function lookupLrcLib(query: LookupQuery): Promise<string | null> {
     duration: query.duration,
   }
 
-  let best: { lyrics: string; score: number } | null = null
+  let best: { lyrics: string; score: number; candidate: LrcLibSearchResult } | null = null
   for (const raw of payload) {
     if (!raw || typeof raw !== "object") continue
     const candidate = raw as LrcLibSearchResult
@@ -112,11 +112,28 @@ async function lookupLrcLib(query: LookupQuery): Promise<string | null> {
     if (!lyrics) continue
     const score = scoreCandidate(candidate, normalizedQuery)
     if (!best || score > best.score) {
-      best = { lyrics, score }
+      best = { lyrics, score, candidate }
     }
   }
 
-  return best?.lyrics || null
+  if (!best) return null
+
+  // If artist is unknown, require strict title match to reduce false positives.
+  if (!normalizedQuery.artist) {
+    const bestTitle = normalizeToken(best.candidate.trackName || "")
+    if (!bestTitle || bestTitle !== normalizedQuery.title) {
+      return null
+    }
+    if (
+      typeof normalizedQuery.duration === "number" &&
+      typeof best.candidate.duration === "number" &&
+      Math.abs(best.candidate.duration - normalizedQuery.duration) > 8
+    ) {
+      return null
+    }
+  }
+
+  return best.lyrics
 }
 
 async function lookupLyricsOvh(query: LookupQuery): Promise<string | null> {

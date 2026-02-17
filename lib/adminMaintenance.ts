@@ -807,7 +807,7 @@ async function runFetchMissingLyrics(
     checkedSongs += 1
     const title = song.title.trim()
     const artist = song.artist?.trim() || ""
-    if (!title || !artist) {
+    if (!title) {
       skippedSongs += 1
       completedSongs += 1
       if (shouldReportProgress(completedSongs, songs.length)) {
