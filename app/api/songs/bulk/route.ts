@@ -3,6 +3,11 @@ import fs from "fs/promises"
 import prisma from "../../../../lib/prisma"
 import { AuthError, requireAuth } from "../../../../lib/requireAuth"
 import { resolveSafeDownloadPathForDelete } from "../../../../lib/downloadPaths"
+import {
+  assignSongsToPlaylistForUser,
+  parsePlaylistId,
+  PlaylistServiceError,
+} from "../../../../lib/services.playlist"
 
 function parseSongIds(input: unknown): number[] {
   if (!Array.isArray(input)) return []
@@ -17,70 +22,15 @@ export async function PATCH(request: NextRequest) {
     const auth = await requireAuth(request)
     const body = await request.json().catch(() => ({}))
     const ids = parseSongIds(body?.ids)
-    if (ids.length === 0) {
-      return NextResponse.json({ error: "ids must be a non-empty array of song IDs" }, { status: 400 })
-    }
-
-    const incomingPlaylistId = body?.playlistId
-    const playlistId =
-      incomingPlaylistId === null || incomingPlaylistId === undefined || incomingPlaylistId === ""
-        ? null
-        : Number.parseInt(String(incomingPlaylistId), 10)
-    if (playlistId !== null && (!Number.isInteger(playlistId) || playlistId <= 0)) {
-      return NextResponse.json({ error: "Invalid playlist ID" }, { status: 400 })
-    }
-
-    const songs = await prisma.song.findMany({
-      where: { userId: auth.userId, id: { in: ids } },
-      select: { id: true },
-    })
-    if (songs.length !== ids.length) {
-      return NextResponse.json({ error: "One or more songs were not found" }, { status: 404 })
-    }
-
-    await prisma.$transaction(async (tx) => {
-      if (playlistId !== null) {
-        const playlist = await tx.playlist.findFirst({
-          where: { id: playlistId, userId: auth.userId },
-          select: { id: true },
-        })
-        if (!playlist) {
-          throw new Error("Playlist not found")
-        }
-      }
-
-      await tx.song.updateMany({
-        where: { userId: auth.userId, id: { in: ids } },
-        data: { playlistId },
-      })
-
-      await tx.playlistSong.deleteMany({
-        where: { songId: { in: ids } },
-      })
-
-      if (playlistId === null) return
-
-      const maxPosition = await tx.playlistSong.aggregate({
-        where: { playlistId },
-        _max: { position: true },
-      })
-      const start = (maxPosition._max.position ?? -1) + 1
-      await tx.playlistSong.createMany({
-        data: ids.map((songId, index) => ({
-          playlistId,
-          songId,
-          position: start + index,
-        })),
-      })
-    })
-
-    return NextResponse.json({ success: true, updatedIds: ids, playlistId })
+    const playlistId = parsePlaylistId(body?.playlistId)
+    const result = await assignSongsToPlaylistForUser(auth.userId, ids, playlistId)
+    return NextResponse.json({ success: true, updatedIds: result.updatedIds, playlistId: result.playlistId })
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
     }
-    if (error instanceof Error && error.message === "Playlist not found") {
-      return NextResponse.json({ error: error.message }, { status: 404 })
+    if (error instanceof PlaylistServiceError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
     }
     console.error("Failed bulk song update:", error)
     return NextResponse.json({ error: "Failed to update songs" }, { status: 500 })

@@ -39,6 +39,7 @@ export async function GET(request: NextRequest) {
     const year = searchParams.get("year")
     const genre = searchParams.get("genre")?.trim() || undefined
     const playlistId = searchParams.get("playlistId")
+    const tagId = searchParams.get("tagId")
     const sortBy = searchParams.get("sortBy") || "createdAt"
     const sortOrder = searchParams.get("sortOrder") === "asc" ? "asc" : "desc"
 
@@ -89,6 +90,13 @@ export async function GET(request: NextRequest) {
         if (Number.isInteger(parsed) && parsed > 0) {
           where.playlistId = parsed
         }
+      }
+    }
+
+    if (tagId !== null && tagId !== undefined) {
+      const parsed = Number.parseInt(tagId, 10)
+      if (Number.isInteger(parsed) && parsed > 0) {
+        where.tagAssignments = { some: { tagId: parsed } }
       }
     }
 
