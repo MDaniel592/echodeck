@@ -67,4 +67,17 @@ describe("lookupLyrics", () => {
     expect(result).toBe("fallback lyrics")
     expect(safeFetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it("matches lrclib lyrics for non-latin title/artist without forcing fallback", async () => {
+    safeFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [{ trackName: "夜に駆ける", artistName: "YOASOBI", plainLyrics: "jp lyrics" }],
+    })
+
+    const { lookupLyrics } = await import("../lib/lyricsProvider")
+    const result = await lookupLyrics({ title: "夜に駆ける", artist: "YOASOBI" })
+
+    expect(result).toBe("jp lyrics")
+    expect(safeFetchMock).toHaveBeenCalledTimes(1)
+  })
 })
