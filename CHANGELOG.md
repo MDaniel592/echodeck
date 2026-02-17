@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.4](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.3.3...echodeck-v1.3.4) (2026-02-17)
+
+
+### Bug Fixes
+
+* **ci:** update docker guardrails for minimal prisma runtime ([#29](https://github.com/MDaniel592/echodeck/issues/29)) ([9bc1e4e](https://github.com/MDaniel592/echodeck/commit/9bc1e4e09d3670fff177276d31feabc496f2092d))
+
 ## [1.3.3](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.3.2...echodeck-v1.3.3) (2026-02-17)
 
 
