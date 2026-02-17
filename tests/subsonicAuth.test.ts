@@ -13,6 +13,9 @@ const prismaMock = {
   library: {
     findMany: vi.fn(),
   },
+  song: {
+    findFirst: vi.fn(),
+  },
 }
 
 const verifyPasswordMock = vi.fn()
@@ -37,6 +40,7 @@ describe("subsonic auth matrix", () => {
     checkRateLimitMock.mockReturnValue({ allowed: true, retryAfterSeconds: 0 })
     prismaMock.library.findMany.mockResolvedValue([])
     prismaMock.user.update.mockResolvedValue({})
+    prismaMock.song.findFirst.mockResolvedValue(null)
   })
 
   it("accepts u+p plain", async () => {
@@ -132,5 +136,117 @@ describe("subsonic auth matrix", () => {
     const body = await res.json()
 
     expect(body["subsonic-response"].status).toBe("ok")
+  })
+
+  it("returns lyrics from getLyrics when song exists", async () => {
+    verifyPasswordMock.mockResolvedValue(true)
+    prismaMock.user.findUnique.mockResolvedValue({
+      id: 1,
+      username: "alice",
+      passwordHash: "hash",
+      subsonicToken: "legacy-token",
+      subsonicPasswordEnc: null,
+      disabledAt: null,
+    })
+    prismaMock.song.findFirst.mockResolvedValue({
+      title: "Song",
+      artist: "Artist",
+      lyrics: "line one\nline two",
+    })
+
+    const { GET } = await import("../app/api/subsonic/rest/route")
+    const req = new NextRequest(
+      "http://localhost/api/subsonic/rest?command=getLyrics&u=alice&p=plain-pass&artist=Artist&title=Song&v=1.16.1&c=t&f=json"
+    )
+    const res = await GET(req)
+    const body = await res.json()
+    const payload = body["subsonic-response"]
+
+    expect(payload.status).toBe("ok")
+    expect(payload.lyrics.artist).toBe("Artist")
+    expect(payload.lyrics.title).toBe("Song")
+    expect(payload.lyrics.value).toBe("line one\nline two")
+  })
+
+  it("returns empty lyrics payload when getLyrics is called without title", async () => {
+    verifyPasswordMock.mockResolvedValue(true)
+    prismaMock.user.findUnique.mockResolvedValue({
+      id: 1,
+      username: "alice",
+      passwordHash: "hash",
+      subsonicToken: "legacy-token",
+      subsonicPasswordEnc: null,
+      disabledAt: null,
+    })
+
+    const { GET } = await import("../app/api/subsonic/rest/route")
+    const req = new NextRequest(
+      "http://localhost/api/subsonic/rest?command=getLyrics&u=alice&p=plain-pass&artist=Artist&v=1.16.1&c=t&f=json"
+    )
+    const res = await GET(req)
+    const body = await res.json()
+    const payload = body["subsonic-response"]
+
+    expect(payload.status).toBe("ok")
+    expect(payload.lyrics.artist).toBe("Artist")
+    expect(payload.lyrics.title).toBe("")
+    expect(payload.lyrics.value).toBe("")
+  })
+
+  it("returns lyricsList from getLyricsBySongId when song has lyrics", async () => {
+    verifyPasswordMock.mockResolvedValue(true)
+    prismaMock.user.findUnique.mockResolvedValue({
+      id: 1,
+      username: "alice",
+      passwordHash: "hash",
+      subsonicToken: "legacy-token",
+      subsonicPasswordEnc: null,
+      disabledAt: null,
+    })
+    prismaMock.song.findFirst.mockResolvedValue({
+      title: "Song",
+      artist: "Artist",
+      lyrics: "stored lyrics",
+    })
+
+    const { GET } = await import("../app/api/subsonic/rest/route")
+    const req = new NextRequest(
+      "http://localhost/api/subsonic/rest?command=getLyricsBySongId&u=alice&p=plain-pass&id=123&v=1.16.1&c=t&f=json"
+    )
+    const res = await GET(req)
+    const body = await res.json()
+    const payload = body["subsonic-response"]
+
+    expect(payload.status).toBe("ok")
+    expect(payload.lyricsList.structuredLyrics).toEqual([])
+    expect(payload.lyricsList.lyrics[0]).toEqual({
+      artist: "Artist",
+      title: "Song",
+      value: "stored lyrics",
+    })
+  })
+
+  it("returns failed response for getLyricsBySongId without id", async () => {
+    verifyPasswordMock.mockResolvedValue(true)
+    prismaMock.user.findUnique.mockResolvedValue({
+      id: 1,
+      username: "alice",
+      passwordHash: "hash",
+      subsonicToken: "legacy-token",
+      subsonicPasswordEnc: null,
+      disabledAt: null,
+    })
+
+    const { GET } = await import("../app/api/subsonic/rest/route")
+    const req = new NextRequest(
+      "http://localhost/api/subsonic/rest?command=getLyricsBySongId&u=alice&p=plain-pass&v=1.16.1&c=t&f=json"
+    )
+    const res = await GET(req)
+    const body = await res.json()
+    const payload = body["subsonic-response"]
+
+    expect(payload.status).toBe("failed")
+    expect(payload.error.code).toBe(10)
+    expect(payload.error.message).toBe("Missing song id")
   })
 })

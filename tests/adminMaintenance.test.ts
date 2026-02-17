@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     getSpotifyThumbnail: vi.fn(),
     downloadSongArtwork: vi.fn(),
     ensureArtistAlbumRefs: vi.fn(),
+    lookupLyrics: vi.fn(),
     enqueueDownloadTask: vi.fn(),
     drainQueuedTaskWorkers: vi.fn(),
     normalizeFormat: vi.fn((value: unknown) => value),
@@ -42,6 +43,10 @@ vi.mock("../lib/artwork", () => ({
 
 vi.mock("../lib/artistAlbumRefs", () => ({
   ensureArtistAlbumRefs: mocks.ensureArtistAlbumRefs,
+}))
+
+vi.mock("../lib/lyricsProvider", () => ({
+  lookupLyrics: mocks.lookupLyrics,
 }))
 
 vi.mock("../lib/downloadTasks", () => ({
@@ -76,6 +81,7 @@ describe("adminMaintenance refresh_origin_metadata", () => {
       album: "Singles",
       albumArtist: "New Artist",
     })
+    mocks.lookupLyrics.mockResolvedValue(null)
   })
 
   it("dry-run does not write song or artist/album refs", async () => {
@@ -228,5 +234,78 @@ describe("adminMaintenance refresh_origin_metadata", () => {
 
     if (previousConcurrency === undefined) delete process.env.ORIGIN_METADATA_CONCURRENCY
     else process.env.ORIGIN_METADATA_CONCURRENCY = previousConcurrency
+  })
+})
+
+describe("adminMaintenance fetch_missing_lyrics", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.lookupLyrics.mockResolvedValue(null)
+  })
+
+  it("dry-run evaluates candidates and reports counts", async () => {
+    mocks.prisma.song.findMany.mockResolvedValue([
+      { id: 1, title: "Song A", artist: "Artist A", album: "Album A", duration: 120 },
+      { id: 2, title: "Song B", artist: null, album: null, duration: null },
+    ])
+    mocks.lookupLyrics.mockImplementation(async (input: { title: string }) => {
+      if (input.title === "Song A") return "lyrics a"
+      return null
+    })
+
+    const result = await runMaintenanceAction(1, "fetch_missing_lyrics", true)
+
+    expect(result.action).toBe("fetch_missing_lyrics")
+    expect(result.details.checkedSongs).toBe(2)
+    expect(result.details.updatedSongs).toBe(1)
+    expect(result.details.noMatch).toBe(1)
+    expect(result.details.failedSongs).toBe(0)
+    expect(result.details.skippedSongs).toBe(0)
+    expect(mocks.prisma.song.update).not.toHaveBeenCalled()
+    expect(mocks.lookupLyrics).toHaveBeenCalledTimes(2)
+  })
+
+  it("persists lyrics when not dry-run and tracks failures", async () => {
+    mocks.prisma.song.findMany.mockResolvedValue([
+      { id: 1, title: "Song A", artist: "Artist A", album: "Album A", duration: 180 },
+      { id: 2, title: "Song B", artist: "Artist B", album: null, duration: 200 },
+      { id: 3, title: "Song C", artist: null, album: null, duration: null },
+    ])
+    mocks.lookupLyrics.mockImplementation(async (input: { title: string }) => {
+      if (input.title === "Song A") return "lyrics a"
+      if (input.title === "Song B") throw new Error("provider down")
+      return null
+    })
+
+    const result = await runMaintenanceAction(1, "fetch_missing_lyrics", false)
+
+    expect(result.details.checkedSongs).toBe(3)
+    expect(result.details.updatedSongs).toBe(1)
+    expect(result.details.noMatch).toBe(1)
+    expect(result.details.failedSongs).toBe(1)
+    expect(result.details.skippedSongs).toBe(0)
+    expect(mocks.prisma.song.update).toHaveBeenCalledTimes(1)
+    expect(mocks.prisma.song.update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { lyrics: "lyrics a" },
+    })
+  })
+
+  it("honors configured lyrics lookup concurrency", async () => {
+    const previousConcurrency = process.env.LYRICS_LOOKUP_CONCURRENCY
+    process.env.LYRICS_LOOKUP_CONCURRENCY = "5"
+    vi.resetModules()
+
+    const runWithEnv = (await import("../lib/adminMaintenance")).runMaintenanceAction
+    mocks.prisma.song.findMany.mockResolvedValue([
+      { id: 1, title: "Song A", artist: "Artist A", album: null, duration: null },
+    ])
+    mocks.lookupLyrics.mockResolvedValue(null)
+
+    const result = await runWithEnv(1, "fetch_missing_lyrics", true)
+    expect(result.details.concurrency).toBe(5)
+
+    if (previousConcurrency === undefined) delete process.env.LYRICS_LOOKUP_CONCURRENCY
+    else process.env.LYRICS_LOOKUP_CONCURRENCY = previousConcurrency
   })
 })
