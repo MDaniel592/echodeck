@@ -30,6 +30,7 @@ import {
   decryptSubsonicPassword,
   encryptSubsonicPassword,
 } from "../../../../lib/subsonicPassword"
+import { resolveAndPersistLyricsForSong, resolveLyricsWithoutSong } from "../../../../lib/services.lyrics"
 
 type SubsonicUser = {
   id: number
@@ -2280,21 +2281,33 @@ export async function GET(request: NextRequest) {
 
       const song = await prisma.song.findFirst({
         where: { id, userId: user.id },
-        select: { title: true, artist: true, lyrics: true },
+        select: { id: true, title: true, artist: true, album: true, duration: true, lyrics: true },
       })
       if (!song) {
         return response(request, { error: { code: 70, message: "Song not found" } }, "failed")
       }
 
+      let resolvedLyrics = song.lyrics
+      if (!resolvedLyrics && song.title.trim()) {
+        resolvedLyrics = await resolveAndPersistLyricsForSong({
+          songId: song.id,
+          title: song.title,
+          artist: song.artist,
+          album: song.album,
+          duration: song.duration,
+          currentLyrics: song.lyrics,
+        })
+      }
+
       return response(request, {
         lyricsList: {
           structuredLyrics: [],
-          lyrics: song.lyrics
+          lyrics: resolvedLyrics
             ? [
                 {
                   artist: song.artist || undefined,
                   title: song.title,
-                  value: song.lyrics,
+                  value: resolvedLyrics,
                 },
               ]
             : [],
@@ -2357,7 +2370,7 @@ export async function GET(request: NextRequest) {
               artist: { equals: artist },
               title: { equals: title },
             },
-            select: { title: true, artist: true, lyrics: true },
+            select: { id: true, title: true, artist: true, album: true, duration: true, lyrics: true },
           })
         : await prisma.song.findFirst({
             where: {
@@ -2365,14 +2378,35 @@ export async function GET(request: NextRequest) {
               title: { equals: title },
             },
             orderBy: { id: "asc" },
-            select: { title: true, artist: true, lyrics: true },
+            select: { id: true, title: true, artist: true, album: true, duration: true, lyrics: true },
           })
+
+      let resolvedLyrics = song?.lyrics || ""
+      if (!resolvedLyrics) {
+        const fetched = song?.id
+          ? await resolveAndPersistLyricsForSong({
+              songId: song.id,
+              title: song.title,
+              artist: song.artist,
+              album: song.album,
+              duration: song.duration,
+              currentLyrics: song.lyrics,
+            })
+          : await resolveLyricsWithoutSong({
+              title,
+              artist,
+            })
+
+        if (fetched) {
+          resolvedLyrics = fetched
+        }
+      }
 
       return response(request, {
         lyrics: {
           artist: artist || song?.artist || "",
           title,
-          value: song?.lyrics || "",
+          value: resolvedLyrics,
         },
       })
     }

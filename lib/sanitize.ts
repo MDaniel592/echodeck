@@ -33,10 +33,19 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
+function isLikelySecretValue(value: string): boolean {
+  const trimmed = value.trim()
+  if (trimmed.length < 8) return false
+  if (/^\d+$/.test(trimmed)) return false
+  if (/^[A-Za-z]+$/.test(trimmed) && trimmed.length < 20) return false
+  return true
+}
+
 const SENSITIVE_ENV_VALUES = Array.from(
   new Set(
     SENSITIVE_ENV_NAMES.map((name) => process.env[name]?.trim())
-      .filter((value): value is string => Boolean(value))
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .filter((value) => isLikelySecretValue(value))
       .sort((a, b) => b.length - a.length)
   )
 )

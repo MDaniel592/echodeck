@@ -1,8 +1,21 @@
+import { readFileSync } from "fs"
+import { join } from "path"
 import { safeFetch } from "./safeFetch"
+import { normalizeToken, extractTitleFromArtistDash, stripAllTags, toAscii } from "./songTitle"
 
 const MAX_LYRICS_LENGTH = 20_000
-const FETCH_TIMEOUT_MS = 3_500
+const DEFAULT_BUDGET_MS = 6_000
 const FETCH_MAX_BYTES = 512_000
+
+// Build User-Agent from package.json at module load
+const LYRICS_USER_AGENT = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"))
+    return `${pkg.name}/${pkg.version} (https://github.com/MDaniel592/echodeck)`
+  } catch {
+    return "EchoDeck/unknown (https://github.com/MDaniel592/echodeck)"
+  }
+})()
 
 type LrcLibSearchResult = {
   trackName?: string
@@ -17,6 +30,8 @@ export type LyricsLookupInput = {
   artist?: string | null
   album?: string | null
   duration?: number | null
+  /** Total timeout budget in ms for the entire lookup (default: 6000) */
+  timeoutMs?: number
 }
 
 type LookupQuery = {
@@ -26,29 +41,11 @@ type LookupQuery = {
   duration: number | null
 }
 
-function normalizeToken(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()
-}
-
 function cleanLyrics(value: unknown): string | null {
   if (typeof value !== "string") return null
   const trimmed = value.trim()
   if (!trimmed) return null
   return trimmed.slice(0, MAX_LYRICS_LENGTH)
-}
-
-function simplifyTitle(value: string): string {
-  return value
-    .replace(/\([^)]*(live|remaster|version|edit|mix|karaoke)[^)]*\)/gi, " ")
-    .replace(/\[[^\]]*(live|remaster|version|edit|mix|karaoke)[^\]]*\]/gi, " ")
-    .replace(/\b(feat\.?|ft\.?|featuring)\b.+$/i, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim()
 }
 
 function scoreCandidate(
@@ -76,20 +73,20 @@ function scoreCandidate(
   return score
 }
 
-async function lookupLrcLib(query: LookupQuery): Promise<string | null> {
+async function lookupLrcLib(query: LookupQuery, timeoutMs: number): Promise<string | null> {
   if (!query.title) return null
 
   const params = new URLSearchParams()
-  params.set("track_name", query.title)
-  if (query.artist) params.set("artist_name", query.artist)
-  if (query.album) params.set("album_name", query.album)
+  params.set("track_name", toAscii(query.title) || query.title)
+  if (query.artist) params.set("artist_name", toAscii(query.artist) || query.artist)
+  if (query.album) params.set("album_name", toAscii(query.album) || query.album)
 
   const response = await safeFetch(
     `https://lrclib.net/api/search?${params.toString()}`,
-    undefined,
+    { headers: { "User-Agent": LYRICS_USER_AGENT } },
     {
       allowedContentTypes: ["application/json"],
-      timeoutMs: FETCH_TIMEOUT_MS,
+      timeoutMs,
       maxBytes: FETCH_MAX_BYTES,
     }
   )
@@ -136,14 +133,14 @@ async function lookupLrcLib(query: LookupQuery): Promise<string | null> {
   return best.lyrics
 }
 
-async function lookupLyricsOvh(query: LookupQuery): Promise<string | null> {
+async function lookupLyricsOvh(query: LookupQuery, timeoutMs: number): Promise<string | null> {
   if (!query.title || !query.artist) return null
   const response = await safeFetch(
     `https://api.lyrics.ovh/v1/${encodeURIComponent(query.artist)}/${encodeURIComponent(query.title)}`,
-    undefined,
+    { headers: { "User-Agent": LYRICS_USER_AGENT } },
     {
       allowedContentTypes: ["application/json"],
-      timeoutMs: FETCH_TIMEOUT_MS,
+      timeoutMs,
       maxBytes: FETCH_MAX_BYTES,
     }
   )
@@ -186,6 +183,12 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
   const album = (input.album || "").trim()
   if (!title) return null
 
+  const budget = input.timeoutMs ?? DEFAULT_BUDGET_MS
+  // Primary gets 40% of budget, fallback rounds share remaining 60%
+  const primaryTimeout = Math.round(budget * 0.4)
+  const secondaryTimeout = Math.round(budget * 0.3)
+  const tertiaryTimeout = Math.round(budget * 0.3)
+
   const query: LookupQuery = {
     title,
     artist,
@@ -193,23 +196,92 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
     duration: input.duration ?? null,
   }
 
-  const simplifiedTitle = simplifyTitle(title)
-  const primary = await lookupLrcLib(query).catch(() => null)
+  // Try extracting title from "ARTIST - TITLE" YouTube format
+  const extractedTitle = extractTitleFromArtistDash(title, artist)
+
+  // Try REVERSE interpretation: "TITLE - REAL_ARTIST" (common for remix/slowed channels)
+  // Also handles "TITLE - REAL_ARTIST (junk) + more junk"
+  let reversedTitle: string | null = null
+  let reversedArtist: string | null = null
+  if (!extractedTitle && title.includes(" - ")) {
+    const dashIdx = title.indexOf(" - ")
+    reversedTitle = stripAllTags(title.slice(0, dashIdx).trim()) || null
+    // Clean the artist part aggressively: strip tags, then take only the portion
+    // before any "+", "|", "｜" separators which usually indicate added effects/noise
+    let rawReversedArtist = stripAllTags(title.slice(dashIdx + 3).trim())
+    rawReversedArtist = rawReversedArtist.split(/\s*[+|｜]\s*/)[0].trim()
+    reversedArtist = rawReversedArtist || null
+  }
+
+  // Aggressively strip ALL tags for search (including Slowed+Reverb — lyrics are the same)
+  const strippedTitle = stripAllTags(extractedTitle || title)
+  // Best cleaned title to use for searches
+  const cleanTitle = strippedTitle || extractedTitle || title
+
+  // Extract first artist from multi-artist strings ("Øneheart, reidenshi" → "Øneheart")
+  const firstArtist = artist.includes(",") ? artist.split(",")[0].trim() : null
+
+  // --- Round 1: primary search with original metadata ---
+  const primary = await lookupLrcLib(query, primaryTimeout).catch(() => null)
   if (primary) return primary
 
-  const secondaryPromise =
-    simplifiedTitle && simplifiedTitle !== title
-      ? lookupLrcLib({
-          ...query,
-          title: simplifiedTitle,
-          album: "",
-        }).catch(() => null)
-      : Promise.resolve<string | null>(null)
+  // --- Round 2: cleaned title, reversed interpretation, first-artist, lyrics.ovh (parallel) ---
+  const round2: Array<Promise<string | null>> = []
 
-  const fallbackPromise = lookupLyricsOvh({
-    ...query,
-    title: simplifiedTitle || title,
-  }).catch(() => null)
+  if (cleanTitle !== title) {
+    round2.push(
+      lookupLrcLib({
+        ...query,
+        title: cleanTitle,
+        album: "",
+      }, secondaryTimeout).catch(() => null)
+    )
+  }
 
-  return firstNonNull([secondaryPromise, fallbackPromise])
+  // Try reversed "TITLE - REAL_ARTIST" interpretation
+  if (reversedTitle && reversedArtist) {
+    round2.push(
+      lookupLrcLib({
+        title: reversedTitle,
+        artist: reversedArtist,
+        album: "",
+        duration: query.duration,
+      }, secondaryTimeout).catch(() => null)
+    )
+  }
+
+  // Try with just the first artist from a multi-artist field
+  if (firstArtist) {
+    round2.push(
+      lookupLrcLib({
+        ...query,
+        title: cleanTitle,
+        artist: firstArtist,
+        album: "",
+      }, secondaryTimeout).catch(() => null)
+    )
+  }
+
+  round2.push(
+    lookupLyricsOvh({
+      ...query,
+      title: reversedTitle || cleanTitle,
+      artist: reversedArtist || artist,
+    }, secondaryTimeout).catch(() => null)
+  )
+
+  const round2Result = await firstNonNull(round2)
+  if (round2Result) return round2Result
+
+  // --- Round 3: title-only search as last resort (no artist filter) ---
+  if (artist) {
+    return lookupLrcLib({
+      title: reversedTitle || cleanTitle,
+      artist: "",
+      album: "",
+      duration: query.duration,
+    }, tertiaryTimeout).catch(() => null)
+  }
+
+  return null
 }

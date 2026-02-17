@@ -16,11 +16,18 @@ services:
       NODE_ENV: production
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       SETUP_SECRET: ${SETUP_SECRET:?SETUP_SECRET is required for production}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
       NODE_OPTIONS: "--max-old-space-size=256"
       NEXT_TELEMETRY_DISABLED: "1"
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
       SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
       SPOTIFY_AUTH_TOKEN: ${SPOTIFY_AUTH_TOKEN:-}
+      TIDAL_BASIC_AUTH: ${TIDAL_BASIC_AUTH:-}
+      TIDAL_TOKEN_HEADER: ${TIDAL_TOKEN_HEADER:-}
+      QOBUZ_APP_ID: ${QOBUZ_APP_ID:-}
+      QOBUZ_LOGIN_EMAIL: ${QOBUZ_LOGIN_EMAIL:-}
+      QOBUZ_LOGIN_PASSWORD_MD5: ${QOBUZ_LOGIN_PASSWORD_MD5:-}
+      AMAZON_API_KEY: ${AMAZON_API_KEY:-}
     volumes:
       - ./db:/app/data
       - ./downloads:/app/downloads

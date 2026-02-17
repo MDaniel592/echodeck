@@ -82,6 +82,9 @@ export interface SpotdlDownloadResult {
   artist: string | null
   album: string | null
   albumArtist: string | null
+  trackNumber: number | null
+  discNumber: number | null
+  isrc: string | null
   duration: number | null
   fileSize: number | null
   format: "mp3" | "flac" | "wav" | "ogg"
@@ -99,6 +102,9 @@ interface SpotifyTrack {
   thumbnail: string | null
   albumName: string | null
   releaseDate: string | null
+  trackNumber: number | null
+  discNumber: number | null
+  isrc: string | null
   sourceUrl: string | null
 }
 
@@ -150,6 +156,9 @@ interface SpotifyTrackItem {
   id?: string
   name?: string
   duration_ms?: number
+  disc_number?: number
+  track_number?: number
+  external_ids?: { isrc?: string }
   artists?: SpotifyArtist[]
   album?: SpotifyAlbum
   external_urls?: {
@@ -459,6 +468,12 @@ function mapSpotifyTrack(track: SpotifyTrackItem, albumOverride?: SpotifyAlbum):
     thumbnail: firstImageUrl(album?.images),
     albumName: album?.name ?? null,
     releaseDate: album?.release_date ?? null,
+    trackNumber: typeof track.track_number === "number" && Number.isFinite(track.track_number) ? track.track_number : null,
+    discNumber: typeof track.disc_number === "number" && Number.isFinite(track.disc_number) ? track.disc_number : null,
+    isrc:
+      typeof track.external_ids?.isrc === "string" && track.external_ids.isrc.trim()
+        ? track.external_ids.isrc.trim()
+        : null,
     sourceUrl: track.external_urls?.spotify ?? (id ? `https://open.spotify.com/track/${id}` : null),
   }
 }
@@ -809,6 +824,9 @@ function mapSpotFetchTrack(record: Record<string, unknown>, index: number): Spot
     thumbnail: readString(record, "images") || readString(record, "cover"),
     albumName: readString(record, "album_name") || readString(record, "album"),
     releaseDate: readString(record, "release_date"),
+    trackNumber: readNumber(record, "track_number"),
+    discNumber: readNumber(record, "disc_number"),
+    isrc: readString(record, "isrc"),
     sourceUrl: sourceUrl || (spotifyId ? `https://open.spotify.com/track/${spotifyId}` : null),
   }
 }
@@ -2058,6 +2076,9 @@ export async function downloadSpotify(
         artist: artistLabel,
         album: track.albumName,
         albumArtist: artistLabel,
+        trackNumber: track.trackNumber,
+        discNumber: track.discNumber,
+        isrc: track.isrc,
         duration: track.duration,
         fileSize: downloaded.fileSize,
         format,
