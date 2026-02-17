@@ -16,6 +16,10 @@ interface Song {
   coverPath: string | null
   thumbnail: string | null
   fileSize: number | null
+  replayGainTrackDb?: number | null
+  replayGainAlbumDb?: number | null
+  replayGainTrackPeak?: number | null
+  replayGainAlbumPeak?: number | null
   playlistId: number | null
   createdAt: string
 }
@@ -34,6 +38,7 @@ interface DesktopPlayerBarProps {
   progress: number
   volume: number
   isQueueSheetOpen: boolean
+  normalizationEnabled: boolean
   coverSrc: string | null
   onToggleShuffle: () => void
   onPlayPrev: () => void
@@ -42,6 +47,7 @@ interface DesktopPlayerBarProps {
   onCycleRepeat: () => void
   onVolumeChange: (e: ChangeEvent<HTMLInputElement>) => void
   onToggleQueue: () => void
+  onToggleNormalization: () => void
   desktopSeekBarRef: RefObject<HTMLDivElement | null>
   onDesktopSeekClick: (e: MouseEvent<HTMLDivElement>) => void
   onDesktopSeekTouchStart: (e: TouchEvent<HTMLDivElement>) => void
@@ -63,6 +69,7 @@ export default function DesktopPlayerBar({
   progress,
   volume,
   isQueueSheetOpen,
+  normalizationEnabled,
   coverSrc,
   onToggleShuffle,
   onPlayPrev,
@@ -71,6 +78,7 @@ export default function DesktopPlayerBar({
   onCycleRepeat,
   onVolumeChange,
   onToggleQueue,
+  onToggleNormalization,
   desktopSeekBarRef,
   onDesktopSeekClick,
   onDesktopSeekTouchStart,
@@ -188,6 +196,19 @@ export default function DesktopPlayerBar({
           onChange={onVolumeChange}
           className="w-full sm:w-28 lg:w-36 accent-emerald-500"
         />
+        <button
+          type="button"
+          onClick={onToggleNormalization}
+          className={`h-10 min-w-10 rounded-lg px-2 text-xs font-semibold tracking-wide transition-colors lg:h-11 lg:min-w-11 ${
+            normalizationEnabled
+              ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
+              : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+          }`}
+          aria-label={normalizationEnabled ? "Disable audio normalization" : "Enable audio normalization"}
+          title={normalizationEnabled ? "Normalization enabled" : "Normalization disabled"}
+        >
+          NRM
+        </button>
         <button
           type="button"
           onClick={onToggleQueue}

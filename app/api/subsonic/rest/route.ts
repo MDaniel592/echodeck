@@ -3,6 +3,7 @@ import fs from "fs"
 import fsPromises from "fs/promises"
 import path from "path"
 import { spawn } from "child_process"
+import { randomUUID } from "crypto"
 import prisma from "../../../../lib/prisma"
 import { verifyPassword } from "../../../../lib/auth"
 import { checkRateLimit } from "../../../../lib/rateLimit"
@@ -57,6 +58,8 @@ const SUBSONIC_MAX_FAILED_ATTEMPTS_PER_ACCOUNT = 20
 const SUBSONIC_MAX_FAILED_ATTEMPTS_PER_CLIENT = 80
 const SUBSONIC_WINDOW_MS = 15 * 60 * 1000
 const TRUST_PROXY = process.env.TRUST_PROXY === "1"
+const SUBSONIC_JUKEBOX_DEVICE_ID = "subsonic:jukebox"
+const MAX_SHARE_ENTRIES = 500
 
 function getClientIdentifier(request: NextRequest): string {
   if (!TRUST_PROXY) {
@@ -223,6 +226,39 @@ function extractSongIds(request: NextRequest): number[] {
   return Array.from(new Set(parsed))
 }
 
+function extractAlbumIds(request: NextRequest): number[] {
+  const parsed = request.nextUrl.searchParams
+    .getAll("albumId")
+    .map((raw) => Number.parseInt(raw, 10))
+    .filter((id): id is number => Number.isInteger(id) && id > 0)
+  return Array.from(new Set(parsed))
+}
+
+function extractPlaylistIds(request: NextRequest): number[] {
+  const parsed = request.nextUrl.searchParams
+    .getAll("playlistId")
+    .map((raw) => Number.parseInt(raw, 10))
+    .filter((id): id is number => Number.isInteger(id) && id > 0)
+  return Array.from(new Set(parsed))
+}
+
+function parseBookmarkPositionSeconds(raw: string | null): number {
+  if (!raw) return 0
+  const millis = Number.parseInt(raw, 10)
+  if (!Number.isInteger(millis) || millis < 0) return 0
+  return millis / 1000
+}
+
+function parseJukeboxCommand(request: NextRequest): string {
+  const raw = request.nextUrl.searchParams.get("action")?.trim().toLowerCase()
+  if (!raw) return "status"
+  return raw
+}
+
+function createShareToken(): string {
+  return randomUUID().replace(/-/g, "")
+}
+
 function mapAlbum(album: SubsonicAlbum) {
   return {
     id: String(album.id),
@@ -233,6 +269,37 @@ function mapAlbum(album: SubsonicAlbum) {
     created: album.createdAt.toISOString(),
     coverArt: `al-${album.id}`,
   }
+}
+
+function mapShareEntry(
+  entry: {
+    type: "song" | "album" | "playlist"
+    song?: Parameters<typeof mapSong>[0] | null
+    album?: { id: number; title: string | null; albumArtist: string | null; year: number | null } | null
+    playlist?: { id: number; name: string } | null
+  }
+) {
+  if (entry.type === "song" && entry.song) {
+    return mapSong(entry.song)
+  }
+  if (entry.type === "album" && entry.album) {
+    return {
+      id: `al-${entry.album.id}`,
+      isDir: true,
+      title: entry.album.title || "",
+      artist: entry.album.albumArtist || "",
+      year: entry.album.year || 1970,
+      coverArt: `al-${entry.album.id}`,
+    }
+  }
+  if (entry.type === "playlist" && entry.playlist) {
+    return {
+      id: `pl-${entry.playlist.id}`,
+      isDir: true,
+      title: entry.playlist.name,
+    }
+  }
+  return null
 }
 
 function canTranscodeToBitrate(songBitrate: number | null | undefined, maxBitRateKbps: number): boolean {
@@ -795,6 +862,321 @@ export async function GET(request: NextRequest) {
       })
 
       return response(request, {})
+    }
+
+    if (cmd === "jukeboxControl") {
+      const action = parseJukeboxCommand(request)
+
+      if (action === "status") {
+        const session = await prisma.playbackSession.findUnique({
+          where: {
+            userId_deviceId: {
+              userId: user.id,
+              deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+            },
+          },
+          include: {
+            queueItems: {
+              orderBy: { sortOrder: "asc" },
+            },
+          },
+        })
+        const currentIndex = session?.queueItems.findIndex((item) => item.songId === session.currentSongId) ?? -1
+        return response(request, {
+          jukeboxStatus: {
+            currentIndex: currentIndex >= 0 ? currentIndex : undefined,
+            playing: session?.isPlaying ?? false,
+            gain: 1,
+            position: session ? Math.max(0, Math.round(session.positionSec * 1000)) : 0,
+          },
+        })
+      }
+
+      if (action === "get") {
+        const session = await prisma.playbackSession.findUnique({
+          where: {
+            userId_deviceId: {
+              userId: user.id,
+              deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+            },
+          },
+          include: {
+            queueItems: {
+              orderBy: { sortOrder: "asc" },
+              include: { song: true },
+            },
+          },
+        })
+        return response(request, {
+          jukeboxPlaylist: {
+            currentIndex:
+              session?.currentSongId
+                ? session.queueItems.findIndex((item) => item.songId === session.currentSongId)
+                : undefined,
+            entry: session?.queueItems.map((item) => mapSong(item.song)) || [],
+          },
+        })
+      }
+
+      if (action === "set") {
+        const songIds = extractSongIds(request)
+        if (songIds.length === 0) {
+          return response(request, { error: { code: 10, message: "Missing song id(s)" } }, "failed")
+        }
+        const songs = await prisma.song.findMany({
+          where: { userId: user.id, id: { in: songIds } },
+          select: { id: true },
+        })
+        if (songs.length !== new Set(songIds).size) {
+          return response(request, { error: { code: 70, message: "One or more songs were not found" } }, "failed")
+        }
+
+        await prisma.$transaction(async (tx) => {
+          const session = await tx.playbackSession.upsert({
+            where: {
+              userId_deviceId: {
+                userId: user.id,
+                deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+              },
+            },
+            create: {
+              userId: user.id,
+              deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+              currentSongId: songIds[0],
+              isPlaying: false,
+              positionSec: 0,
+            },
+            update: {
+              currentSongId: songIds[0],
+              positionSec: 0,
+            },
+            select: { id: true },
+          })
+
+          await tx.playbackQueueItem.deleteMany({
+            where: { sessionId: session.id },
+          })
+
+          await tx.playbackQueueItem.createMany({
+            data: songIds.map((songId, index) => ({
+              sessionId: session.id,
+              songId,
+              sortOrder: index,
+            })),
+          })
+        })
+        return response(request, {})
+      }
+
+      if (action === "add") {
+        const songIds = extractSongIds(request)
+        if (songIds.length === 0) {
+          return response(request, { error: { code: 10, message: "Missing song id(s)" } }, "failed")
+        }
+        const songs = await prisma.song.findMany({
+          where: { userId: user.id, id: { in: songIds } },
+          select: { id: true },
+        })
+        if (songs.length !== new Set(songIds).size) {
+          return response(request, { error: { code: 70, message: "One or more songs were not found" } }, "failed")
+        }
+
+        await prisma.$transaction(async (tx) => {
+          const session = await tx.playbackSession.upsert({
+            where: {
+              userId_deviceId: {
+                userId: user.id,
+                deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+              },
+            },
+            create: {
+              userId: user.id,
+              deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+              currentSongId: songIds[0] ?? null,
+              isPlaying: false,
+              positionSec: 0,
+            },
+            update: {},
+            select: {
+              id: true,
+              currentSongId: true,
+              queueItems: {
+                orderBy: { sortOrder: "desc" },
+                take: 1,
+                select: { sortOrder: true },
+              },
+            },
+          })
+
+          const baseSort = (session.queueItems[0]?.sortOrder ?? -1) + 1
+          await tx.playbackQueueItem.createMany({
+            data: songIds.map((songId, idx) => ({
+              sessionId: session.id,
+              songId,
+              sortOrder: baseSort + idx,
+            })),
+          })
+
+          if (!session.currentSongId) {
+            await tx.playbackSession.update({
+              where: { id: session.id },
+              data: { currentSongId: songIds[0] ?? null, positionSec: 0 },
+            })
+          }
+        })
+        return response(request, {})
+      }
+
+      if (action === "clear") {
+        const session = await prisma.playbackSession.findUnique({
+          where: {
+            userId_deviceId: {
+              userId: user.id,
+              deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+            },
+          },
+          select: { id: true },
+        })
+        if (session) {
+          await prisma.$transaction(async (tx) => {
+            await tx.playbackQueueItem.deleteMany({ where: { sessionId: session.id } })
+            await tx.playbackSession.update({
+              where: { id: session.id },
+              data: { currentSongId: null, positionSec: 0, isPlaying: false },
+            })
+          })
+        }
+        return response(request, {})
+      }
+
+      if (action === "remove") {
+        const removeIndexes = request.nextUrl.searchParams
+          .getAll("index")
+          .map((raw) => Number.parseInt(raw, 10))
+          .filter((value): value is number => Number.isInteger(value) && value >= 0)
+        if (removeIndexes.length === 0) {
+          return response(request, { error: { code: 10, message: "Missing index" } }, "failed")
+        }
+        const removeSet = new Set(removeIndexes)
+        await prisma.$transaction(async (tx) => {
+          const session = await tx.playbackSession.findUnique({
+            where: {
+              userId_deviceId: {
+                userId: user.id,
+                deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+              },
+            },
+            include: {
+              queueItems: {
+                orderBy: { sortOrder: "asc" },
+              },
+            },
+          })
+          if (!session) return
+
+          const remaining = session.queueItems.filter((_item, index) => !removeSet.has(index))
+          await tx.playbackQueueItem.deleteMany({ where: { sessionId: session.id } })
+          if (remaining.length > 0) {
+            await tx.playbackQueueItem.createMany({
+              data: remaining.map((item, index) => ({
+                sessionId: session.id,
+                songId: item.songId,
+                sortOrder: index,
+              })),
+            })
+          }
+          const stillCurrent = remaining.some((item) => item.songId === session.currentSongId)
+          await tx.playbackSession.update({
+            where: { id: session.id },
+            data: {
+              currentSongId: stillCurrent ? session.currentSongId : (remaining[0]?.songId ?? null),
+              positionSec: stillCurrent ? session.positionSec : 0,
+            },
+          })
+        })
+        return response(request, {})
+      }
+
+      if (action === "start" || action === "stop" || action === "pause") {
+        const existing = await prisma.playbackSession.findUnique({
+          where: {
+            userId_deviceId: {
+              userId: user.id,
+              deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+            },
+          },
+          include: {
+            queueItems: {
+              orderBy: { sortOrder: "asc" },
+              take: 1,
+              select: { songId: true },
+            },
+          },
+        })
+        if (!existing && action !== "start") {
+          return response(request, {})
+        }
+        await prisma.playbackSession.upsert({
+          where: {
+            userId_deviceId: {
+              userId: user.id,
+              deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+            },
+          },
+          create: {
+            userId: user.id,
+            deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+            currentSongId: existing?.queueItems[0]?.songId ?? null,
+            isPlaying: action === "start",
+            positionSec: 0,
+          },
+          update: {
+            isPlaying: action === "start",
+            ...(action === "stop" ? { positionSec: 0 } : {}),
+          },
+        })
+        return response(request, {})
+      }
+
+      if (action === "skip") {
+        const skipAmountRaw = request.nextUrl.searchParams.get("index")
+        const skipAmount = Number.parseInt(skipAmountRaw || "1", 10)
+        const delta = Number.isInteger(skipAmount) ? skipAmount : 1
+
+        await prisma.$transaction(async (tx) => {
+          const session = await tx.playbackSession.findUnique({
+            where: {
+              userId_deviceId: {
+                userId: user.id,
+                deviceId: SUBSONIC_JUKEBOX_DEVICE_ID,
+              },
+            },
+            include: {
+              queueItems: {
+                orderBy: { sortOrder: "asc" },
+              },
+            },
+          })
+          if (!session || session.queueItems.length === 0) return
+
+          const currentIndex = session.queueItems.findIndex((item) => item.songId === session.currentSongId)
+          const startIndex = currentIndex >= 0 ? currentIndex : 0
+          const targetIndex = Math.min(
+            Math.max(startIndex + delta, 0),
+            session.queueItems.length - 1
+          )
+          await tx.playbackSession.update({
+            where: { id: session.id },
+            data: {
+              currentSongId: session.queueItems[targetIndex]?.songId ?? null,
+              positionSec: 0,
+            },
+          })
+        })
+        return response(request, {})
+      }
+
+      return response(request, { error: { code: 0, message: `Unsupported jukebox action: ${action}` } }, "failed")
     }
 
     if (cmd === "getRandomSongs") {
@@ -1501,6 +1883,32 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    if (cmd === "setRating") {
+      const songIds = extractSongIds(request)
+      if (songIds.length === 0) {
+        return response(request, { error: { code: 10, message: "Missing song id(s)" } }, "failed")
+      }
+
+      const ratingRaw = request.nextUrl.searchParams.get("rating")
+      const rating = Number.parseInt(ratingRaw || "", 10)
+      if (!Number.isInteger(rating) || rating < 0 || rating > 5) {
+        return response(request, { error: { code: 10, message: "Invalid rating (0-5)" } }, "failed")
+      }
+
+      const value = rating === 0 ? null : rating
+      await prisma.song.updateMany({
+        where: {
+          userId: user.id,
+          id: { in: songIds },
+        },
+        data: {
+          rating: value,
+        },
+      })
+
+      return response(request, {})
+    }
+
     if (cmd === "star" || cmd === "unstar") {
       const songIds = extractSongIds(request)
       if (songIds.length === 0) {
@@ -1581,6 +1989,238 @@ export async function GET(request: NextRequest) {
           song: songs.map(mapSong),
         },
       })
+    }
+
+    if (cmd === "getBookmarks") {
+      const bookmarks = await prisma.bookmark.findMany({
+        where: { userId: user.id },
+        orderBy: [{ changedAt: "desc" }, { id: "desc" }],
+        include: { song: true },
+      })
+
+      return response(request, {
+        bookmarks: {
+          bookmark: bookmarks.map((bookmark) => ({
+            position: Math.max(0, Math.round(bookmark.positionSec * 1000)),
+            username: user.username,
+            comment: bookmark.comment || undefined,
+            created: bookmark.createdAt.toISOString(),
+            changed: bookmark.changedAt.toISOString(),
+            entry: mapSong(bookmark.song),
+          })),
+        },
+      })
+    }
+
+    if (cmd === "createBookmark") {
+      const songIds = extractSongIds(request)
+      const songId = songIds[0]
+      if (!songId) {
+        return response(request, { error: { code: 10, message: "Missing song id" } }, "failed")
+      }
+
+      const song = await prisma.song.findFirst({
+        where: { id: songId, userId: user.id },
+        select: { id: true },
+      })
+      if (!song) {
+        return response(request, { error: { code: 70, message: "Song not found" } }, "failed")
+      }
+
+      const positionSec = parseBookmarkPositionSeconds(request.nextUrl.searchParams.get("position"))
+      const commentRaw = request.nextUrl.searchParams.get("comment")
+      const comment = commentRaw && commentRaw.trim() ? commentRaw.trim().slice(0, 1_000) : null
+
+      const existing = await prisma.bookmark.findFirst({
+        where: { userId: user.id, songId },
+        select: { id: true },
+      })
+
+      if (existing) {
+        await prisma.bookmark.update({
+          where: { id: existing.id },
+          data: { positionSec, comment },
+        })
+      } else {
+        await prisma.bookmark.create({
+          data: {
+            userId: user.id,
+            songId,
+            positionSec,
+            comment,
+          },
+        })
+      }
+
+      return response(request, {})
+    }
+
+    if (cmd === "deleteBookmark") {
+      const songIds = extractSongIds(request)
+      if (songIds.length === 0) {
+        return response(request, { error: { code: 10, message: "Missing song id(s)" } }, "failed")
+      }
+      await prisma.bookmark.deleteMany({
+        where: {
+          userId: user.id,
+          songId: { in: songIds },
+        },
+      })
+      return response(request, {})
+    }
+
+    if (cmd === "getShares") {
+      const shareIds = request.nextUrl.searchParams
+        .getAll("id")
+        .map((raw) => Number.parseInt(raw, 10))
+        .filter((id): id is number => Number.isInteger(id) && id > 0)
+      const origin = new URL(request.url).origin
+
+      const shares = await prisma.share.findMany({
+        where: {
+          userId: user.id,
+          ...(shareIds.length > 0 ? { id: { in: shareIds } } : {}),
+        },
+        orderBy: { createdAt: "desc" },
+        include: {
+          entries: {
+            orderBy: { id: "asc" },
+            include: {
+              song: true,
+              album: {
+                select: {
+                  id: true,
+                  title: true,
+                  albumArtist: true,
+                  year: true,
+                },
+              },
+              playlist: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      })
+
+      return response(request, {
+        shares: {
+          share: shares.map((share) => ({
+            id: String(share.id),
+            url: `${origin}/api/subsonic/share/${share.token}`,
+            username: user.username,
+            created: share.createdAt.toISOString(),
+            description: share.description || undefined,
+            expires: share.expiresAt ? share.expiresAt.toISOString() : undefined,
+            lastVisited: share.lastVisited ? share.lastVisited.toISOString() : undefined,
+            visitCount: share.visitCount,
+            entry: share.entries
+              .map((entry) => mapShareEntry(entry))
+              .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
+          })),
+        },
+      })
+    }
+
+    if (cmd === "createShare") {
+      const songIds = extractSongIds(request)
+      const albumIds = extractAlbumIds(request)
+      const playlistIds = extractPlaylistIds(request)
+      const totalIds = songIds.length + albumIds.length + playlistIds.length
+      if (totalIds === 0) {
+        return response(request, { error: { code: 10, message: "Missing share targets" } }, "failed")
+      }
+      if (totalIds > MAX_SHARE_ENTRIES) {
+        return response(request, { error: { code: 10, message: "Too many share targets" } }, "failed")
+      }
+
+      const [songs, albums, playlists] = await Promise.all([
+        songIds.length > 0
+          ? prisma.song.findMany({ where: { userId: user.id, id: { in: songIds } }, select: { id: true } })
+          : Promise.resolve([]),
+        albumIds.length > 0
+          ? prisma.album.findMany({ where: { userId: user.id, id: { in: albumIds } }, select: { id: true } })
+          : Promise.resolve([]),
+        playlistIds.length > 0
+          ? prisma.playlist.findMany({ where: { userId: user.id, id: { in: playlistIds } }, select: { id: true } })
+          : Promise.resolve([]),
+      ])
+
+      if (songs.length !== songIds.length || albums.length !== albumIds.length || playlists.length !== playlistIds.length) {
+        return response(request, { error: { code: 70, message: "One or more share targets were not found" } }, "failed")
+      }
+
+      const descriptionRaw = request.nextUrl.searchParams.get("description")
+      const description = descriptionRaw && descriptionRaw.trim() ? descriptionRaw.trim().slice(0, 500) : null
+      const expiresRaw = request.nextUrl.searchParams.get("expires")
+      const expiresMillis = Number.parseInt(expiresRaw || "", 10)
+      const expiresAt = Number.isInteger(expiresMillis) && expiresMillis > 0 ? new Date(expiresMillis) : null
+
+      const created = await prisma.share.create({
+        data: {
+          userId: user.id,
+          token: createShareToken(),
+          description,
+          expiresAt,
+          entries: {
+            create: [
+              ...songIds.map((songId) => ({
+                userId: user.id,
+                type: "song" as const,
+                songId,
+              })),
+              ...albumIds.map((albumId) => ({
+                userId: user.id,
+                type: "album" as const,
+                albumId,
+              })),
+              ...playlistIds.map((playlistId) => ({
+                userId: user.id,
+                type: "playlist" as const,
+                playlistId,
+              })),
+            ],
+          },
+        },
+      })
+
+      const origin = new URL(request.url).origin
+      return response(request, {
+        shares: {
+          share: [
+            {
+              id: String(created.id),
+              url: `${origin}/api/subsonic/share/${created.token}`,
+              username: user.username,
+              created: created.createdAt.toISOString(),
+              description: created.description || undefined,
+              expires: created.expiresAt ? created.expiresAt.toISOString() : undefined,
+              visitCount: 0,
+            },
+          ],
+        },
+      })
+    }
+
+    if (cmd === "deleteShare") {
+      const shareIds = request.nextUrl.searchParams
+        .getAll("id")
+        .map((raw) => Number.parseInt(raw, 10))
+        .filter((id): id is number => Number.isInteger(id) && id > 0)
+      if (shareIds.length === 0) {
+        return response(request, { error: { code: 10, message: "Missing share id(s)" } }, "failed")
+      }
+
+      await prisma.share.deleteMany({
+        where: {
+          userId: user.id,
+          id: { in: shareIds },
+        },
+      })
+      return response(request, {})
     }
 
     if (cmd === "getSimilarSongs2" || cmd === "getSimilarSongs") {

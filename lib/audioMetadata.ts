@@ -18,6 +18,10 @@ export type ExtractedAudioMetadata = {
   bitrate: number | null
   sampleRate: number | null
   channels: number | null
+  replayGainTrackDb: number | null
+  replayGainAlbumDb: number | null
+  replayGainTrackPeak: number | null
+  replayGainAlbumPeak: number | null
   isrc: string | null
   lyrics: string | null
 }
@@ -45,6 +49,21 @@ function cleanText(raw: string | null | undefined, max = 500): string | null {
   return cleaned.slice(0, max)
 }
 
+function parseDbTag(raw: string | undefined): number | null {
+  if (!raw) return null
+  const cleaned = raw.replace(/dB/gi, "").trim()
+  const parsed = Number.parseFloat(cleaned)
+  if (!Number.isFinite(parsed)) return null
+  return Math.round(parsed * 100) / 100
+}
+
+function parsePeakTag(raw: string | undefined): number | null {
+  if (!raw) return null
+  const parsed = Number.parseFloat(raw.trim())
+  if (!Number.isFinite(parsed) || parsed <= 0) return null
+  return Math.round(parsed * 1_000_000) / 1_000_000
+}
+
 export async function extractAudioMetadataFromFile(filePath: string): Promise<ExtractedAudioMetadata> {
   try {
     const ffprobePath = path.join(getFfmpegDir(), "ffprobe")
@@ -54,7 +73,7 @@ export async function extractAudioMetadataFromFile(filePath: string): Promise<Ex
         "-v",
         "error",
         "-show_entries",
-        "format=duration,bit_rate:format_tags=title,artist,album,album_artist,albumartist,date,genre,track,disc,isrc,lyrics:stream=index,codec_type,sample_rate,channels",
+        "format=duration,bit_rate:format_tags=title,artist,album,album_artist,albumartist,date,genre,track,disc,isrc,lyrics,replaygain_track_gain,replaygain_album_gain,replaygain_track_peak,replaygain_album_peak,R128_TRACK_GAIN,R128_ALBUM_GAIN:stream=index,codec_type,sample_rate,channels",
         "-of",
         "json",
         filePath,
@@ -101,6 +120,24 @@ export async function extractAudioMetadataFromFile(filePath: string): Promise<Ex
       typeof audioStream?.channels === "number" && audioStream.channels > 0
         ? audioStream.channels
         : null
+    const replayGainTrackDb = parseDbTag(
+      formatTags.replaygain_track_gain ||
+        streamTags.replaygain_track_gain ||
+        formatTags.R128_TRACK_GAIN ||
+        streamTags.R128_TRACK_GAIN
+    )
+    const replayGainAlbumDb = parseDbTag(
+      formatTags.replaygain_album_gain ||
+        streamTags.replaygain_album_gain ||
+        formatTags.R128_ALBUM_GAIN ||
+        streamTags.R128_ALBUM_GAIN
+    )
+    const replayGainTrackPeak = parsePeakTag(
+      formatTags.replaygain_track_peak || streamTags.replaygain_track_peak
+    )
+    const replayGainAlbumPeak = parsePeakTag(
+      formatTags.replaygain_album_peak || streamTags.replaygain_album_peak
+    )
     const isrc = cleanText(formatTags.isrc || streamTags.isrc, 64)
     const lyrics = cleanText(formatTags.lyrics || streamTags.lyrics, 10_000)
 
@@ -117,6 +154,10 @@ export async function extractAudioMetadataFromFile(filePath: string): Promise<Ex
       bitrate,
       sampleRate,
       channels,
+      replayGainTrackDb,
+      replayGainAlbumDb,
+      replayGainTrackPeak,
+      replayGainAlbumPeak,
       isrc,
       lyrics,
     }
@@ -134,6 +175,10 @@ export async function extractAudioMetadataFromFile(filePath: string): Promise<Ex
       bitrate: null,
       sampleRate: null,
       channels: null,
+      replayGainTrackDb: null,
+      replayGainAlbumDb: null,
+      replayGainTrackPeak: null,
+      replayGainAlbumPeak: null,
       isrc: null,
       lyrics: null,
     }

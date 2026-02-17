@@ -70,6 +70,7 @@ export async function PATCH(
       trackNumber?: number | null
       discNumber?: number | null
       lyrics?: string | null
+      rating?: number | null
     } = {}
 
     const title = normalizeOptionalString(body?.title, 300)
@@ -115,6 +116,11 @@ export async function PATCH(
     const discNumber = normalizeOptionalInt(body?.discNumber, 0, 99)
     if (discNumber !== undefined) {
       updateData.discNumber = discNumber
+    }
+
+    const rating = normalizeOptionalInt(body?.rating, 0, 5)
+    if (rating !== undefined) {
+      updateData.rating = rating === 0 ? null : rating
     }
 
     const updatedSong = await prisma.song.update({
