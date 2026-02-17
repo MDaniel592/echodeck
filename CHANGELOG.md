@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.3.1...echodeck-v1.3.2) (2026-02-17)
+
+
+### Performance
+
+* **lyrics:** parallelize fallbacks and tighten lookup timeouts ([#24](https://github.com/MDaniel592/echodeck/issues/24)) ([80e9fce](https://github.com/MDaniel592/echodeck/commit/80e9fce9f5ed824da1885bfcfe68581d533f97ec))
+
 ## [1.3.1](https://github.com/MDaniel592/echodeck/compare/echodeck-v1.3.0...echodeck-v1.3.1) (2026-02-17)
 
 
