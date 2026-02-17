@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
       - "echodeck-v*"
+  workflow_run:
+    workflows: ["Release Please"]
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       tag:
@@ -17,13 +21,61 @@ permissions:
   packages: write
 
 jobs:
-  release-assets:
+  resolve-tag:
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      should_release: ${{ steps.resolve.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVENT_NAME="${{ github.event_name }}"
+          RELEASE_TAG=""
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            RELEASE_TAG="${{ inputs.tag }}"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            RELEASE_TAG="${{ github.ref_name }}"
+          else
+            git fetch --tags --force
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            RELEASE_TAG="$(git tag --points-at "$HEAD_SHA" | rg -E '^(v|echodeck-v)' | head -n 1 || true)"
+          fi
+
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Resolved release tag: $RELEASE_TAG"
+          else
+            echo "release_tag=" >> "$GITHUB_OUTPUT"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "No release tag resolved; skipping release workflow jobs."
+          fi
+
+  release-assets:
+    needs: resolve-tag
+    if: needs.resolve-tag.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Always build release assets from the resolved release tag.
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Build source tarball
@@ -41,11 +93,20 @@ jobs:
             dist/*.sha256
 
   docker-image:
+    needs: resolve-tag
+    if: needs.resolve-tag.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+      YTDLP_VERSION: ${{ vars.YTDLP_VERSION || '2026.02.04' }}
+      SPOTDL_VERSION: ${{ vars.SPOTDL_VERSION || '4.4.3' }}
+      YTDLP_SHA256: ${{ vars.YTDLP_SHA256 || '051ed827a836f56772d662c38ebfabd8d613a21a39376737d56893184bcc53f8' }}
+      SPOTDL_SHA256: ${{ vars.SPOTDL_SHA256 || 'f3b93e62972dd19f2b8b75c0c9e14bb35371132305190e4141d5eb7047054c8e' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Always build container images from the resolved release tag.
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -79,3 +140,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            YTDLP_VERSION=${{ env.YTDLP_VERSION }}
+            SPOTDL_VERSION=${{ env.SPOTDL_VERSION }}
+            YTDLP_SHA256=${{ env.YTDLP_SHA256 }}
+            SPOTDL_SHA256=${{ env.SPOTDL_SHA256 }}
