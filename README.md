@@ -36,11 +36,14 @@ Notes:
 ## Docker (Production)
 
 ```bash
+cp docker-compose.example.yml docker-compose.yml
 export JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
 export SETUP_SECRET=$(node -e "console.log(require('crypto').randomBytes(24).toString('hex'))")
 docker compose up --build
 ```
 
+Use `docker-compose.example.yml` as the committed template.
+Your local `docker-compose.yml` is intentionally gitignored and can contain private domain/reverse-proxy settings.
 `docker-compose.yml` requires `JWT_SECRET` and `SETUP_SECRET` for startup.
 On container start, the image runs `npm run setup` automatically so `yt-dlp` and `spotdl` are installed before the app serves requests.
 
