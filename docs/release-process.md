@@ -7,7 +7,6 @@
 - Bump `package.json` / `package-lock.json` version automatically.
 - Create the Git tag (for example `v1.0.1`) and GitHub Release automatically.
 4. The release workflow (tag-triggered) will:
-- Publish multi-arch Docker images to GHCR.
 - Attach source `.tar.gz` + `.sha256` assets to the GitHub Release.
 
 If a release PR is not created, check that at least one releasable commit type
@@ -71,10 +70,7 @@ Configure these in GitHub `Settings`:
 - (Recommended) Require linear history.
 
 3. `Settings -> Actions -> General`
-- Allow actions from GitHub Marketplace (needed for `release-please`, `docker/*`, `softprops/*`, `wagoid/*` actions used in workflows).
-
-4. `Packages (GHCR)`
-- Verify package visibility and access policy for `ghcr.io/<owner>/echodeck` matches your release intent (private/public).
+- Allow actions from GitHub Marketplace (needed for `release-please`, `softprops/*`, `wagoid/*` actions used in workflows).
 
 ## If the release workflow did not trigger
 
