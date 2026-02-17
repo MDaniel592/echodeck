@@ -78,6 +78,7 @@ On container start, the image runs `npm run setup` automatically so `yt-dlp` and
 | `ENABLE_AUTO_SETUP` | No | Set `1` to allow `postinstall` to auto-download binaries |
 | `YTDLP_VERSION` | No | Pin yt-dlp release version/tag (e.g. `2025.02.19`) |
 | `SPOTDL_VERSION` | No | Pin spotdl release version/tag (e.g. `4.2.11` or `v4.2.11`) |
+| `FFMPEG_ARCHIVE_URL` | No | Optional direct ffmpeg archive URL override (defaults to BtbN Linux GPL static builds; archive must include both `ffmpeg` and `ffprobe`) |
 | `YTDLP_SHA256` | No | Expected SHA-256 for downloaded `yt-dlp` binary |
 | `SPOTDL_SHA256` | No | Expected SHA-256 for downloaded `spotdl` binary |
 

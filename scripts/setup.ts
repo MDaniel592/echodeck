@@ -38,6 +38,139 @@ function verifyOptionalSha256(filePath: string, expectedSha256: string | undefin
   console.log(`  ${label}: checksum verified`)
 }
 
+function findFileRecursive(rootDir: string, fileName: string): string | null {
+  const queue: string[] = [rootDir]
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current) break
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name)
+      if (entry.isFile() && entry.name === fileName) return full
+      if (entry.isDirectory()) queue.push(full)
+    }
+  }
+  return null
+}
+
+function removePathIfExists(targetPath: string) {
+  try {
+    if (fs.existsSync(targetPath)) {
+      fs.rmSync(targetPath, { recursive: true, force: true })
+    }
+  } catch {
+    // best-effort cleanup
+  }
+}
+
+function defaultFfmpegArchiveUrls(): string[] {
+  const arch = process.arch
+  if (arch === "x64") {
+    return [
+      "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
+      "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
+    ]
+  }
+  if (arch === "arm64") {
+    return [
+      "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz",
+      "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-aarch64-static.tar.xz",
+      "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz",
+    ]
+  }
+  return []
+}
+
+async function installFfmpegBinaries() {
+  const ffmpegTarget = path.join(BIN_DIR, "ffmpeg")
+  const ffprobeTarget = path.join(BIN_DIR, "ffprobe")
+
+  if (fs.existsSync(ffmpegTarget) && fs.existsSync(ffprobeTarget)) {
+    try {
+      const ffmpegVersion = execSync(`"${ffmpegTarget}" -version`, { encoding: "utf-8" }).split("\n")[0]?.trim()
+      const ffprobeVersion = execSync(`"${ffprobeTarget}" -version`, { encoding: "utf-8" }).split("\n")[0]?.trim()
+      console.log(`  ffmpeg: already installed (${ffmpegVersion || "ok"})`)
+      console.log(`  ffprobe: already installed (${ffprobeVersion || "ok"})`)
+      return
+    } catch {
+      console.log("  ffmpeg/ffprobe: existing binaries look broken, re-downloading...")
+      removePathIfExists(ffmpegTarget)
+      removePathIfExists(ffprobeTarget)
+    }
+  }
+
+  const customUrl = process.env.FFMPEG_ARCHIVE_URL?.trim()
+  const urls = customUrl ? [customUrl] : defaultFfmpegArchiveUrls()
+  if (urls.length === 0) {
+    throw new Error(
+      `No default FFmpeg archive URL for architecture ${process.arch}. ` +
+      "Set FFMPEG_ARCHIVE_URL to continue."
+    )
+  }
+
+  const archivePath = path.join(BIN_DIR, `ffmpeg-download-${Date.now()}.tar.xz`)
+  const extractDir = path.join(BIN_DIR, `ffmpeg-extract-${Date.now()}`)
+  fs.mkdirSync(extractDir, { recursive: true })
+
+  let downloadedFrom: string | null = null
+  let lastError: unknown = null
+  for (const url of urls) {
+    try {
+      console.log(`  Downloading ffmpeg bundle: ${url}`)
+      await follow(url, archivePath)
+      downloadedFrom = url
+      break
+    } catch (error) {
+      lastError = error
+      removePathIfExists(archivePath)
+    }
+  }
+
+  if (!downloadedFrom) {
+    removePathIfExists(extractDir)
+    throw new Error(
+      `Failed to download ffmpeg archive. ${lastError instanceof Error ? lastError.message : "Unknown error"}`
+    )
+  }
+
+  try {
+    execSync(`tar -xJf "${archivePath}" -C "${extractDir}"`, { stdio: "pipe" })
+  } catch (error) {
+    removePathIfExists(archivePath)
+    removePathIfExists(extractDir)
+    throw new Error(
+      `Failed to extract ffmpeg archive from ${downloadedFrom}: ` +
+      `${error instanceof Error ? error.message : "Unknown error"}`
+    )
+  }
+
+  const ffmpegSource = findFileRecursive(extractDir, "ffmpeg")
+  const ffprobeSource = findFileRecursive(extractDir, "ffprobe")
+  if (!ffmpegSource || !ffprobeSource) {
+    removePathIfExists(archivePath)
+    removePathIfExists(extractDir)
+    throw new Error("Downloaded ffmpeg bundle did not contain both ffmpeg and ffprobe binaries")
+  }
+
+  fs.copyFileSync(ffmpegSource, ffmpegTarget)
+  fs.copyFileSync(ffprobeSource, ffprobeTarget)
+  fs.chmodSync(ffmpegTarget, 0o755)
+  fs.chmodSync(ffprobeTarget, 0o755)
+
+  removePathIfExists(archivePath)
+  removePathIfExists(extractDir)
+
+  const ffmpegVersion = execSync(`"${ffmpegTarget}" -version`, { encoding: "utf-8" }).split("\n")[0]?.trim()
+  const ffprobeVersion = execSync(`"${ffprobeTarget}" -version`, { encoding: "utf-8" }).split("\n")[0]?.trim()
+  console.log(`  ffmpeg: installed -> ${ffmpegTarget} (${ffmpegVersion || "ok"})`)
+  console.log(`  ffprobe: installed -> ${ffprobeTarget} (${ffprobeVersion || "ok"})`)
+}
+
 function follow(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const client = url.startsWith("https") ? https : http
@@ -203,16 +336,7 @@ async function main() {
     console.log(`  spotdl: using pinned version ${requestedSpotdlVersion}`)
   }
 
-  // Check ffmpeg-static
-  try {
-    const { default: ffmpegPath } = await import("ffmpeg-static")
-    if (!ffmpegPath) {
-      throw new Error("ffmpeg-static returned no path")
-    }
-    console.log(`  ffmpeg: ${ffmpegPath}`)
-  } catch {
-    console.log("  ffmpeg: NOT FOUND - run: npm install ffmpeg-static")
-  }
+  await installFfmpegBinaries()
 
   // Keep local DB schema in sync for new installs when Prisma files are available.
   if (fs.existsSync(PRISMA_SCHEMA_PATH) && fs.existsSync(PRISMA_CONFIG_PATH)) {

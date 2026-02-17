@@ -26,6 +26,7 @@ const ENV_VARS: EnvVar[] = [
   { name: "AMAZON_API_KEY", required: "never", description: "Amazon API key for provider matching" },
   { name: "YTDLP_VERSION", required: "never", description: "Pinned yt-dlp release version/tag (e.g. 2025.02.19)" },
   { name: "SPOTDL_VERSION", required: "never", description: "Pinned spotdl release version/tag (e.g. 4.2.11)" },
+  { name: "FFMPEG_ARCHIVE_URL", required: "never", description: "Optional direct ffmpeg archive URL override (must include ffmpeg and ffprobe)" },
 ]
 
 const nodeEnv = process.env.NODE_ENV || "development"
