@@ -1,7 +1,7 @@
 import { safeFetch } from "./safeFetch"
 
 const MAX_LYRICS_LENGTH = 20_000
-const FETCH_TIMEOUT_MS = 8_000
+const FETCH_TIMEOUT_MS = 3_500
 const FETCH_MAX_BYTES = 512_000
 
 type LrcLibSearchResult = {
@@ -154,6 +154,32 @@ async function lookupLyricsOvh(query: LookupQuery): Promise<string | null> {
   return cleanLyrics(rawLyrics)
 }
 
+function firstNonNull(promises: Array<Promise<string | null>>): Promise<string | null> {
+  if (promises.length === 0) return Promise.resolve(null)
+
+  return new Promise((resolve) => {
+    let pending = promises.length
+    let resolved = false
+
+    const settle = (value: string | null) => {
+      if (resolved) return
+      if (value) {
+        resolved = true
+        resolve(value)
+        return
+      }
+      pending -= 1
+      if (pending === 0) {
+        resolve(null)
+      }
+    }
+
+    for (const promise of promises) {
+      promise.then(settle).catch(() => settle(null))
+    }
+  })
+}
+
 export async function lookupLyrics(input: LyricsLookupInput): Promise<string | null> {
   const title = input.title.trim()
   const artist = (input.artist || "").trim()
@@ -167,22 +193,23 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
     duration: input.duration ?? null,
   }
 
+  const simplifiedTitle = simplifyTitle(title)
   const primary = await lookupLrcLib(query).catch(() => null)
   if (primary) return primary
 
-  const simplifiedTitle = simplifyTitle(title)
-  if (simplifiedTitle && simplifiedTitle !== title) {
-    const secondary = await lookupLrcLib({
-      ...query,
-      title: simplifiedTitle,
-      album: "",
-    }).catch(() => null)
-    if (secondary) return secondary
-  }
+  const secondaryPromise =
+    simplifiedTitle && simplifiedTitle !== title
+      ? lookupLrcLib({
+          ...query,
+          title: simplifiedTitle,
+          album: "",
+        }).catch(() => null)
+      : Promise.resolve<string | null>(null)
 
-  const fallback = await lookupLyricsOvh({
+  const fallbackPromise = lookupLyricsOvh({
     ...query,
     title: simplifiedTitle || title,
   }).catch(() => null)
-  return fallback
+
+  return firstNonNull([secondaryPromise, fallbackPromise])
 }
