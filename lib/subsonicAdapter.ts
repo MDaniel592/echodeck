@@ -15,6 +15,7 @@ type SubsonicSong = {
   genre: string | null
   starredAt?: Date | null
   playCount?: number
+  rating?: number | null
   albumId?: number | null
   createdAt?: Date | null
 }
@@ -85,6 +86,7 @@ export function mapSubsonicSong(song: SubsonicSong) {
     created: song.createdAt ? song.createdAt.toISOString() : undefined,
     starred: song.starredAt ? song.starredAt.toISOString() : undefined,
     playCount: song.playCount ?? 0,
+    userRating: song.rating ?? undefined,
   }
 }
 
@@ -159,8 +161,8 @@ export function mapSubsonicUser(row: { username: string; role: "admin" | "user" 
     commentRole: true,
     podcastRole: adminRole,
     streamRole: true,
-    jukeboxRole: false,
-    shareRole: adminRole,
+    jukeboxRole: true,
+    shareRole: true,
     videoConversionRole: false,
   }
 }

@@ -26,12 +26,17 @@ model Song {
   genre     String?
   isrc      String?
   lyrics    String?
+  rating    Int?
   starredAt DateTime?
   playCount Int      @default(0)
   lastPlayedAt DateTime?
   bitrate   Int?
   sampleRate Int?
   channels  Int?
+  replayGainTrackDb   Float?
+  replayGainAlbumDb   Float?
+  replayGainTrackPeak Float?
+  replayGainAlbumPeak Float?
   duration  Int?
   format    String
   quality   String?
@@ -56,6 +61,8 @@ model Song {
   downloadTask DownloadTask? @relation(fields: [downloadTaskId], references: [id], onDelete: SetNull)
   playbackSessionsCurrent PlaybackSession[] @relation("CurrentPlaybackSong")
   playbackQueueItems PlaybackQueueItem[] @relation("QueueSong")
+  bookmarks Bookmark[]
+  sharedEntries ShareEntry[] @relation("ShareEntrySong")
   playlistEntries PlaylistSong[]
   createdAt DateTime @default(now())
 
@@ -71,6 +78,7 @@ model Song {
   @@index([artistId])
   @@index([albumId])
   @@index([libraryId])
+  @@index([userId, rating])
 }
 
 model User {
@@ -91,6 +99,9 @@ model User {
   libraries    Library[]
   artists      Artist[]
   albums       Album[]
+  bookmarks    Bookmark[]
+  shares       Share[]
+  shareEntries ShareEntry[]
 }
 
 model Playlist {
@@ -102,6 +113,7 @@ model Playlist {
   songs     Song[]
   entries   PlaylistSong[]
   downloadTasks DownloadTask[]
+  sharedEntries ShareEntry[] @relation("ShareEntryPlaylist")
 
   @@unique([userId, name])
 }
@@ -226,9 +238,67 @@ model Album {
   coverPath   String?
   createdAt   DateTime @default(now())
   songs       Song[]
+  sharedEntries ShareEntry[] @relation("ShareEntryAlbum")
 
   @@unique([userId, title, albumArtist])
   @@index([artistId, title])
+}
+
+model Bookmark {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  songId      Int
+  song        Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  positionSec Float    @default(0)
+  comment     String?
+  createdAt   DateTime @default(now())
+  changedAt   DateTime @updatedAt
+
+  @@index([userId, changedAt])
+  @@index([songId])
+}
+
+enum ShareEntryType {
+  song
+  album
+  playlist
+}
+
+model Share {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token       String   @unique
+  description String?
+  expiresAt   DateTime?
+  lastVisited DateTime?
+  visitCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  entries     ShareEntry[]
+
+  @@index([userId, createdAt])
+}
+
+model ShareEntry {
+  id         Int            @id @default(autoincrement())
+  userId     Int
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shareId    Int
+  share      Share          @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  type       ShareEntryType
+  songId     Int?
+  song       Song?          @relation("ShareEntrySong", fields: [songId], references: [id], onDelete: Cascade)
+  albumId    Int?
+  album      Album?         @relation("ShareEntryAlbum", fields: [albumId], references: [id], onDelete: Cascade)
+  playlistId Int?
+  playlist   Playlist?      @relation("ShareEntryPlaylist", fields: [playlistId], references: [id], onDelete: Cascade)
+  createdAt  DateTime       @default(now())
+
+  @@index([userId, shareId])
+  @@index([songId])
+  @@index([albumId])
+  @@index([playlistId])
 }
 
 model Library {

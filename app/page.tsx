@@ -28,6 +28,10 @@ interface Song {
   coverPath: string | null
   thumbnail: string | null
   fileSize: number | null
+  replayGainTrackDb?: number | null
+  replayGainAlbumDb?: number | null
+  replayGainTrackPeak?: number | null
+  replayGainAlbumPeak?: number | null
   libraryId?: number | null
   playlistId: number | null
   createdAt: string

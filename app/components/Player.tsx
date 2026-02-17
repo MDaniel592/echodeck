@@ -31,6 +31,10 @@ interface Song {
   coverPath: string | null
   thumbnail: string | null
   fileSize: number | null
+  replayGainTrackDb?: number | null
+  replayGainAlbumDb?: number | null
+  replayGainTrackPeak?: number | null
+  replayGainAlbumPeak?: number | null
   playlistId: number | null
   createdAt: string
 }
@@ -56,6 +60,7 @@ const MOBILE_COLLAPSE_MS = 480
 const MOBILE_FADE_MS = 190
 const MINI_FADE_MS = 250
 const QUEUE_CLOSE_DRAG_THRESHOLD = 96
+const NORMALIZATION_STORAGE_KEY = "echodeck.player.normalization.enabled"
 const MOBILE_EXPAND_EASE = "cubic-bezier(0.22, 1, 0.36, 1)"
 const MOBILE_COLLAPSE_EASE = "cubic-bezier(0.4, 0, 1, 1)"
 const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
@@ -91,6 +96,14 @@ export default function Player({
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [volume, setVolume] = useState(0.3)
+  const [normalizationEnabled, setNormalizationEnabled] = useState(() => {
+    if (typeof window === "undefined") return false
+    try {
+      return localStorage.getItem(NORMALIZATION_STORAGE_KEY) === "1"
+    } catch {
+      return false
+    }
+  })
   const [shuffleEnabled, setShuffleEnabled] = useState(false)
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("off")
   const [isMobileViewport, setIsMobileViewport] = useState(false)
@@ -112,6 +125,9 @@ export default function Player({
   const mediaSessionMetadataReadyRef = useRef(false)
   const mediaSessionLastSyncAtRef = useRef(0)
   const navRef = useRef({ canGoPrev: false, canGoNext: false, playPrev: () => {}, playNext: () => {} })
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
+  const gainNodeRef = useRef<GainNode | null>(null)
   const isBraveBrowser = useMemo(
     () => (typeof navigator !== "undefined" ? /Brave\//i.test(navigator.userAgent) : false),
     []
@@ -153,6 +169,36 @@ export default function Player({
     if (repeatMode === "all") return 0
     return null
   }, [currentIndex, shuffleEnabled, getRandomIndex, repeatMode, songs.length])
+
+  const setupAudioGraph = useCallback(() => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (typeof window === "undefined" || typeof window.AudioContext === "undefined") return
+    if (audioContextRef.current && gainNodeRef.current && mediaSourceRef.current) return
+
+    const context = audioContextRef.current ?? new window.AudioContext()
+    audioContextRef.current = context
+    const source = mediaSourceRef.current ?? context.createMediaElementSource(audio)
+    mediaSourceRef.current = source
+    const gain = gainNodeRef.current ?? context.createGain()
+    gainNodeRef.current = gain
+
+    source.connect(gain)
+    gain.connect(context.destination)
+  }, [])
+
+  const computeNormalizationLinearGain = useCallback((currentSong: Song | null) => {
+    if (!normalizationEnabled || !currentSong) return 1
+    const gainDb = currentSong.replayGainTrackDb ?? currentSong.replayGainAlbumDb
+    if (typeof gainDb !== "number" || !Number.isFinite(gainDb)) return 1
+
+    let linear = Math.pow(10, gainDb / 20)
+    const peak = currentSong.replayGainTrackPeak ?? currentSong.replayGainAlbumPeak
+    if (typeof peak === "number" && Number.isFinite(peak) && peak > 0 && linear * peak > 1) {
+      linear = 1 / peak
+    }
+    return Math.min(3, Math.max(0.1, linear))
+  }, [normalizationEnabled])
 
   const playPrev = useCallback(() => {
     const prevIndex = getPrevIndex()
@@ -210,6 +256,36 @@ export default function Player({
   }, [isBraveBrowser])
 
   useEffect(() => {
+    try {
+      localStorage.setItem(NORMALIZATION_STORAGE_KEY, normalizationEnabled ? "1" : "0")
+    } catch {
+      // ignore storage failures
+    }
+  }, [normalizationEnabled])
+
+  useEffect(() => {
+    setupAudioGraph()
+    return () => {
+      const context = audioContextRef.current
+      audioContextRef.current = null
+      mediaSourceRef.current = null
+      gainNodeRef.current = null
+      if (context) {
+        context.close().catch(() => {})
+      }
+    }
+  }, [setupAudioGraph])
+
+  useEffect(() => {
+    setupAudioGraph()
+    const gainNode = gainNodeRef.current
+    const context = audioContextRef.current
+    if (!gainNode || !context) return
+    const target = computeNormalizationLinearGain(song)
+    gainNode.gain.setTargetAtTime(target, context.currentTime, 0.02)
+  }, [song, normalizationEnabled, computeNormalizationLinearGain, setupAudioGraph])
+
+  useEffect(() => {
     const audio = audioRef.current
     if (!audio || !song) return
 
@@ -242,6 +318,10 @@ export default function Player({
     }
     const onPlay = () => {
       setPlaying(true)
+      setupAudioGraph()
+      if (audioContextRef.current?.state === "suspended") {
+        audioContextRef.current.resume().catch(() => {})
+      }
       if (typeof window !== "undefined" && "mediaSession" in navigator) {
         navigator.mediaSession.playbackState = "playing"
       }
@@ -292,7 +372,7 @@ export default function Player({
       audio.removeEventListener("ended", onEnded)
       audio.removeEventListener("seeked", onSeeked)
     }
-  }, [emitPlaybackState, getNextIndex, onSongChange, repeatMode, song?.id, songs, syncMediaSessionPosition])
+  }, [emitPlaybackState, getNextIndex, onSongChange, repeatMode, setupAudioGraph, song?.id, songs, syncMediaSessionPosition])
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
@@ -301,9 +381,13 @@ export default function Player({
       audio.pause()
       setPlaying(false)
     } else {
+      setupAudioGraph()
+      if (audioContextRef.current?.state === "suspended") {
+        audioContextRef.current.resume().catch(() => {})
+      }
       audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
     }
-  }, [playing])
+  }, [playing, setupAudioGraph])
 
   function changeVolume(e: React.ChangeEvent<HTMLInputElement>) {
     const val = parseFloat(e.target.value)
@@ -1218,6 +1302,7 @@ export default function Player({
         progress={progress}
         volume={volume}
         isQueueSheetOpen={isQueueSheetOpen}
+        normalizationEnabled={normalizationEnabled}
         coverSrc={coverSrc}
         onToggleShuffle={() => setShuffleEnabled((prev) => !prev)}
         onPlayPrev={playPrev}
@@ -1226,6 +1311,7 @@ export default function Player({
         onCycleRepeat={cycleRepeatMode}
         onVolumeChange={changeVolume}
         onToggleQueue={toggleQueueSheet}
+        onToggleNormalization={() => setNormalizationEnabled((prev) => !prev)}
         desktopSeekBarRef={desktopSeekBarRef}
         onDesktopSeekClick={handleDesktopSeekClick}
         onDesktopSeekTouchStart={handleDesktopSeekTouchStart}

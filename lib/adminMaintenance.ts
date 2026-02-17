@@ -645,6 +645,10 @@ async function runRefreshFileMetadata(
       bitrate: true,
       sampleRate: true,
       channels: true,
+      replayGainTrackDb: true,
+      replayGainAlbumDb: true,
+      replayGainTrackPeak: true,
+      replayGainAlbumPeak: true,
       isrc: true,
       lyrics: true,
     },
@@ -690,6 +694,10 @@ async function runRefreshFileMetadata(
       extracted.bitrate !== null ||
       extracted.sampleRate !== null ||
       extracted.channels !== null ||
+      extracted.replayGainTrackDb !== null ||
+      extracted.replayGainAlbumDb !== null ||
+      extracted.replayGainTrackPeak !== null ||
+      extracted.replayGainAlbumPeak !== null ||
       extracted.isrc !== null ||
       extracted.lyrics !== null
 
@@ -710,6 +718,10 @@ async function runRefreshFileMetadata(
     const nextBitrate = extracted.bitrate ?? song.bitrate
     const nextSampleRate = extracted.sampleRate ?? song.sampleRate
     const nextChannels = extracted.channels ?? song.channels
+    const nextReplayGainTrackDb = extracted.replayGainTrackDb ?? song.replayGainTrackDb
+    const nextReplayGainAlbumDb = extracted.replayGainAlbumDb ?? song.replayGainAlbumDb
+    const nextReplayGainTrackPeak = extracted.replayGainTrackPeak ?? song.replayGainTrackPeak
+    const nextReplayGainAlbumPeak = extracted.replayGainAlbumPeak ?? song.replayGainAlbumPeak
     const nextIsrc = extracted.isrc ?? song.isrc
     const nextLyrics = extracted.lyrics ?? song.lyrics
 
@@ -726,6 +738,10 @@ async function runRefreshFileMetadata(
       nextBitrate !== song.bitrate ||
       nextSampleRate !== song.sampleRate ||
       nextChannels !== song.channels ||
+      nextReplayGainTrackDb !== song.replayGainTrackDb ||
+      nextReplayGainAlbumDb !== song.replayGainAlbumDb ||
+      nextReplayGainTrackPeak !== song.replayGainTrackPeak ||
+      nextReplayGainAlbumPeak !== song.replayGainAlbumPeak ||
       nextIsrc !== song.isrc ||
       nextLyrics !== song.lyrics
 
@@ -748,6 +764,10 @@ async function runRefreshFileMetadata(
             bitrate: nextBitrate,
             sampleRate: nextSampleRate,
             channels: nextChannels,
+            replayGainTrackDb: nextReplayGainTrackDb,
+            replayGainAlbumDb: nextReplayGainAlbumDb,
+            replayGainTrackPeak: nextReplayGainTrackPeak,
+            replayGainAlbumPeak: nextReplayGainAlbumPeak,
             isrc: nextIsrc,
             lyrics: nextLyrics,
           },
