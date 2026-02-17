@@ -60,14 +60,17 @@ type MaintenanceProgressCallback = (event: MaintenanceProgress) => void
 const MALFORMED_PREFIX = /^[0-9]{10,}[\s-]+/
 const ORIGIN_LOOKUP_TIMEOUT_MS = 15_000
 const SPOTIFY_LOOKUP_TIMEOUT_MS = 7_000
-const LYRICS_LOOKUP_TIMEOUT_MS = 8_000
+const LYRICS_LOOKUP_TIMEOUT_MS = Math.max(
+  1_500,
+  Math.min(20_000, Number.parseInt(process.env.LYRICS_LOOKUP_TIMEOUT_MS || "6000", 10) || 6_000)
+)
 const ORIGIN_METADATA_CONCURRENCY = Math.max(
   1,
   Math.min(8, Number.parseInt(process.env.ORIGIN_METADATA_CONCURRENCY || "4", 10) || 4)
 )
 const LYRICS_LOOKUP_CONCURRENCY = Math.max(
   1,
-  Math.min(8, Number.parseInt(process.env.LYRICS_LOOKUP_CONCURRENCY || "3", 10) || 3)
+  Math.min(12, Number.parseInt(process.env.LYRICS_LOOKUP_CONCURRENCY || "6", 10) || 6)
 )
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
