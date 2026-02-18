@@ -153,6 +153,12 @@ Subsonic-compatible endpoints:
 
 Provider credentials are environment-managed only. Keep them in `.env` or your deployment secret manager and never commit real secrets.
 
+Reverse-proxy hardening checklist:
+- Set `TRUST_PROXY=1` only when traffic reaches EchoDeck through a trusted reverse proxy.
+- Restrict direct app port access (prefer private network + proxy-only ingress).
+- Disable or redact query-string logging for `/api/subsonic/rest` and `/api/subsonic/share/*` at the proxy layer, since Subsonic-compatible clients send auth params in the URL by protocol design.
+- Keep access logs private and rotate them regularly.
+
 ## Legal
 
 This project is distributed for self-hosted use. You are responsible for compliance with:
