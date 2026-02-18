@@ -17,44 +17,7 @@ import {
   ShuffleIcon,
 } from "./player/ui"
 import { useSeekBarHandlers } from "./player/useSeekBarHandlers"
-
-interface Song {
-  id: number
-  title: string
-  artist: string | null
-  duration: number | null
-  format: string
-  quality: string | null
-  source: string
-  sourceUrl: string | null
-  filePath: string
-  coverPath: string | null
-  thumbnail: string | null
-  fileSize: number | null
-  replayGainTrackDb?: number | null
-  replayGainAlbumDb?: number | null
-  replayGainTrackPeak?: number | null
-  replayGainAlbumPeak?: number | null
-  playlistId: number | null
-  createdAt: string
-}
-
-interface PlayerProps {
-  song: Song | null
-  songs: Song[]
-  onSongChange: (song: Song) => void
-  onQueueReorder?: (fromIndex: number, toIndex: number) => void
-  onQueueRemove?: (songId: number, index: number) => void
-  onQueueClear?: () => void
-  onPlaybackStateChange?: (state: {
-    positionSec: number
-    isPlaying: boolean
-    repeatMode: RepeatMode
-    shuffle: boolean
-  }) => void
-}
-
-type RepeatMode = "off" | "all" | "one"
+import type { PlayerProps, PlayerSong, RepeatMode } from "./player/types"
 const MOBILE_EXPAND_MS = 720
 const MOBILE_COLLAPSE_MS = 480
 const MOBILE_FADE_MS = 190
@@ -193,7 +156,7 @@ export default function Player({
     gain.connect(context.destination)
   }, [])
 
-  const hasReplayGain = useCallback((currentSong: Song | null): boolean => {
+  const hasReplayGain = useCallback((currentSong: PlayerSong | null): boolean => {
     if (!currentSong) return false
     const gainDb = currentSong.replayGainTrackDb ?? currentSong.replayGainAlbumDb
     return typeof gainDb === "number" && Number.isFinite(gainDb)
@@ -228,7 +191,7 @@ export default function Player({
     gain.connect(context.destination)
   }, [])
 
-  const computeNormalizationLinearGain = useCallback((currentSong: Song | null) => {
+  const computeNormalizationLinearGain = useCallback((currentSong: PlayerSong | null) => {
     if (!normalizationEnabled || !currentSong) return 1
     const gainDb = currentSong.replayGainTrackDb ?? currentSong.replayGainAlbumDb
     if (typeof gainDb !== "number" || !Number.isFinite(gainDb)) return 1
