@@ -28,6 +28,12 @@ import {
   NORMALIZATION_STORAGE_KEY,
   QUEUE_CLOSE_DRAG_THRESHOLD,
 } from "./player/constants"
+import {
+  canGoNextInQueue,
+  canGoPrevInQueue,
+  getNextQueueIndex,
+  getPrevQueueIndex,
+} from "./player/navigation"
 import type { PlayerProps, PlayerSong, RepeatMode } from "./player/types"
 
 export default function Player({
@@ -93,40 +99,23 @@ export default function Player({
 
   const currentIndex = song ? songs.findIndex((s) => s.id === song.id) : -1
 
-  const getRandomIndex = useCallback(() => {
-    if (songs.length < 2 || currentIndex < 0) return null
-    let nextIndex = currentIndex
-    while (nextIndex === currentIndex) {
-      nextIndex = Math.floor(Math.random() * songs.length)
-    }
-    return nextIndex
-  }, [songs.length, currentIndex])
-
   const getPrevIndex = useCallback(() => {
-    if (currentIndex < 0) return null
-
-    if (shuffleEnabled) {
-      const randomIndex = getRandomIndex()
-      if (randomIndex !== null) return randomIndex
-    }
-
-    if (currentIndex > 0) return currentIndex - 1
-    if (repeatMode === "all") return songs.length - 1
-    return null
-  }, [currentIndex, shuffleEnabled, getRandomIndex, repeatMode, songs.length])
+    return getPrevQueueIndex({
+      currentIndex,
+      totalSongs: songs.length,
+      shuffleEnabled,
+      repeatMode,
+    })
+  }, [currentIndex, shuffleEnabled, repeatMode, songs.length])
 
   const getNextIndex = useCallback(() => {
-    if (currentIndex < 0) return null
-
-    if (shuffleEnabled) {
-      const randomIndex = getRandomIndex()
-      if (randomIndex !== null) return randomIndex
-    }
-
-    if (currentIndex < songs.length - 1) return currentIndex + 1
-    if (repeatMode === "all") return 0
-    return null
-  }, [currentIndex, shuffleEnabled, getRandomIndex, repeatMode, songs.length])
+    return getNextQueueIndex({
+      currentIndex,
+      totalSongs: songs.length,
+      shuffleEnabled,
+      repeatMode,
+    })
+  }, [currentIndex, shuffleEnabled, repeatMode, songs.length])
 
   const setupAudioGraph = useCallback(() => {
     const audio = audioRef.current
@@ -404,17 +393,19 @@ export default function Player({
     })
   }
 
-  const canGoPrev =
-    currentIndex >= 0 &&
-    (shuffleEnabled
-      ? songs.length > 1 || repeatMode === "all"
-      : currentIndex > 0 || repeatMode === "all")
+  const canGoPrev = canGoPrevInQueue({
+    currentIndex,
+    totalSongs: songs.length,
+    shuffleEnabled,
+    repeatMode,
+  })
 
-  const canGoNext =
-    currentIndex >= 0 &&
-    (shuffleEnabled
-      ? songs.length > 1 || repeatMode === "all"
-      : currentIndex < songs.length - 1 || repeatMode === "all")
+  const canGoNext = canGoNextInQueue({
+    currentIndex,
+    totalSongs: songs.length,
+    shuffleEnabled,
+    repeatMode,
+  })
   const queuePosition = queuePositionLabel(currentIndex, songs.length)
 
   useEffect(() => {
