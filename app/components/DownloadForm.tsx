@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CloseIcon, InfoIcon, MusicIcon, SoundCloudIcon, SpotifyIcon, YouTubeIcon } from "./download/icons"
 import { SourceIcon, TaskPager, TaskStatusBadge } from "./download/taskUi"
+import { getDownloadUrlInfo } from "./download/url"
 import {
   type DownloadTaskDetail,
   type DownloadTaskSummary,
@@ -46,31 +47,10 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
   const seenStatusesRef = useRef<Map<number, string>>(new Map())
   const hasFetchedTasksRef = useRef(false)
 
-  const normalizedUrl = url.trim().toLowerCase()
-  const isSpotify = normalizedUrl.includes("spotify.com")
-  const isYouTube = normalizedUrl.includes("youtube.com") || normalizedUrl.includes("youtu.be")
-  const isSoundCloud =
-    normalizedUrl.includes("soundcloud.com") || normalizedUrl.includes("on.soundcloud.com")
-  const hasPlaylistParam = (() => {
-    if (!isYouTube) return false
-    try {
-      const parsed = new URL(url)
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        return false
-      }
-      return parsed.searchParams.has("list")
-    } catch {
-      return false
-    }
-  })()
-
-  const detectedPlatform = isSpotify
-    ? "Spotify"
-    : isYouTube
-    ? "YouTube"
-    : isSoundCloud
-    ? "SoundCloud"
-    : null
+  const { isSpotify, isYouTube, isSoundCloud, hasPlaylistParam, detectedPlatform } = useMemo(
+    () => getDownloadUrlInfo(url),
+    [url]
+  )
   const creatingPlaylist = playlistChoice === "__new__"
   const hasActiveTasks = useMemo(
     () => tasks.some((task) => !isTerminalTaskStatus(task.status)),
