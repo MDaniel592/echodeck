@@ -2,7 +2,7 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { resolveSafeDownloadPathForDelete } from "../lib/downloadPaths"
+import { resolveSafeDownloadPathForDelete, resolveSafeDownloadPathForRead } from "../lib/downloadPaths"
 
 describe("downloadPaths", () => {
   let tempRoot = ""
@@ -24,6 +24,26 @@ describe("downloadPaths", () => {
     await fs.writeFile(filePath, "test")
 
     const resolved = resolveSafeDownloadPathForDelete(filePath)
+
+    expect(resolved).toBe(await fs.realpath(filePath))
+  })
+
+  it("accepts legacy absolute /downloads paths for reads", async () => {
+    const filePath = path.join(tempRoot, "downloads", "song.mp3")
+    await fs.writeFile(filePath, "test")
+
+    const legacyPath = "/downloads/song.mp3"
+    const resolved = resolveSafeDownloadPathForRead(legacyPath)
+
+    expect(resolved).toBe(await fs.realpath(filePath))
+  })
+
+  it("accepts /app/downloads absolute paths by remapping to current root", async () => {
+    const filePath = path.join(tempRoot, "downloads", "song.mp3")
+    await fs.writeFile(filePath, "test")
+
+    const legacyPath = "/app/downloads/song.mp3"
+    const resolved = resolveSafeDownloadPathForRead(legacyPath)
 
     expect(resolved).toBe(await fs.realpath(filePath))
   })
