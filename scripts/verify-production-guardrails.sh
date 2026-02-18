@@ -13,7 +13,9 @@ $FINDER 'RUN test -n "\$YTDLP_VERSION" && test -n "\$SPOTDL_VERSION"' Dockerfile
 $FINDER 'RUN --mount=type=cache,target=/root/.npm PRISMA_VERSION=' Dockerfile
 $FINDER 'DOTENV_VERSION=' Dockerfile
 $FINDER 'npm install --no-save --no-audit --no-fund --ignore-scripts' Dockerfile
-$FINDER 'npx --no-install prisma db push && exec node server.js' Dockerfile
+$FINDER 'prisma migrate deploy' Dockerfile
+$FINDER 'npx --no-install prisma db push' Dockerfile
+$FINDER 'exec node server.js' Dockerfile
 $FINDER 'DATABASE_URL is required in production' prisma.config.ts
 
 if rg -q 'COPY( --link)? --from=builder /app/node_modules ./node_modules' Dockerfile; then

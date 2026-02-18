@@ -45,7 +45,7 @@ docker compose up --build
 Use `docker-compose.example.yml` as the committed template.
 Your local `docker-compose.yml` is intentionally gitignored and can contain private domain/reverse-proxy settings.
 `docker-compose.yml` requires `JWT_SECRET` and `SETUP_SECRET` for startup.
-On container start, the image runs `npm run setup` automatically so `yt-dlp` and `spotdl` are installed before the app serves requests.
+On container start, the image applies Prisma migrations when present (`prisma migrate deploy`) and falls back to `prisma db push` for migration-less installs.
 
 ## Environment Variables
 

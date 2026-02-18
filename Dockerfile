@@ -81,5 +81,5 @@ RUN mkdir -p /app/data /app/downloads
 
 EXPOSE 3000
 
-# Push schema then start the standalone server.
-CMD ["sh", "-c", "npx --no-install prisma db push && exec node server.js"]
+# Apply migrations when present; fallback to db push for migration-less installs.
+CMD ["sh", "-c", "if [ -d prisma/migrations ] && [ \"$(find prisma/migrations -mindepth 1 -maxdepth 1 | wc -l)\" -gt 0 ]; then npx --no-install prisma migrate deploy; else npx --no-install prisma db push; fi && exec node server.js"]
