@@ -389,3 +389,14 @@ model RateLimitEvent {
   @@index([key, createdAt])
   @@index([createdAt])
 }
+
+model RateLimitBucket {
+  id          Int      @id @default(autoincrement())
+  key         String
+  bucketStart DateTime
+  count       Int      @default(0)
+
+  @@unique([key, bucketStart])
+  @@index([key, bucketStart])
+  @@index([bucketStart])
+}

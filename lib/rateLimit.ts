@@ -14,12 +14,13 @@ const store = new Map<string, WindowEntry>()
 let warnedDbFallback = false
 
 const CLEANUP_INTERVAL_MS = 60_000
-let lastCleanup = Date.now()
+let lastMemoryCleanup = Date.now()
+let lastDatabaseCleanup = Date.now()
 
 function cleanup(windowMs: number) {
   const now = Date.now()
-  if (now - lastCleanup < CLEANUP_INTERVAL_MS) return
-  lastCleanup = now
+  if (now - lastMemoryCleanup < CLEANUP_INTERVAL_MS) return
+  lastMemoryCleanup = now
 
   const cutoff = now - windowMs
   for (const [key, entry] of store) {
@@ -73,37 +74,47 @@ function shouldUseMemoryBackend(): boolean {
   return process.env.NODE_ENV === "test"
 }
 
+function getRateLimitBucketMs(): number {
+  const parsed = Number.parseInt(process.env.RATE_LIMIT_BUCKET_MS || "", 10)
+  if (!Number.isInteger(parsed)) return 1000
+  return Math.min(Math.max(parsed, 250), 10_000)
+}
+
 async function databaseCheckRateLimit(
   key: string,
   maxAttempts: number,
   windowMs: number
 ): Promise<RateLimitResult> {
   const now = Date.now()
+  const bucketMs = getRateLimitBucketMs()
   const nowDate = new Date(now)
-  const cutoffDate = new Date(now - windowMs)
+  const cutoffMs = now - windowMs
+  const queryStartMs = cutoffMs - bucketMs
 
-  const shouldCleanup = now - lastCleanup >= CLEANUP_INTERVAL_MS
+  const shouldCleanup = now - lastDatabaseCleanup >= CLEANUP_INTERVAL_MS
   if (shouldCleanup) {
-    lastCleanup = now
-    await prisma.rateLimitEvent.deleteMany({
-      where: { createdAt: { lt: cutoffDate } },
+    lastDatabaseCleanup = now
+    await prisma.rateLimitBucket.deleteMany({
+      where: { bucketStart: { lt: new Date(queryStartMs) } },
     })
   }
 
   return prisma.$transaction(async (tx) => {
-    const attempts = await tx.rateLimitEvent.findMany({
+    const buckets = await tx.rateLimitBucket.findMany({
       where: {
         key,
-        createdAt: { gt: cutoffDate },
+        bucketStart: { gte: new Date(queryStartMs) },
       },
-      orderBy: { createdAt: "asc" },
-      select: { id: true, createdAt: true },
+      orderBy: { bucketStart: "asc" },
+      select: { bucketStart: true, count: true },
     })
 
-    if (attempts.length >= maxAttempts) {
-      const oldest = attempts[0]?.createdAt
-      const retryAfterSeconds = oldest
-        ? Math.max(1, Math.ceil((oldest.getTime() + windowMs - nowDate.getTime()) / 1000))
+    const attempts = buckets.reduce((sum, bucket) => sum + bucket.count, 0)
+
+    if (attempts >= maxAttempts) {
+      const oldestBucketStart = buckets[0]?.bucketStart
+      const retryAfterSeconds = oldestBucketStart
+        ? Math.max(1, Math.ceil((oldestBucketStart.getTime() + windowMs + bucketMs - nowDate.getTime()) / 1000))
         : 1
       return {
         allowed: false,
@@ -112,16 +123,27 @@ async function databaseCheckRateLimit(
       }
     }
 
-    await tx.rateLimitEvent.create({
-      data: {
+    const bucketStartMs = Math.floor(now / bucketMs) * bucketMs
+    await tx.rateLimitBucket.upsert({
+      where: {
+        key_bucketStart: {
+          key,
+          bucketStart: new Date(bucketStartMs),
+        },
+      },
+      create: {
         key,
-        createdAt: nowDate,
+        bucketStart: new Date(bucketStartMs),
+        count: 1,
+      },
+      update: {
+        count: { increment: 1 },
       },
     })
 
     return {
       allowed: true,
-      remaining: Math.max(0, maxAttempts - (attempts.length + 1)),
+      remaining: Math.max(0, maxAttempts - (attempts + 1)),
       retryAfterSeconds: null,
     }
   })
