@@ -12,6 +12,7 @@ const verifyPasswordMock = vi.hoisted(() => vi.fn())
 const createTokenMock = vi.hoisted(() => vi.fn())
 const encryptSubsonicPasswordMock = vi.hoisted(() => vi.fn())
 const checkRateLimitMock = vi.hoisted(() => vi.fn())
+const peekRateLimitMock = vi.hoisted(() => vi.fn())
 
 vi.mock("../lib/prisma", () => ({
   default: prismaMock,
@@ -28,12 +29,14 @@ vi.mock("../lib/subsonicPassword", () => ({
 
 vi.mock("../lib/rateLimit", () => ({
   checkRateLimit: checkRateLimitMock,
+  peekRateLimit: peekRateLimitMock,
 }))
 
 describe("auth/login route", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     checkRateLimitMock.mockReturnValue({ allowed: true, retryAfterSeconds: 1 })
+    peekRateLimitMock.mockReturnValue({ allowed: true, retryAfterSeconds: 1 })
     createTokenMock.mockReturnValue("jwt-token")
     encryptSubsonicPasswordMock.mockReturnValue("enc-pass")
     verifyPasswordMock.mockResolvedValue(true)
@@ -54,7 +57,7 @@ describe("auth/login route", () => {
   })
 
   it("returns 429 when rate limited", async () => {
-    checkRateLimitMock.mockReturnValueOnce({ allowed: false, retryAfterSeconds: 42 })
+    peekRateLimitMock.mockReturnValueOnce({ allowed: false, retryAfterSeconds: 42 })
 
     const { POST } = await import("../app/api/auth/login/route")
     const req = new NextRequest("http://localhost/api/auth/login", {
@@ -104,7 +107,31 @@ describe("auth/login route", () => {
     const res = await POST(req)
 
     expect(res.status).toBe(401)
+    expect(peekRateLimitMock.mock.calls[1]?.[0]).toBe("login:account:admin")
     expect(checkRateLimitMock.mock.calls[1]?.[0]).toBe("login:account:admin")
+  })
+
+  it("does not consume rate limit on successful login", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({
+      id: 1,
+      passwordHash: "hash",
+      subsonicPasswordEnc: null,
+      authTokenVersion: 3,
+      disabledAt: null,
+    })
+    prismaMock.user.update.mockResolvedValue({})
+
+    const { POST } = await import("../app/api/auth/login/route")
+    const req = new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username: "admin", password: "pw" }),
+      headers: { "content-type": "application/json" },
+    })
+
+    const res = await POST(req)
+    expect(res.status).toBe(200)
+    expect(peekRateLimitMock).toHaveBeenCalledTimes(2)
+    expect(checkRateLimitMock).not.toHaveBeenCalled()
   })
 
   it("sets auth cookie on successful login", async () => {

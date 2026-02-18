@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { checkRateLimit } from "../lib/rateLimit"
+import { checkRateLimit, peekRateLimit } from "../lib/rateLimit"
 
 describe("rateLimit", () => {
   it("allows requests within the limit", async () => {
@@ -34,5 +34,16 @@ describe("rateLimit", () => {
 
     expect(result1.allowed).toBe(false)
     expect(result2.allowed).toBe(true)
+  })
+
+  it("can peek without consuming an attempt", async () => {
+    const key = `test-peek-${Date.now()}`
+    const peek = await peekRateLimit(key, 2, 60_000)
+    expect(peek.allowed).toBe(true)
+    expect(peek.remaining).toBe(2)
+
+    const first = await checkRateLimit(key, 2, 60_000)
+    expect(first.allowed).toBe(true)
+    expect(first.remaining).toBe(1)
   })
 })

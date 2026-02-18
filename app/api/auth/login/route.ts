@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../lib/prisma"
 import { verifyPassword, createToken } from "../../../../lib/auth"
 import { encryptSubsonicPassword } from "../../../../lib/subsonicPassword"
-import { checkRateLimit } from "../../../../lib/rateLimit"
+import { checkRateLimit, peekRateLimit } from "../../../../lib/rateLimit"
 import { getClientIdentifier } from "../../../../lib/clientIdentity"
 
 const LOGIN_MAX_ATTEMPTS_PER_ACCOUNT = 10
@@ -22,8 +22,11 @@ export async function POST(request: NextRequest) {
     }
 
     const client = getClientIdentifier(request, "login")
-    const perClientLimit = await checkRateLimit(
-      `login:client:${client}`,
+    const clientKey = `login:client:${client}`
+    const accountKey = `login:account:${username.toLowerCase()}`
+
+    const perClientLimit = await peekRateLimit(
+      clientKey,
       LOGIN_MAX_ATTEMPTS_PER_CLIENT,
       LOGIN_WINDOW_MS
     )
@@ -39,8 +42,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const accountKey = `login:account:${username.toLowerCase()}`
-    const accountLimit = await checkRateLimit(
+    const accountLimit = await peekRateLimit(
       accountKey,
       LOGIN_MAX_ATTEMPTS_PER_ACCOUNT,
       LOGIN_WINDOW_MS
@@ -62,6 +64,10 @@ export async function POST(request: NextRequest) {
       select: { id: true, passwordHash: true, subsonicPasswordEnc: true, authTokenVersion: true, disabledAt: true },
     })
     if (!user) {
+      await Promise.all([
+        checkRateLimit(clientKey, LOGIN_MAX_ATTEMPTS_PER_CLIENT, LOGIN_WINDOW_MS),
+        checkRateLimit(accountKey, LOGIN_MAX_ATTEMPTS_PER_ACCOUNT, LOGIN_WINDOW_MS),
+      ])
       return NextResponse.json(
         { error: "Invalid username or password" },
         { status: 401 }
@@ -76,6 +82,10 @@ export async function POST(request: NextRequest) {
 
     const valid = await verifyPassword(password, user.passwordHash)
     if (!valid) {
+      await Promise.all([
+        checkRateLimit(clientKey, LOGIN_MAX_ATTEMPTS_PER_CLIENT, LOGIN_WINDOW_MS),
+        checkRateLimit(accountKey, LOGIN_MAX_ATTEMPTS_PER_ACCOUNT, LOGIN_WINDOW_MS),
+      ])
       return NextResponse.json(
         { error: "Invalid username or password" },
         { status: 401 }

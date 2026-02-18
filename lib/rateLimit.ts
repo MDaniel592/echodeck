@@ -73,7 +73,8 @@ export interface RateLimitResult {
 function memoryCheckRateLimit(
   key: string,
   maxAttempts: number,
-  windowMs: number
+  windowMs: number,
+  consume: boolean
 ): RateLimitResult {
   cleanup(windowMs)
 
@@ -94,10 +95,14 @@ function memoryCheckRateLimit(
     return { allowed: false, remaining: 0, retryAfterSeconds }
   }
 
-  entry.timestamps.push(now)
+  if (consume) {
+    entry.timestamps.push(now)
+  }
+
+  const attempts = entry.timestamps.length
   return {
     allowed: true,
-    remaining: maxAttempts - entry.timestamps.length,
+    remaining: Math.max(0, maxAttempts - attempts),
     retryAfterSeconds: null,
   }
 }
@@ -176,7 +181,8 @@ export function resetRateLimitMetrics(): void {
 async function databaseCheckRateLimit(
   key: string,
   maxAttempts: number,
-  windowMs: number
+  windowMs: number,
+  consume: boolean
 ): Promise<RateLimitResult> {
   const now = Date.now()
   const bucketMs = getRateLimitBucketMs()
@@ -216,45 +222,48 @@ async function databaseCheckRateLimit(
       }
     }
 
-    const bucketStartMs = Math.floor(now / bucketMs) * bucketMs
-    await tx.rateLimitBucket.upsert({
-      where: {
-        key_bucketStart: {
+    if (consume) {
+      const bucketStartMs = Math.floor(now / bucketMs) * bucketMs
+      await tx.rateLimitBucket.upsert({
+        where: {
+          key_bucketStart: {
+            key,
+            bucketStart: new Date(bucketStartMs),
+          },
+        },
+        create: {
           key,
           bucketStart: new Date(bucketStartMs),
+          count: 1,
         },
-      },
-      create: {
-        key,
-        bucketStart: new Date(bucketStartMs),
-        count: 1,
-      },
-      update: {
-        count: { increment: 1 },
-      },
-    })
+        update: {
+          count: { increment: 1 },
+        },
+      })
+    }
 
     return {
       allowed: true,
-      remaining: Math.max(0, maxAttempts - (attempts + 1)),
+      remaining: Math.max(0, maxAttempts - (attempts + (consume ? 1 : 0))),
       retryAfterSeconds: null,
     }
   })
 }
 
-export async function checkRateLimit(
+async function evaluateRateLimit(
   key: string,
   maxAttempts: number,
-  windowMs: number
+  windowMs: number,
+  consume: boolean
 ): Promise<RateLimitResult> {
   if (shouldUseMemoryBackend()) {
-    const result = memoryCheckRateLimit(key, maxAttempts, windowMs)
+    const result = memoryCheckRateLimit(key, maxAttempts, windowMs, consume)
     recordMetrics(key, result, false)
     return result
   }
 
   try {
-    const result = await databaseCheckRateLimit(key, maxAttempts, windowMs)
+    const result = await databaseCheckRateLimit(key, maxAttempts, windowMs, consume)
     recordMetrics(key, result, false)
     return result
   } catch (error) {
@@ -264,8 +273,24 @@ export async function checkRateLimit(
       console.warn(`[rate-limit] Falling back to in-memory backend: ${reason}`)
     }
     fallbackToMemoryCount += 1
-    const result = memoryCheckRateLimit(key, maxAttempts, windowMs)
+    const result = memoryCheckRateLimit(key, maxAttempts, windowMs, consume)
     recordMetrics(key, result, true)
     return result
   }
+}
+
+export async function checkRateLimit(
+  key: string,
+  maxAttempts: number,
+  windowMs: number
+): Promise<RateLimitResult> {
+  return evaluateRateLimit(key, maxAttempts, windowMs, true)
+}
+
+export async function peekRateLimit(
+  key: string,
+  maxAttempts: number,
+  windowMs: number
+): Promise<RateLimitResult> {
+  return evaluateRateLimit(key, maxAttempts, windowMs, false)
 }
