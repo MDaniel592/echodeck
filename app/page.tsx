@@ -2,13 +2,9 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { useRouter } from "next/navigation"
-import DownloadForm from "./components/DownloadForm"
 import Player from "./components/Player"
-import LibraryManagementPanel from "./components/library/LibraryManagementPanel"
-import MaintenancePanel from "./components/admin/MaintenancePanel"
-import OrganizationPanel from "./components/organization/OrganizationPanel"
 import HomeHeader from "./components/home/HomeHeader"
-import HomePlayerTab from "./components/home/HomePlayerTab"
+import HomeTabPanels from "./components/home/HomeTabPanels"
 import {
   type HomeTab,
   type LibrarySummary,
@@ -786,67 +782,34 @@ export default function Home() {
 
       {/* ── Main ── */}
       <main className="custom-scrollbar relative z-10 flex-1 overflow-y-auto w-full px-2.5 pt-2 sm:px-6 sm:pt-4 pb-32 sm:pb-28">
-        {activeTab === "download" && (
-          <DownloadForm
-            onDownloadStart={() => {}}
-            onDownloadComplete={() => {
-              fetchSongs()
-              fetchPlaylists()
-              fetchLibraries()
-            }}
-          />
-        )}
-
-        {activeTab === "manage" && <LibraryManagementPanel embedded />}
-
-        {activeTab === "organize" && (
-          <OrganizationPanel
-            songs={songs.map((song) => ({
-              id: song.id,
-              title: song.title,
-              artist: song.artist,
-              playlistId: song.playlistId,
-            }))}
-            playlists={playlists.map((playlist) => ({
-              id: playlist.id,
-              name: playlist.name,
-            }))}
-            selectedPlaylist={selectedPlaylist}
-            onAssignPlaylistMany={handleAssignPlaylistMany}
-            onDeleteMany={handleDeleteMany}
-            onCreatePlaylist={createPlaylist}
-            onRefreshSongs={fetchSongs}
-            onRefreshPlaylists={fetchPlaylists}
-          />
-        )}
-
-        {activeTab === "maintenance" && <MaintenancePanel embedded />}
-
-        {activeTab === "player" && (
-          <HomePlayerTab
-            songs={songs}
-            visibleSongs={visibleSongs}
-            queueSongs={queueSongs}
-            loading={loading}
-            searchQuery={searchQuery}
-            scopeMode={scopeMode}
-            viewMode={viewMode}
-            groupedVisibleSongs={groupedVisibleSongs}
-            expandedGroupKey={expandedGroupKey}
-            onExpandedGroupKeyChange={setExpandedGroupKey}
-            currentSongId={currentSongId}
-            playlists={playlists}
-            cardScale={gridCardScale}
-            onPlay={handlePlaySong}
-            onAddToQueue={handleAddToQueue}
-            onPlayNext={handlePlayNext}
-            onDelete={handleDelete}
-            onDeleteMany={handleDeleteMany}
-            onAssignPlaylist={handleAssignPlaylist}
-            onAssignPlaylistMany={handleAssignPlaylistMany}
-            onCreatePlaylist={createPlaylist}
-          />
-        )}
+        <HomeTabPanels
+          activeTab={activeTab}
+          songs={songs}
+          playlists={playlists}
+          selectedPlaylist={selectedPlaylist}
+          loading={loading}
+          searchQuery={searchQuery}
+          scopeMode={scopeMode}
+          viewMode={viewMode}
+          groupedVisibleSongs={groupedVisibleSongs}
+          expandedGroupKey={expandedGroupKey}
+          currentSongId={currentSongId}
+          queueSongs={queueSongs}
+          visibleSongs={visibleSongs}
+          cardScale={gridCardScale}
+          onExpandedGroupKeyChange={setExpandedGroupKey}
+          onPlay={handlePlaySong}
+          onAddToQueue={handleAddToQueue}
+          onPlayNext={handlePlayNext}
+          onDelete={handleDelete}
+          onDeleteMany={handleDeleteMany}
+          onAssignPlaylist={handleAssignPlaylist}
+          onAssignPlaylistMany={handleAssignPlaylistMany}
+          onCreatePlaylist={createPlaylist}
+          onRefreshSongs={fetchSongs}
+          onRefreshPlaylists={fetchPlaylists}
+          onRefreshLibraries={fetchLibraries}
+        />
       </main>
 
       <Player
