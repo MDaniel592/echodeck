@@ -10,8 +10,43 @@ interface WindowEntry {
   timestamps: number[]
 }
 
+type RateLimitBackend = "memory" | "database"
+
+type PrefixMetrics = {
+  total: number
+  allowed: number
+  blocked: number
+  fallbackToMemory: number
+  lastSeenAt: string
+}
+
+export interface RateLimitMetricsSnapshot {
+  startedAt: string
+  backend: RateLimitBackend
+  bucketMs: number
+  fallbackToMemoryCount: number
+  keysTracked: number
+  totals: {
+    total: number
+    allowed: number
+    blocked: number
+  }
+  byPrefix: Array<{
+    prefix: string
+    total: number
+    allowed: number
+    blocked: number
+    fallbackToMemory: number
+    lastSeenAt: string
+  }>
+}
+
 const store = new Map<string, WindowEntry>()
 let warnedDbFallback = false
+let fallbackToMemoryCount = 0
+const metricsStartedAt = new Date().toISOString()
+const metricsByPrefix = new Map<string, PrefixMetrics>()
+let metricsTotals = { total: 0, allowed: 0, blocked: 0 }
 
 const CLEANUP_INTERVAL_MS = 60_000
 let lastMemoryCleanup = Date.now()
@@ -74,10 +109,68 @@ function shouldUseMemoryBackend(): boolean {
   return process.env.NODE_ENV === "test"
 }
 
+function getBackendLabel(): RateLimitBackend {
+  return shouldUseMemoryBackend() ? "memory" : "database"
+}
+
 function getRateLimitBucketMs(): number {
   const parsed = Number.parseInt(process.env.RATE_LIMIT_BUCKET_MS || "", 10)
   if (!Number.isInteger(parsed)) return 1000
   return Math.min(Math.max(parsed, 250), 10_000)
+}
+
+function keyPrefixForMetrics(key: string): string {
+  const trimmed = (key || "").trim()
+  if (!trimmed) return "(empty)"
+  const parts = trimmed.split(":").filter(Boolean)
+  if (parts.length === 0) return "(empty)"
+  return parts.slice(0, 2).join(":")
+}
+
+function recordMetrics(key: string, result: RateLimitResult, usedFallback: boolean) {
+  const prefix = keyPrefixForMetrics(key)
+  const existing = metricsByPrefix.get(prefix) || {
+    total: 0,
+    allowed: 0,
+    blocked: 0,
+    fallbackToMemory: 0,
+    lastSeenAt: new Date().toISOString(),
+  }
+
+  existing.total += 1
+  if (result.allowed) existing.allowed += 1
+  else existing.blocked += 1
+  if (usedFallback) existing.fallbackToMemory += 1
+  existing.lastSeenAt = new Date().toISOString()
+  metricsByPrefix.set(prefix, existing)
+
+  metricsTotals.total += 1
+  if (result.allowed) metricsTotals.allowed += 1
+  else metricsTotals.blocked += 1
+}
+
+export function getRateLimitMetrics(limit = 50): RateLimitMetricsSnapshot {
+  const safeLimit = Math.min(Math.max(limit, 1), 500)
+  const byPrefix = Array.from(metricsByPrefix.entries())
+    .map(([prefix, value]) => ({ prefix, ...value }))
+    .sort((a, b) => b.total - a.total || b.blocked - a.blocked || a.prefix.localeCompare(b.prefix))
+    .slice(0, safeLimit)
+
+  return {
+    startedAt: metricsStartedAt,
+    backend: getBackendLabel(),
+    bucketMs: getRateLimitBucketMs(),
+    fallbackToMemoryCount,
+    keysTracked: metricsByPrefix.size,
+    totals: { ...metricsTotals },
+    byPrefix,
+  }
+}
+
+export function resetRateLimitMetrics(): void {
+  metricsByPrefix.clear()
+  metricsTotals = { total: 0, allowed: 0, blocked: 0 }
+  fallbackToMemoryCount = 0
 }
 
 async function databaseCheckRateLimit(
@@ -155,17 +248,24 @@ export async function checkRateLimit(
   windowMs: number
 ): Promise<RateLimitResult> {
   if (shouldUseMemoryBackend()) {
-    return memoryCheckRateLimit(key, maxAttempts, windowMs)
+    const result = memoryCheckRateLimit(key, maxAttempts, windowMs)
+    recordMetrics(key, result, false)
+    return result
   }
 
   try {
-    return await databaseCheckRateLimit(key, maxAttempts, windowMs)
+    const result = await databaseCheckRateLimit(key, maxAttempts, windowMs)
+    recordMetrics(key, result, false)
+    return result
   } catch (error) {
     if (!warnedDbFallback) {
       warnedDbFallback = true
       const reason = error instanceof Error ? error.message : String(error)
       console.warn(`[rate-limit] Falling back to in-memory backend: ${reason}`)
     }
-    return memoryCheckRateLimit(key, maxAttempts, windowMs)
+    fallbackToMemoryCount += 1
+    const result = memoryCheckRateLimit(key, maxAttempts, windowMs)
+    recordMetrics(key, result, true)
+    return result
   }
 }
