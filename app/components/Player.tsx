@@ -124,6 +124,7 @@ export default function Player({
   )
 
   const currentIndex = song ? songs.findIndex((s) => s.id === song.id) : -1
+  const songId = song?.id ?? null
 
   const getPrevIndex = useCallback(() => {
     return getPrevQueueIndex({
@@ -341,7 +342,7 @@ export default function Player({
 
       const nextIndex = getNextIndex()
       const nextSong = nextIndex === null ? null : songs[nextIndex]
-      if (!nextSong || !song) return
+      if (!nextSong || songId === null) return
 
       const shouldTransition = shouldStartPlaybackTransition({
         duration: Number.isFinite(audio.duration) ? audio.duration : 0,
@@ -349,11 +350,11 @@ export default function Player({
         isPlaying: !audio.paused,
         crossfadeSeconds,
         gaplessEnabled,
-        alreadyTriggered: transitionTriggeredSongIdRef.current === song.id,
+        alreadyTriggered: transitionTriggeredSongIdRef.current === songId,
       })
       if (!shouldTransition) return
 
-      transitionTriggeredSongIdRef.current = song.id
+      transitionTriggeredSongIdRef.current = songId
       if (crossfadeSeconds > 0) {
         const gainNode = gainNodeRef.current
         const context = audioContextRef.current
@@ -371,7 +372,7 @@ export default function Player({
       syncMediaSessionPosition(audio, true)
     }
     const onLoadedMetadata = () => {
-      if (mediaSessionSongIdRef.current !== song?.id) return
+      if (mediaSessionSongIdRef.current !== songId) return
       mediaSessionMetadataReadyRef.current = true
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
       syncMediaSessionPosition(audio, true)
@@ -440,7 +441,7 @@ export default function Player({
     onSongChange,
     repeatMode,
     setupAudioGraph,
-    song?.id,
+    songId,
     songs,
     syncMediaSessionPosition,
   ])
@@ -674,8 +675,6 @@ export default function Player({
     if (!song || !onPlaybackStateChange) return
     emitPlaybackState(currentTime, playing)
   }, [song, currentTime, playing, repeatMode, shuffleEnabled, emitPlaybackState, onPlaybackStateChange])
-
-  const songId = song?.id ?? null
 
   // Seek bar hooks (must be called unconditionally)
   const mobileSeekBarRef = useRef<HTMLDivElement>(null)
