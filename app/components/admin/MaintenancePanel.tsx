@@ -16,6 +16,27 @@ type MaintenanceAudit = {
   importDuplicateSamples: Array<{ id: number; title: string; filePath: string }>
 }
 
+type RateLimitMetrics = {
+  startedAt: string
+  backend: "memory" | "database"
+  bucketMs: number
+  fallbackToMemoryCount: number
+  keysTracked: number
+  totals: {
+    total: number
+    allowed: number
+    blocked: number
+  }
+  byPrefix: Array<{
+    prefix: string
+    total: number
+    allowed: number
+    blocked: number
+    fallbackToMemory: number
+    lastSeenAt: string
+  }>
+}
+
 type MaintenanceAction =
   | "attach_library"
   | "backfill_metadata"
@@ -164,9 +185,13 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
   const router = useRouter()
   const [audit, setAudit] = useState<MaintenanceAudit | null>(null)
   const [loadingAudit, setLoadingAudit] = useState(true)
+  const [rateMetrics, setRateMetrics] = useState<RateLimitMetrics | null>(null)
+  const [loadingRateMetrics, setLoadingRateMetrics] = useState(true)
+  const [refreshingRateMetrics, setRefreshingRateMetrics] = useState(false)
   const [runningAction, setRunningAction] = useState<MaintenanceAction | null>(null)
   const [runningWorkflow, setRunningWorkflow] = useState<string | null>(null)
   const [error, setError] = useState("")
+  const [rateMetricsError, setRateMetricsError] = useState("")
   const [resultLog, setResultLog] = useState<MaintenanceResult[]>([])
   const [progress, setProgress] = useState<MaintenanceProgress | null>(null)
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
@@ -203,6 +228,7 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
       }
 
       await refreshAudit()
+      await refreshRateLimitMetrics()
     }
 
     void bootstrap()
@@ -237,6 +263,47 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
       setError("Failed to load audit.")
     } finally {
       setLoadingAudit(false)
+    }
+  }
+
+  async function refreshRateLimitMetrics() {
+    setRefreshingRateMetrics(true)
+    setRateMetricsError("")
+    try {
+      const res = await fetch("/api/admin/rate-limit/metrics?limit=12", { cache: "no-store" })
+      const data = await res.json()
+      if (!res.ok) {
+        setRateMetricsError(data?.error || "Failed to load rate-limit metrics.")
+        return
+      }
+      setRateMetrics(data as RateLimitMetrics)
+    } catch {
+      setRateMetricsError("Failed to load rate-limit metrics.")
+    } finally {
+      setRefreshingRateMetrics(false)
+      setLoadingRateMetrics(false)
+    }
+  }
+
+  async function resetRateLimitMetricsAction() {
+    setRateMetricsError("")
+    setRefreshingRateMetrics(true)
+    try {
+      const res = await fetch("/api/admin/rate-limit/metrics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reset: true }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        setRateMetricsError(data?.error || "Failed to reset rate-limit metrics.")
+        return
+      }
+      await refreshRateLimitMetrics()
+    } catch {
+      setRateMetricsError("Failed to reset rate-limit metrics.")
+    } finally {
+      setRefreshingRateMetrics(false)
     }
   }
 
@@ -439,6 +506,106 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
                     <div className="mt-1 text-2xl font-semibold tabular-nums">{card.value}</div>
                   </div>
                 ))}
+          </div>
+
+          <div className="mt-6 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold">Rate Limit Metrics</h2>
+                <p className="mt-1 text-xs text-zinc-400">Live counters by key prefix for login and Subsonic protections.</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void refreshRateLimitMetrics()
+                  }}
+                  disabled={refreshingRateMetrics}
+                  className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-60"
+                >
+                  {refreshingRateMetrics ? "Refreshing..." : "Refresh"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void resetRateLimitMetricsAction()
+                  }}
+                  disabled={refreshingRateMetrics}
+                  className="rounded-md border border-red-700/60 px-3 py-1.5 text-xs text-red-200 hover:bg-red-950/40 disabled:opacity-60"
+                >
+                  Reset Metrics
+                </button>
+              </div>
+            </div>
+            {rateMetricsError ? (
+              <div className="mt-3 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-200">
+                {rateMetricsError}
+              </div>
+            ) : null}
+            {loadingRateMetrics ? (
+              <div className="mt-3 h-20 animate-pulse rounded-lg border border-zinc-800 bg-zinc-900/60" />
+            ) : rateMetrics ? (
+              <>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Backend</div>
+                    <div className="text-xs font-medium">{rateMetrics.backend}</div>
+                  </div>
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Bucket (ms)</div>
+                    <div className="text-xs font-medium">{rateMetrics.bucketMs}</div>
+                  </div>
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Total</div>
+                    <div className="text-xs font-medium">{rateMetrics.totals.total}</div>
+                  </div>
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Blocked</div>
+                    <div className="text-xs font-medium text-amber-300">{rateMetrics.totals.blocked}</div>
+                  </div>
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Keys</div>
+                    <div className="text-xs font-medium">{rateMetrics.keysTracked}</div>
+                  </div>
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Fallbacks</div>
+                    <div className="text-xs font-medium text-orange-300">{rateMetrics.fallbackToMemoryCount}</div>
+                  </div>
+                </div>
+                <div className="mt-3 max-h-56 overflow-auto rounded border border-zinc-800">
+                  {rateMetrics.byPrefix.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-zinc-500">No events captured yet.</div>
+                  ) : (
+                    <table className="min-w-full text-left text-xs">
+                      <thead className="bg-zinc-900/70 text-zinc-400">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Prefix</th>
+                          <th className="px-3 py-2 font-medium">Total</th>
+                          <th className="px-3 py-2 font-medium">Allowed</th>
+                          <th className="px-3 py-2 font-medium">Blocked</th>
+                          <th className="px-3 py-2 font-medium">Fallback</th>
+                          <th className="px-3 py-2 font-medium">Last Seen</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rateMetrics.byPrefix.map((row) => (
+                          <tr key={row.prefix} className="border-t border-zinc-800">
+                            <td className="px-3 py-2 font-medium text-zinc-200">{row.prefix}</td>
+                            <td className="px-3 py-2">{row.total}</td>
+                            <td className="px-3 py-2">{row.allowed}</td>
+                            <td className="px-3 py-2 text-amber-300">{row.blocked}</td>
+                            <td className="px-3 py-2 text-orange-300">{row.fallbackToMemory}</td>
+                            <td className="px-3 py-2 text-zinc-400">{new Date(row.lastSeenAt).toLocaleTimeString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="mt-3 text-xs text-zinc-500">No metrics available.</div>
+            )}
           </div>
 
           <div className="mt-6 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
