@@ -55,5 +55,5 @@ export function resolveSafeDownloadPathForDelete(inputPath: string): string | nu
     return null
   }
 
-  return resolvedPath
+  return realPath
 }

@@ -1768,7 +1768,12 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      const stat = await fsPromises.stat(resolvedPath)
+      let stat: Awaited<ReturnType<typeof fsPromises.stat>>
+      try {
+        stat = await fsPromises.stat(resolvedPath)
+      } catch {
+        return new Response("Cover not found", { status: 404 })
+      }
       const stream = fs.createReadStream(resolvedPath)
       return new Response(nodeReadableToWebStream(stream), {
         headers: {
@@ -1827,7 +1832,12 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      const stat = await fsPromises.stat(resolvedPath)
+      let stat: Awaited<ReturnType<typeof fsPromises.stat>>
+      try {
+        stat = await fsPromises.stat(resolvedPath)
+      } catch {
+        return new Response("Avatar not found", { status: 404 })
+      }
       const stream = fs.createReadStream(resolvedPath)
       return new Response(nodeReadableToWebStream(stream), {
         headers: {

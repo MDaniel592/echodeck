@@ -6,6 +6,14 @@ import { encryptSubsonicPassword } from "../../../../lib/subsonicPassword"
 
 export async function POST(request: NextRequest) {
   try {
+    let body: Record<string, unknown>
+    try {
+      const parsed = await request.json()
+      body = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {}
+    } catch {
+      return NextResponse.json({ error: "Malformed JSON body" }, { status: 400 })
+    }
+
     // In production, require SETUP_SECRET for first-user bootstrap.
     const setupSecret = process.env.SETUP_SECRET
     if (process.env.NODE_ENV === "production" && !setupSecret) {
@@ -16,7 +24,6 @@ export async function POST(request: NextRequest) {
     }
 
     if (setupSecret && process.env.NODE_ENV === "production") {
-      const body = await request.clone().json()
       if (body?.setupSecret !== setupSecret) {
         return NextResponse.json(
           { error: "Invalid setup secret" },
@@ -25,7 +32,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const body = await request.json()
     const username = typeof body?.username === "string" ? body.username.trim() : ""
     const password = typeof body?.password === "string" ? body.password : ""
 

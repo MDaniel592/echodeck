@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../../lib/prisma"
 import { AuthError, requireAuth } from "../../../../../lib/requireAuth"
+import { redactSensitiveText } from "../../../../../lib/sanitize"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -128,7 +129,9 @@ export async function GET(
           lastPayload = payload
           controller.enqueue(encoder.encode(`event: task\ndata: ${payload}\n\n`))
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Failed to stream task details"
+          const message = redactSensitiveText(
+            error instanceof Error ? error.message : "Failed to stream task details"
+          )
           controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: message })}\n\n`))
         }
       }
