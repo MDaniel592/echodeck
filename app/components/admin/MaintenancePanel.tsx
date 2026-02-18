@@ -37,6 +37,34 @@ type RateLimitMetrics = {
   }>
 }
 
+type DownloadProviderMetrics = {
+  source: string
+  total: number
+  queued: number
+  running: number
+  completed: number
+  completedWithErrors: number
+  failed: number
+  avgDurationSec: number | null
+  p95DurationSec: number | null
+  errorRatePct: number
+}
+
+type DownloadMetricsSnapshot = {
+  generatedAt: string
+  windowHours: number
+  totals: {
+    tasks: number
+    running: number
+    queued: number
+  }
+  workers: {
+    runningWorkers: number
+    staleCandidates: number
+  }
+  providers: DownloadProviderMetrics[]
+}
+
 type MaintenanceAction =
   | "attach_library"
   | "backfill_metadata"
@@ -70,6 +98,7 @@ interface MaintenancePanelProps {
 
 const MIN_PROGRESS_PANEL_MS = 1200
 const RATE_METRICS_AUTO_REFRESH_MS = 15_000
+const DOWNLOAD_METRICS_AUTO_REFRESH_MS = 15_000
 
 const ACTIONS: Array<{ id: MaintenanceAction; label: string; description: string }> = [
   {
@@ -202,6 +231,11 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
   const [panelMode, setPanelMode] = useState<"running" | "complete" | "error">("running")
   const [activeResult, setActiveResult] = useState<MaintenanceResult | null>(null)
   const [forbidden, setForbidden] = useState(false)
+  const [downloadMetrics, setDownloadMetrics] = useState<DownloadMetricsSnapshot | null>(null)
+  const [loadingDownloadMetrics, setLoadingDownloadMetrics] = useState(true)
+  const [refreshingDownloadMetrics, setRefreshingDownloadMetrics] = useState(false)
+  const [autoRefreshDownloadMetrics, setAutoRefreshDownloadMetrics] = useState(true)
+  const [downloadMetricsError, setDownloadMetricsError] = useState("")
 
   const refreshRateLimitMetrics = useCallback(async () => {
     setRefreshingRateMetrics(true)
@@ -219,6 +253,25 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
     } finally {
       setRefreshingRateMetrics(false)
       setLoadingRateMetrics(false)
+    }
+  }, [])
+
+  const refreshDownloadMetrics = useCallback(async () => {
+    setRefreshingDownloadMetrics(true)
+    setDownloadMetricsError("")
+    try {
+      const res = await fetch("/api/admin/download/metrics?windowHours=24", { cache: "no-store" })
+      const data = await res.json()
+      if (!res.ok) {
+        setDownloadMetricsError(data?.error || "Failed to load download metrics.")
+        return
+      }
+      setDownloadMetrics(data as DownloadMetricsSnapshot)
+    } catch {
+      setDownloadMetricsError("Failed to load download metrics.")
+    } finally {
+      setRefreshingDownloadMetrics(false)
+      setLoadingDownloadMetrics(false)
     }
   }, [])
 
@@ -250,13 +303,14 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
 
       await refreshAudit()
       await refreshRateLimitMetrics()
+      await refreshDownloadMetrics()
     }
 
     void bootstrap()
     return () => {
       active = false
     }
-  }, [embedded, refreshRateLimitMetrics, router])
+  }, [embedded, refreshDownloadMetrics, refreshRateLimitMetrics, router])
 
   useEffect(() => {
     if (!runStartedAt || !runningAction) {
@@ -316,6 +370,14 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
     }, RATE_METRICS_AUTO_REFRESH_MS)
     return () => clearInterval(interval)
   }, [autoRefreshRateMetrics, forbidden, refreshRateLimitMetrics])
+
+  useEffect(() => {
+    if (forbidden || !autoRefreshDownloadMetrics) return
+    const interval = setInterval(() => {
+      void refreshDownloadMetrics()
+    }, DOWNLOAD_METRICS_AUTO_REFRESH_MS)
+    return () => clearInterval(interval)
+  }, [autoRefreshDownloadMetrics, forbidden, refreshDownloadMetrics])
 
   async function runAction(action: MaintenanceAction, dryRun: boolean) {
     const startedAt = Date.now()
@@ -624,6 +686,103 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
               </>
             ) : (
               <div className="mt-3 text-xs text-zinc-500">No metrics available.</div>
+            )}
+          </div>
+
+          <div className="mt-6 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold">Download Observability</h2>
+                <p className="mt-1 text-xs text-zinc-400">Provider latency/error rates and worker health.</p>
+              </div>
+              <div className="flex gap-2">
+                <label className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-2 py-1.5 text-xs text-zinc-300">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-blue-500"
+                    checked={autoRefreshDownloadMetrics}
+                    onChange={(event) => setAutoRefreshDownloadMetrics(event.target.checked)}
+                  />
+                  Auto 15s
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void refreshDownloadMetrics()
+                  }}
+                  disabled={refreshingDownloadMetrics}
+                  className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-60"
+                >
+                  {refreshingDownloadMetrics ? "Refreshing..." : "Refresh"}
+                </button>
+              </div>
+            </div>
+            {downloadMetricsError ? (
+              <div className="mt-3 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-200">
+                {downloadMetricsError}
+              </div>
+            ) : null}
+            {loadingDownloadMetrics ? (
+              <div className="mt-3 h-20 animate-pulse rounded-lg border border-zinc-800 bg-zinc-900/60" />
+            ) : downloadMetrics ? (
+              <>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Tasks (24h)</div>
+                    <div className="text-xs font-medium">{downloadMetrics.totals.tasks}</div>
+                  </div>
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Running</div>
+                    <div className="text-xs font-medium">{downloadMetrics.totals.running}</div>
+                  </div>
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Queued</div>
+                    <div className="text-xs font-medium">{downloadMetrics.totals.queued}</div>
+                  </div>
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Worker PIDs</div>
+                    <div className="text-xs font-medium">{downloadMetrics.workers.runningWorkers}</div>
+                  </div>
+                  <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5">
+                    <div className="text-[11px] text-zinc-400">Stale Candidates</div>
+                    <div className="text-xs font-medium text-amber-300">{downloadMetrics.workers.staleCandidates}</div>
+                  </div>
+                </div>
+                <div className="mt-3 max-h-56 overflow-auto rounded border border-zinc-800">
+                  {downloadMetrics.providers.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-zinc-500">No download tasks captured yet.</div>
+                  ) : (
+                    <table className="min-w-full text-left text-xs">
+                      <thead className="bg-zinc-900/70 text-zinc-400">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Provider</th>
+                          <th className="px-3 py-2 font-medium">Total</th>
+                          <th className="px-3 py-2 font-medium">Running</th>
+                          <th className="px-3 py-2 font-medium">Queued</th>
+                          <th className="px-3 py-2 font-medium">Avg (s)</th>
+                          <th className="px-3 py-2 font-medium">P95 (s)</th>
+                          <th className="px-3 py-2 font-medium">Error %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {downloadMetrics.providers.map((row) => (
+                          <tr key={row.source} className="border-t border-zinc-800">
+                            <td className="px-3 py-2 font-medium text-zinc-200">{row.source}</td>
+                            <td className="px-3 py-2">{row.total}</td>
+                            <td className="px-3 py-2">{row.running}</td>
+                            <td className="px-3 py-2">{row.queued}</td>
+                            <td className="px-3 py-2">{row.avgDurationSec ?? "-"}</td>
+                            <td className="px-3 py-2">{row.p95DurationSec ?? "-"}</td>
+                            <td className="px-3 py-2 text-amber-300">{row.errorRatePct}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="mt-3 text-xs text-zinc-500">No download metrics available.</div>
             )}
           </div>
 
