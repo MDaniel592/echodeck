@@ -39,6 +39,8 @@ interface DesktopPlayerBarProps {
   volume: number
   isQueueSheetOpen: boolean
   normalizationEnabled: boolean
+  gaplessEnabled: boolean
+  crossfadeSeconds: number
   coverSrc: string | null
   onToggleShuffle: () => void
   onPlayPrev: () => void
@@ -48,6 +50,8 @@ interface DesktopPlayerBarProps {
   onVolumeChange: (e: ChangeEvent<HTMLInputElement>) => void
   onToggleQueue: () => void
   onToggleNormalization: () => void
+  onToggleGapless: () => void
+  onCrossfadeChange: (value: number) => void
   desktopSeekBarRef: RefObject<HTMLDivElement | null>
   onDesktopSeekClick: (e: MouseEvent<HTMLDivElement>) => void
   onDesktopSeekTouchStart: (e: TouchEvent<HTMLDivElement>) => void
@@ -70,6 +74,8 @@ export default function DesktopPlayerBar({
   volume,
   isQueueSheetOpen,
   normalizationEnabled,
+  gaplessEnabled,
+  crossfadeSeconds,
   coverSrc,
   onToggleShuffle,
   onPlayPrev,
@@ -79,6 +85,8 @@ export default function DesktopPlayerBar({
   onVolumeChange,
   onToggleQueue,
   onToggleNormalization,
+  onToggleGapless,
+  onCrossfadeChange,
   desktopSeekBarRef,
   onDesktopSeekClick,
   onDesktopSeekTouchStart,
@@ -209,6 +217,33 @@ export default function DesktopPlayerBar({
         >
           NRM
         </button>
+        <button
+          type="button"
+          onClick={onToggleGapless}
+          className={`h-10 min-w-10 rounded-lg px-2 text-xs font-semibold tracking-wide transition-colors lg:h-11 lg:min-w-11 ${
+            gaplessEnabled
+              ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
+              : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+          }`}
+          aria-label={gaplessEnabled ? "Disable gapless playback" : "Enable gapless playback"}
+          title={gaplessEnabled ? "Gapless enabled" : "Gapless disabled"}
+        >
+          GAP
+        </button>
+        <label className="hidden items-center gap-1 rounded-lg border border-zinc-700/70 px-2 py-1 text-[10px] text-zinc-300 lg:inline-flex">
+          XFD
+          <input
+            type="range"
+            min={0}
+            max={8}
+            step={0.5}
+            value={crossfadeSeconds}
+            onChange={(event) => onCrossfadeChange(Number.parseFloat(event.target.value))}
+            className="w-16 accent-emerald-500"
+            aria-label="Crossfade seconds"
+          />
+          <span className="w-8 text-right tabular-nums">{crossfadeSeconds.toFixed(1)}s</span>
+        </label>
         <button
           type="button"
           onClick={onToggleQueue}

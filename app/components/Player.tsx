@@ -22,6 +22,8 @@ import {
   MINI_FADE_MS,
   MOBILE_COLLAPSE_EASE,
   MOBILE_COLLAPSE_MS,
+  CROSSFADE_SECONDS_STORAGE_KEY,
+  GAPLESS_STORAGE_KEY,
   MOBILE_EXPAND_EASE,
   MOBILE_EXPAND_MS,
   MOBILE_FADE_MS,
@@ -38,6 +40,7 @@ import {
   resolvePlayerShortcutAction,
   shouldIgnorePlayerShortcut,
 } from "./player/keyboardShortcuts"
+import { shouldStartPlaybackTransition } from "./player/transitions"
 import type { PlayerProps, PlayerSong, RepeatMode } from "./player/types"
 
 export default function Player({
@@ -72,6 +75,24 @@ export default function Player({
     }
   })
   const [shuffleEnabled, setShuffleEnabled] = useState(false)
+  const [gaplessEnabled, setGaplessEnabled] = useState(() => {
+    if (typeof window === "undefined") return true
+    try {
+      return localStorage.getItem(GAPLESS_STORAGE_KEY) !== "0"
+    } catch {
+      return true
+    }
+  })
+  const [crossfadeSeconds, setCrossfadeSeconds] = useState(() => {
+    if (typeof window === "undefined") return 0
+    try {
+      const stored = Number.parseFloat(localStorage.getItem(CROSSFADE_SECONDS_STORAGE_KEY) || "0")
+      if (!Number.isFinite(stored)) return 0
+      return Math.min(8, Math.max(0, stored))
+    } catch {
+      return 0
+    }
+  })
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("off")
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [isMobileCollapsed, setIsMobileCollapsed] = useState(true)
@@ -91,6 +112,7 @@ export default function Player({
   const mediaSessionSongIdRef = useRef<number | null>(null)
   const mediaSessionMetadataReadyRef = useRef(false)
   const mediaSessionLastSyncAtRef = useRef(0)
+  const transitionTriggeredSongIdRef = useRef<number | null>(null)
   const navRef = useRef({ canGoPrev: false, canGoNext: false, playPrev: () => {}, playNext: () => {} })
   const audioContextRef = useRef<AudioContext | null>(null)
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
@@ -255,6 +277,22 @@ export default function Player({
   }, [normalizationEnabled])
 
   useEffect(() => {
+    try {
+      localStorage.setItem(GAPLESS_STORAGE_KEY, gaplessEnabled ? "1" : "0")
+    } catch {
+      // ignore storage failures
+    }
+  }, [gaplessEnabled])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CROSSFADE_SECONDS_STORAGE_KEY, String(crossfadeSeconds))
+    } catch {
+      // ignore storage failures
+    }
+  }, [crossfadeSeconds])
+
+  useEffect(() => {
     setupAudioGraph()
     return () => {
       const context = audioContextRef.current
@@ -289,6 +327,7 @@ export default function Player({
     audio.src = `/api/stream/${song.id}`
     audio.currentTime = 0
     audio.volume = volume
+    transitionTriggeredSongIdRef.current = null
     audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
   }, [song?.id, clearMediaSessionPosition, syncMediaSessionPosition]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -299,6 +338,33 @@ export default function Player({
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime)
       emitPlaybackState(audio.currentTime, !audio.paused)
+
+      const nextIndex = getNextIndex()
+      const nextSong = nextIndex === null ? null : songs[nextIndex]
+      if (!nextSong || !song) return
+
+      const shouldTransition = shouldStartPlaybackTransition({
+        duration: Number.isFinite(audio.duration) ? audio.duration : 0,
+        currentTime: audio.currentTime,
+        isPlaying: !audio.paused,
+        crossfadeSeconds,
+        gaplessEnabled,
+        alreadyTriggered: transitionTriggeredSongIdRef.current === song.id,
+      })
+      if (!shouldTransition) return
+
+      transitionTriggeredSongIdRef.current = song.id
+      if (crossfadeSeconds > 0) {
+        const gainNode = gainNodeRef.current
+        const context = audioContextRef.current
+        if (gainNode && context) {
+          const fadeWindow = Math.max(0.2, Math.min(3, crossfadeSeconds * 0.8))
+          gainNode.gain.cancelScheduledValues(context.currentTime)
+          gainNode.gain.setValueAtTime(gainNode.gain.value, context.currentTime)
+          gainNode.gain.linearRampToValueAtTime(0.01, context.currentTime + fadeWindow)
+        }
+      }
+      onSongChange(nextSong)
     }
     const onDurationChange = () => {
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
@@ -366,7 +432,18 @@ export default function Player({
       audio.removeEventListener("ended", onEnded)
       audio.removeEventListener("seeked", onSeeked)
     }
-  }, [emitPlaybackState, getNextIndex, onSongChange, repeatMode, setupAudioGraph, song?.id, songs, syncMediaSessionPosition])
+  }, [
+    crossfadeSeconds,
+    emitPlaybackState,
+    gaplessEnabled,
+    getNextIndex,
+    onSongChange,
+    repeatMode,
+    setupAudioGraph,
+    song?.id,
+    songs,
+    syncMediaSessionPosition,
+  ])
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
@@ -1325,8 +1402,12 @@ export default function Player({
         onCycleRepeat={cycleRepeatMode}
         onVolumeChange={changeVolume}
         onToggleQueue={toggleQueueSheet}
-        onToggleNormalization={() => setNormalizationEnabled((prev) => !prev)}
-        desktopSeekBarRef={desktopSeekBarRef}
+              onToggleNormalization={() => setNormalizationEnabled((prev) => !prev)}
+              gaplessEnabled={gaplessEnabled}
+              crossfadeSeconds={crossfadeSeconds}
+              onToggleGapless={() => setGaplessEnabled((prev) => !prev)}
+              onCrossfadeChange={(value) => setCrossfadeSeconds(Math.min(8, Math.max(0, value)))}
+              desktopSeekBarRef={desktopSeekBarRef}
         onDesktopSeekClick={handleDesktopSeekClick}
         onDesktopSeekTouchStart={handleDesktopSeekTouchStart}
         onDesktopSeekTouchMove={handleDesktopSeekTouchMove}
