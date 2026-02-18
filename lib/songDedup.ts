@@ -1,5 +1,6 @@
 import fs from "fs"
 import prisma from "./prisma"
+import { resolveSafeDownloadPathForRead } from "./downloadPaths"
 
 const SOUNDCLOUD_HOSTS = new Set(["soundcloud.com", "www.soundcloud.com", "on.soundcloud.com"])
 const SPOTIFY_HOSTS = new Set(["open.spotify.com", "spotify.com", "www.spotify.com"])
@@ -62,8 +63,29 @@ export async function findReusableSongBySourceUrl(userId: number, source: string
   })
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate.filePath)) {
+    const resolvedPath = resolveSafeDownloadPathForRead(candidate.filePath)
+
+    if (resolvedPath && fs.existsSync(resolvedPath)) {
+      if (resolvedPath !== candidate.filePath) {
+        try {
+          await prisma.song.update({
+            where: { id: candidate.id },
+            data: { filePath: resolvedPath },
+          })
+          return {
+            ...candidate,
+            filePath: resolvedPath,
+          }
+        } catch {
+          // Ignore path-healing races; still reuse the existing file.
+        }
+      }
       return candidate
+    }
+
+    if (resolvedPath === null) {
+      // Path is outside allowed download roots; skip automatic deletion.
+      continue
     }
 
     try {
