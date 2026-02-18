@@ -15,6 +15,7 @@ import OrganizationPanel from "./components/organization/OrganizationPanel"
 import { normalizeSongTitle } from "../lib/songTitle"
 import { removeQueueItem, reorderQueue } from "../lib/playbackQueue"
 import { groupSongsByScope } from "../lib/songGrouping"
+import pkg from "../package.json"
 
 interface Song {
   id: number
@@ -121,7 +122,8 @@ export default function Home() {
   const [libraries, setLibraries] = useState<LibrarySummary[]>([])
   const [currentSongId, setCurrentSongId] = useState<number | null>(null)
   const [queueIds, setQueueIds] = useState<number[]>([])
-  const [activeTab, setActiveTab] = useState<"player" | "download" | "manage" | "organize" | "repair">("player")
+  const [activeTab, setActiveTab] = useState<"player" | "download" | "manage" | "organize" | "maintenance">("player")
+  const appVersion = pkg.version || "dev"
   const [scopeMode, setScopeMode] = useState<ScopeMode>("all")
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
   const [gridCardScale, setGridCardScale] = useState(100)
@@ -958,11 +960,15 @@ export default function Home() {
 
             <button
               type="button"
-              onClick={() => setActiveTab("repair")}
+              onClick={() => setActiveTab("maintenance")}
               className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
             >
-              Repair
+              Maintenance
             </button>
+
+            <span className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-400 md:text-sm">
+              v{appVersion}
+            </span>
 
             <a
               href="https://github.com/MDaniel592/echodeck"
@@ -1049,7 +1055,7 @@ export default function Home() {
           />
         )}
 
-        {activeTab === "repair" && <MaintenancePanel embedded />}
+        {activeTab === "maintenance" && <MaintenancePanel embedded />}
 
         {activeTab === "player" && (
           <div className="animate-[app-fade-in_450ms_ease-out]">
