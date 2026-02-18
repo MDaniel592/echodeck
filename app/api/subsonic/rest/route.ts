@@ -9,6 +9,7 @@ import { verifyPassword } from "../../../../lib/auth"
 import { checkRateLimit } from "../../../../lib/rateLimit"
 import { sanitizeSong } from "../../../../lib/sanitize"
 import { resolveSafeDownloadPathForRead } from "../../../../lib/downloadPaths"
+import { getClientIdentifier } from "../../../../lib/clientIdentity"
 import { nodeReadableToWebStream } from "../../../../lib/nodeReadableToWebStream"
 import { getFfmpegDir } from "../../../../lib/binaries"
 import {
@@ -58,23 +59,8 @@ type AuthResult =
 const SUBSONIC_MAX_FAILED_ATTEMPTS_PER_ACCOUNT = 20
 const SUBSONIC_MAX_FAILED_ATTEMPTS_PER_CLIENT = 80
 const SUBSONIC_WINDOW_MS = 15 * 60 * 1000
-const TRUST_PROXY = process.env.TRUST_PROXY === "1"
 const SUBSONIC_JUKEBOX_DEVICE_ID = "subsonic:jukebox"
 const MAX_SHARE_ENTRIES = 500
-
-function getClientIdentifier(request: NextRequest): string {
-  if (!TRUST_PROXY) {
-    const userAgent = request.headers.get("user-agent") || "unknown-agent"
-    const acceptLanguage = request.headers.get("accept-language") || "unknown-lang"
-    return `ua:${userAgent.slice(0, 120)}|lang:${acceptLanguage.slice(0, 64)}`
-  }
-
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "proxied-client"
-  )
-}
 
 function decodePassword(raw: string): string {
   if (raw.startsWith("enc:")) {
@@ -131,7 +117,7 @@ async function authenticate(request: NextRequest): Promise<AuthResult> {
   }
 
   if (!valid) {
-    const client = getClientIdentifier(request)
+    const client = getClientIdentifier(request, "subsonic")
     const perClientLimit = await checkRateLimit(
       `subsonic:failed:client:${client}`,
       SUBSONIC_MAX_FAILED_ATTEMPTS_PER_CLIENT,

@@ -3,26 +3,11 @@ import prisma from "../../../../lib/prisma"
 import { verifyPassword, createToken } from "../../../../lib/auth"
 import { encryptSubsonicPassword } from "../../../../lib/subsonicPassword"
 import { checkRateLimit } from "../../../../lib/rateLimit"
+import { getClientIdentifier } from "../../../../lib/clientIdentity"
 
 const LOGIN_MAX_ATTEMPTS_PER_ACCOUNT = 10
 const LOGIN_MAX_ATTEMPTS_PER_CLIENT = 50
 const LOGIN_WINDOW_MS = 15 * 60 * 1000 // 15 minutes
-const TRUST_PROXY = process.env.TRUST_PROXY === "1"
-
-function getClientIdentifier(request: NextRequest): string {
-  if (!TRUST_PROXY) {
-    const userAgent = request.headers.get("user-agent") || "unknown-agent"
-    const acceptLanguage = request.headers.get("accept-language") || "unknown-lang"
-    return `ua:${userAgent.slice(0, 120)}|lang:${acceptLanguage.slice(0, 64)}`
-  }
-
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "proxied-client"
-  )
-}
-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -36,7 +21,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const client = getClientIdentifier(request)
+    const client = getClientIdentifier(request, "login")
     const perClientLimit = await checkRateLimit(
       `login:client:${client}`,
       LOGIN_MAX_ATTEMPTS_PER_CLIENT,
