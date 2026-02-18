@@ -34,6 +34,10 @@ import {
   getNextQueueIndex,
   getPrevQueueIndex,
 } from "./player/navigation"
+import {
+  resolvePlayerShortcutAction,
+  shouldIgnorePlayerShortcut,
+} from "./player/keyboardShortcuts"
 import type { PlayerProps, PlayerSong, RepeatMode } from "./player/types"
 
 export default function Player({
@@ -530,16 +534,37 @@ export default function Player({
         activeElement?.tagName === "TEXTAREA" ||
         activeElement?.tagName === "SELECT" ||
         (activeElement instanceof HTMLElement && activeElement.isContentEditable)
-      if (isTyping || e.altKey || e.metaKey || e.ctrlKey) return
+      if (
+        shouldIgnorePlayerShortcut({
+          isTyping,
+          event: {
+            key: e.key,
+            code: e.code,
+            altKey: e.altKey,
+            ctrlKey: e.ctrlKey,
+            metaKey: e.metaKey,
+          },
+        })
+      ) {
+        return
+      }
 
-      if (e.code === "Space") {
-        e.preventDefault()
+      const action = resolvePlayerShortcutAction({
+        key: e.key,
+        code: e.code,
+        altKey: e.altKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+      })
+      if (!action) return
+      e.preventDefault()
+
+      if (action === "togglePlay") {
         togglePlay()
         return
       }
 
-      if (e.key === "ArrowRight") {
-        e.preventDefault()
+      if (action === "seekForward") {
         const audio = audioRef.current
         if (!audio) return
         const maxTime = Number.isFinite(audio.duration) ? audio.duration : audio.currentTime + 5
@@ -547,22 +572,19 @@ export default function Player({
         return
       }
 
-      if (e.key === "ArrowLeft") {
-        e.preventDefault()
+      if (action === "seekBackward") {
         const audio = audioRef.current
         if (!audio) return
         audio.currentTime = Math.max(0, audio.currentTime - 5)
         return
       }
 
-      if (e.key === "ArrowUp" && canGoPrev) {
-        e.preventDefault()
+      if (action === "previous" && canGoPrev) {
         playPrev()
         return
       }
 
-      if (e.key === "ArrowDown" && canGoNext) {
-        e.preventDefault()
+      if (action === "next" && canGoNext) {
         playNext()
       }
     }
