@@ -53,7 +53,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Install only Prisma CLI runtime dependencies used by the startup db push.
+# Install only Prisma CLI runtime dependencies used by startup migrations.
 # Resolve exact versions from the lockfile to avoid runtime drift.
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm PRISMA_VERSION="$(node -p 'require("./package-lock.json").packages["node_modules/prisma"].version')" \
@@ -67,7 +67,7 @@ COPY --link --from=builder /app/.next/standalone ./
 COPY --link --from=builder /app/.next/static ./.next/static
 COPY --link --from=builder /app/public ./public
 
-# Prisma schema + config (needed for db push at startup)
+# Prisma schema + migrations + config (needed for migrate deploy at startup)
 COPY --link --from=builder /app/prisma ./prisma
 COPY --link --from=builder /app/prisma.config.ts ./prisma.config.ts
 
@@ -81,5 +81,5 @@ RUN mkdir -p /app/data /app/downloads
 
 EXPOSE 3000
 
-# Apply migrations when present; fallback to db push for migration-less installs.
-CMD ["sh", "-c", "if [ -d prisma/migrations ] && [ \"$(find prisma/migrations -mindepth 1 -maxdepth 1 | wc -l)\" -gt 0 ]; then npx --no-install prisma migrate deploy; else npx --no-install prisma db push; fi && exec node server.js"]
+# Apply versioned migrations before starting the server.
+CMD ["sh", "-c", "npx --no-install prisma migrate deploy && exec node server.js"]

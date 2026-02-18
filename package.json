@@ -21,6 +21,8 @@
     "verify:prod": "bash scripts/verify-production-guardrails.sh",
     "smoke:prisma-cli": "bash scripts/prisma-cli-smoke.sh",
     "validate-env": "tsx scripts/validate-env.ts",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:baseline:init": "prisma migrate resolve --applied 20260218185000_init",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:backfill-ownership": "node --import tsx scripts/backfill-ownership.ts",

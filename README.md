@@ -45,7 +45,13 @@ docker compose up --build
 Use `docker-compose.example.yml` as the committed template.
 Your local `docker-compose.yml` is intentionally gitignored and can contain private domain/reverse-proxy settings.
 `docker-compose.yml` requires `JWT_SECRET` and `SETUP_SECRET` for startup.
-On container start, the image applies Prisma migrations when present (`prisma migrate deploy`) and falls back to `prisma db push` for migration-less installs.
+On container start, the image applies Prisma versioned migrations with `prisma migrate deploy` before serving requests.
+
+If you are upgrading from an older EchoDeck install that was created without Prisma migrations, run this one-time baseline command before first start on the new image:
+
+```bash
+npm run db:migrate:baseline:init
+```
 
 ## Environment Variables
 
@@ -104,6 +110,8 @@ Run `npm run validate-env` to check your configuration.
 | `npm run check-deps` | Verify external runtime dependencies |
 | `npm run artwork:refresh` | Rebuild low-res artwork cache |
 | `npm run validate-env` | Verify required env vars |
+| `npm run db:migrate:deploy` | Apply committed Prisma migrations |
+| `npm run db:migrate:baseline:init` | Mark the initial migration as already applied (one-time upgrade helper for legacy DBs) |
 | `npm run db:push` | Sync Prisma schema to database |
 | `npm run db:generate` | Regenerate Prisma client |
 | `npm run db:backfill-ownership` | Backfill legacy rows with missing ownership |
