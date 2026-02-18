@@ -15,8 +15,31 @@ function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname.startsWith(p))
 }
 
+function hasCrossOriginApiMutation(request: NextRequest): boolean {
+  const method = request.method.toUpperCase()
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false
+
+  const { pathname } = request.nextUrl
+  if (!pathname.startsWith("/api/")) return false
+  if (pathname.startsWith("/api/subsonic/")) return false
+
+  const originHeader = request.headers.get("origin")
+  if (!originHeader) return false
+
+  try {
+    const origin = new URL(originHeader)
+    return origin.origin !== request.nextUrl.origin
+  } catch {
+    return true
+  }
+}
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  if (hasCrossOriginApiMutation(request)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
 
   if (isPublicPath(pathname)) {
     return NextResponse.next()
