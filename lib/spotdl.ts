@@ -8,6 +8,7 @@ import type { ReadableStream as NodeReadableStream } from "stream/web"
 import { getFfmpegDir } from "./binaries"
 import { runWithConcurrency } from "./asyncPool"
 import { waitRandomDelay } from "./downloadThrottle"
+import { safeFetch } from "./safeFetch"
 
 const DOWNLOADS_DIR = path.join(process.cwd(), "downloads")
 const LUCIDA_BASE_URL = (process.env.LUCIDA_BASE_URL || "https://api.lucida.to").replace(/\/+$/, "")
@@ -58,6 +59,7 @@ const SOURCE_LIMIT_PER_PROVIDER = 5
 const SPOTIFY_DOWNLOAD_CONCURRENCY = 4
 const SPOTIFY_DOWNLOAD_DELAY_MIN_MS = 1000
 const SPOTIFY_DOWNLOAD_DELAY_MAX_MS = 3000
+const MAX_AUDIO_DOWNLOAD_BYTES = 1024 * 1024 * 1024 // 1 GB
 
 type SpotifyType = "track" | "playlist" | "album" | "artist"
 type ProviderName = "tidal" | "deezer" | "qobuz" | "amazon"
@@ -1943,15 +1945,21 @@ async function downloadToFile(
   const safeTitle = sanitizeFileNameSegment(track.title || `Track ${index + 1}`, `Track ${index + 1}`)
   const uniquePrefix = `${Date.now()}-${index + 1}`
 
-  const response = await fetchWithTimeout(
+  const response = await safeFetch(
     downloadUrl,
     {
       headers: {
         "User-Agent": "echodeck/1.0",
       },
-      redirect: "follow",
     },
-    120000
+    {
+      timeoutMs: 120000,
+      maxRedirects: 5,
+      maxBytes: MAX_AUDIO_DOWNLOAD_BYTES,
+      // Provider APIs can return rotating CDN hosts, so host allowlist cannot be static.
+      // safeFetch still validates protocol, resolves DNS, and blocks private IP destinations.
+      skipHostCheck: true,
+    }
   )
 
   if (!response.ok || !response.body) {
@@ -1975,6 +1983,10 @@ async function downloadToFile(
   )
   readStream.on("data", (chunk: Buffer | string) => {
     downloaded += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length
+    if (downloaded > MAX_AUDIO_DOWNLOAD_BYTES) {
+      readStream.destroy(new Error(`Download exceeded ${MAX_AUDIO_DOWNLOAD_BYTES} bytes`))
+      return
+    }
     if (totalSize > 0) {
       const percent = Math.floor((downloaded / totalSize) * 100)
       if (percent >= nextProgressThreshold) {
