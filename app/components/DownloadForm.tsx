@@ -517,7 +517,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
 
       const rows = Array.isArray(payload?.results) ? payload.results : []
       const normalized = rows
-        .filter((item): item is UnifiedSourceSearchResult =>
+        .filter((item: unknown): item is UnifiedSourceSearchResult =>
           item &&
           typeof item.provider === "string" &&
           typeof item.title === "string" &&
