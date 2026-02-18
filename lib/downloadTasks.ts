@@ -5,7 +5,7 @@ import path from "path"
 import prisma from "./prisma"
 import { redactSensitiveText } from "./sanitize"
 
-export type DownloadTaskSource = "youtube" | "soundcloud" | "spotify"
+export type DownloadTaskSource = "youtube" | "soundcloud" | "spotify" | "tidal" | "amazon"
 export type DownloadTaskStatus =
   | "queued"
   | "running"
@@ -16,6 +16,13 @@ export type DownloadTaskStatus =
 export const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"])
 export const SOUNDCLOUD_HOSTS = new Set(["soundcloud.com", "www.soundcloud.com", "on.soundcloud.com"])
 export const SPOTIFY_HOSTS = new Set(["open.spotify.com", "spotify.com", "www.spotify.com"])
+export const TIDAL_HOSTS = new Set(["listen.tidal.com", "tidal.com", "www.tidal.com"])
+export const AMAZON_MUSIC_HOSTS = new Set([
+  "music.amazon.com",
+  "www.music.amazon.com",
+  "amazon.com",
+  "www.amazon.com",
+])
 
 export const AUDIO_FORMATS = new Set(["mp3", "flac", "wav", "ogg"])
 export const AUDIO_QUALITIES = new Set(["best", "320", "256", "192", "128"])
@@ -76,6 +83,8 @@ export function detectSourceFromUrl(url: string): DownloadTaskSource | null {
     if (YOUTUBE_HOSTS.has(host)) return "youtube"
     if (SOUNDCLOUD_HOSTS.has(host)) return "soundcloud"
     if (SPOTIFY_HOSTS.has(host)) return "spotify"
+    if (TIDAL_HOSTS.has(host)) return "tidal"
+    if (AMAZON_MUSIC_HOSTS.has(host)) return "amazon"
     return null
   } catch {
     return null

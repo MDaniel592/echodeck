@@ -2,8 +2,10 @@ export interface DownloadUrlInfo {
   isSpotify: boolean
   isYouTube: boolean
   isSoundCloud: boolean
+  isTidal: boolean
+  isAmazonMusic: boolean
   hasPlaylistParam: boolean
-  detectedPlatform: "Spotify" | "YouTube" | "SoundCloud" | null
+  detectedPlatform: "Spotify" | "YouTube" | "SoundCloud" | "Tidal" | "Amazon Music" | null
 }
 
 export function getDownloadUrlInfo(url: string): DownloadUrlInfo {
@@ -12,6 +14,8 @@ export function getDownloadUrlInfo(url: string): DownloadUrlInfo {
   const isYouTube = normalizedUrl.includes("youtube.com") || normalizedUrl.includes("youtu.be")
   const isSoundCloud =
     normalizedUrl.includes("soundcloud.com") || normalizedUrl.includes("on.soundcloud.com")
+  const isTidal = normalizedUrl.includes("tidal.com")
+  const isAmazonMusic = normalizedUrl.includes("music.amazon.com")
 
   let hasPlaylistParam = false
   if (isYouTube) {
@@ -31,7 +35,11 @@ export function getDownloadUrlInfo(url: string): DownloadUrlInfo {
       ? "YouTube"
       : isSoundCloud
         ? "SoundCloud"
+        : isTidal
+          ? "Tidal"
+          : isAmazonMusic
+            ? "Amazon Music"
         : null
 
-  return { isSpotify, isYouTube, isSoundCloud, hasPlaylistParam, detectedPlatform }
+  return { isSpotify, isYouTube, isSoundCloud, isTidal, isAmazonMusic, hasPlaylistParam, detectedPlatform }
 }

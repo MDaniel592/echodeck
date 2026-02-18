@@ -53,7 +53,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
   const seenStatusesRef = useRef<Map<number, string>>(new Map())
   const hasFetchedTasksRef = useRef(false)
 
-  const { isSpotify, isYouTube, isSoundCloud, hasPlaylistParam, detectedPlatform } = useMemo(
+  const { isSpotify, isYouTube, isSoundCloud, isTidal, isAmazonMusic, hasPlaylistParam, detectedPlatform } = useMemo(
     () => getDownloadUrlInfo(url),
     [url]
   )
@@ -352,7 +352,11 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
 
     const endpoint = isSpotify
       ? "/api/download/spotify"
-      : "/api/download/youtube"
+      : isTidal
+        ? "/api/download/tidal"
+        : isAmazonMusic
+          ? "/api/download/amazon"
+          : "/api/download/youtube"
 
     const payload = isSpotify
       ? { url, format, ...playlistPayload }
@@ -412,7 +416,13 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
 
   const queueSourceResult = useCallback(async (result: UnifiedSourceSearchResult) => {
     const info = getDownloadUrlInfo(result.url)
-    const endpoint = info.isSpotify ? "/api/download/spotify" : "/api/download/youtube"
+    const endpoint = info.isSpotify
+      ? "/api/download/spotify"
+      : info.isTidal
+        ? "/api/download/tidal"
+        : info.isAmazonMusic
+          ? "/api/download/amazon"
+          : "/api/download/youtube"
     const trimmedPlaylistName = newPlaylistName.trim()
 
     let playlistPayload: { playlistId?: number; playlistName?: string } = {}
@@ -517,12 +527,15 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
 
       const rows = Array.isArray(payload?.results) ? payload.results : []
       const normalized = rows
-        .filter((item: unknown): item is UnifiedSourceSearchResult =>
-          item &&
-          typeof item.provider === "string" &&
-          typeof item.title === "string" &&
-          typeof item.url === "string"
-        )
+        .filter((item: unknown): item is UnifiedSourceSearchResult => {
+          if (typeof item !== "object" || item === null) return false
+          const candidate = item as Record<string, unknown>
+          return (
+            typeof candidate.provider === "string" &&
+            typeof candidate.title === "string" &&
+            typeof candidate.url === "string"
+          )
+        })
         .slice(0, 18)
       setSourceResults(normalized)
       const errors = Array.isArray(payload?.errors)
@@ -659,7 +672,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
           {url.trim() !== "" && isValidUrl && !detectedPlatform && (
             <p className="mt-1.5 flex items-center gap-1 text-xs text-amber-400">
               <InfoIcon />
-              Unsupported platform. Use YouTube, SoundCloud, or Spotify.
+              Unsupported platform. Use YouTube, SoundCloud, Spotify, Tidal, or Amazon Music.
             </p>
           )}
           {url.trim() !== "" && isValidUrl && isYouTube && hasPlaylistParam && (

@@ -366,7 +366,7 @@ function shouldReplaceExistingWithOpus(input: {
   bestAudioPreference: "auto" | "opus" | "aac"
   existingFormat: string | null | undefined
 }): boolean {
-  if (input.source !== "youtube" && input.source !== "soundcloud") return false
+  if (input.source !== "youtube" && input.source !== "soundcloud" && input.source !== "tidal" && input.source !== "amazon") return false
   if (input.quality !== "best") return false
   if (input.bestAudioPreference !== "opus") return false
   return (input.existingFormat || "").toLowerCase() !== "opus"
@@ -650,7 +650,9 @@ async function runVideoTask(taskId: number) {
           year: entryInfo?.year ?? null,
           discNumber: parsePositiveIntCandidate(entryInfo?.discNumber),
           trackNumber: parsePositiveIntCandidate(entryInfo?.trackNumber),
-          title: cleanYouTubeTitle(rawTitle, refs.artist || ""),
+          title: source === "youtube" || source === "soundcloud"
+            ? cleanYouTubeTitle(rawTitle, refs.artist || "")
+            : normalizeSongTitle(rawTitle),
           preferredExt: result.format,
         })
         const songCreateData = {
@@ -845,7 +847,9 @@ async function runVideoTask(taskId: number) {
     year: info.year ?? null,
     discNumber: parsePositiveIntCandidate(info.discNumber),
     trackNumber: parsePositiveIntCandidate(info.trackNumber),
-    title: cleanYouTubeTitle(rawTitle, refs.artist || ""),
+    title: source === "youtube" || source === "soundcloud"
+      ? cleanYouTubeTitle(rawTitle, refs.artist || "")
+      : normalizeSongTitle(rawTitle),
     preferredExt: result.format,
   })
   const songCreateData = {
@@ -1258,7 +1262,7 @@ async function runTask(taskId: number) {
 
     if (task.source === "spotify") {
       await runSpotifyTask(taskId)
-    } else if (task.source === "youtube" || task.source === "soundcloud") {
+    } else if (task.source === "youtube" || task.source === "soundcloud" || task.source === "tidal" || task.source === "amazon") {
       await runVideoTask(taskId)
     } else {
       throw new Error(`Unsupported task source: ${task.source}`)

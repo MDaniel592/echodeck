@@ -109,6 +109,8 @@ export function sourceLabel(source: string): string {
   if (source === "spotify") return "Spotify"
   if (source === "soundcloud") return "SoundCloud"
   if (source === "youtube") return "YouTube"
+  if (source === "tidal") return "Tidal"
+  if (source === "amazon") return "Amazon Music"
   return "Download"
 }
 
