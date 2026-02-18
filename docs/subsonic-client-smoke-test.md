@@ -19,7 +19,7 @@ export SUBSONIC_PASS="your_password"
 ## 3) Run smoke script
 
 ```bash
-bash scripts/subsonic-smoke.sh
+npm run subsonic:smoke
 ```
 
 The script checks:
@@ -39,3 +39,5 @@ Use:
 
 If client supports token auth:
 - Use standard Subsonic `t` + `s`.
+
+If using reverse proxy/TLS, use your public HTTPS URL as `SUBSONIC_BASE_URL`.
