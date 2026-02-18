@@ -13,55 +13,20 @@ import SongGridCards from "./components/library/SongGridCards"
 import MaintenancePanel from "./components/admin/MaintenancePanel"
 import OrganizationPanel from "./components/organization/OrganizationPanel"
 import { DownloadTabIcon, GitHubIcon, LibraryTabIcon, LogoutIcon } from "./components/home/HomeIcons"
+import {
+  type HomeTab,
+  type LibrarySummary,
+  type Playlist,
+  type RepeatMode,
+  type ScopeMode,
+  type Song,
+  type SongTag,
+  type ViewMode,
+} from "./components/home/types"
 import { normalizeSongTitle } from "../lib/songTitle"
 import { removeQueueItem, reorderQueue } from "../lib/playbackQueue"
 import { groupSongsByScope } from "../lib/songGrouping"
 import pkg from "../package.json"
-
-interface Song {
-  id: number
-  title: string
-  artist: string | null
-  duration: number | null
-  format: string
-  quality: string | null
-  source: string
-  sourceUrl: string | null
-  filePath: string
-  coverPath: string | null
-  thumbnail: string | null
-  fileSize: number | null
-  replayGainTrackDb?: number | null
-  replayGainAlbumDb?: number | null
-  replayGainTrackPeak?: number | null
-  replayGainAlbumPeak?: number | null
-  libraryId?: number | null
-  playlistId: number | null
-  createdAt: string
-}
-
-interface Playlist {
-  id: number
-  name: string
-  createdAt: string
-  _count: { songs: number }
-}
-
-interface SongTag {
-  id: number
-  name: string
-  color?: string | null
-  _count?: { songs: number }
-}
-
-type RepeatMode = "off" | "all" | "one"
-type ScopeMode = "all" | "playlists" | "libraries"
-type ViewMode = "list" | "grid"
-
-interface LibrarySummary {
-  id: number
-  name: string
-}
 
 const QUEUE_STORAGE_KEY = "echodeck.queue.ids"
 const DEVICE_ID_STORAGE_KEY = "echodeck.device.id"
@@ -75,7 +40,7 @@ export default function Home() {
   const [libraries, setLibraries] = useState<LibrarySummary[]>([])
   const [currentSongId, setCurrentSongId] = useState<number | null>(null)
   const [queueIds, setQueueIds] = useState<number[]>([])
-  const [activeTab, setActiveTab] = useState<"player" | "download" | "manage" | "organize" | "maintenance">("player")
+  const [activeTab, setActiveTab] = useState<HomeTab>("player")
   const appVersion = pkg.version || "dev"
   const [scopeMode, setScopeMode] = useState<ScopeMode>("all")
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
