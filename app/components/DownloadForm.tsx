@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CloseIcon, InfoIcon, MusicIcon, SoundCloudIcon, SpotifyIcon, YouTubeIcon } from "./download/icons"
+import { SourceIcon, TaskPager, TaskStatusBadge } from "./download/taskUi"
 import {
   type DownloadTaskDetail,
   type DownloadTaskSummary,
@@ -10,7 +11,6 @@ import {
   type TaskListPayload,
   isTerminalTaskStatus,
   parseEventPayload,
-  statusClassName,
   statusLabel,
   taskDisplayName,
   taskProgressPercent,
@@ -664,12 +664,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
               />
             ) : (
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-cyan-300">
-                {featuredTask.source === "spotify" && <SpotifyIcon />}
-                {featuredTask.source === "youtube" && <YouTubeIcon />}
-                {featuredTask.source === "soundcloud" && <SoundCloudIcon />}
-                {featuredTask.source !== "spotify" &&
-                  featuredTask.source !== "youtube" &&
-                  featuredTask.source !== "soundcloud" && <MusicIcon />}
+                <SourceIcon source={featuredTask.source} showFallback />
               </div>
             )}
             <div className="min-w-0 flex-1">
@@ -733,26 +728,8 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
         {mobileTaskView === "history" ? (
           <>
             <div className="px-0.5 py-1">
-              <div className="flex items-center justify-end gap-1">
-                <button
-                  type="button"
-                  onClick={() => setTaskPage((prev) => Math.max(1, prev - 1))}
-                  disabled={taskPage <= 1}
-                  className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Prev
-                </button>
-                <span className="text-[10px] text-zinc-500">
-                  {taskPage}/{taskTotalPages}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setTaskPage((prev) => Math.min(taskTotalPages, prev + 1))}
-                  disabled={taskPage >= taskTotalPages}
-                  className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Next
-                </button>
+              <div className="flex items-center justify-end">
+                <TaskPager page={taskPage} totalPages={taskTotalPages} onPageChange={setTaskPage} />
               </div>
             </div>
             {tasks.length === 0 ? (
@@ -777,14 +754,10 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="flex items-center gap-1.5 text-xs font-medium text-zinc-200">
-                          {task.source === "spotify" && <SpotifyIcon />}
-                          {task.source === "youtube" && <YouTubeIcon />}
-                          {task.source === "soundcloud" && <SoundCloudIcon />}
+                          <SourceIcon source={task.source} />
                           {taskDisplayName(task)}
                         </p>
-                        <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${statusClassName(task.status)}`}>
-                          {statusLabel(task.status)}
-                        </span>
+                        <TaskStatusBadge status={task.status} className="rounded-md px-1.5 py-0.5 text-[10px]" />
                       </div>
                       <p className="mt-0.5 text-[10px] text-zinc-500">
                         {task.processedItems}
@@ -811,9 +784,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
           <>
             <div className="flex items-center justify-between px-0.5 py-1.5">
               <span className="text-xs font-medium text-zinc-300">Task detail</span>
-              <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${statusClassName(selectedTask.status)}`}>
-                {statusLabel(selectedTask.status)}
-              </span>
+              <TaskStatusBadge status={selectedTask.status} className="rounded-md px-1.5 py-0.5 text-[10px]" />
             </div>
             {selectedTaskInsights && (
               <div className="flex flex-wrap items-center gap-1.5 px-0.5 py-1.5 text-[10px] text-zinc-300">
@@ -863,25 +834,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
                 )}
               </div>
               <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setTaskPage((prev) => Math.max(1, prev - 1))}
-                  disabled={taskPage <= 1}
-                  className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Prev
-                </button>
-                <span className="text-[10px] text-zinc-500">
-                  {taskPage}/{taskTotalPages}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setTaskPage((prev) => Math.min(taskTotalPages, prev + 1))}
-                  disabled={taskPage >= taskTotalPages}
-                  className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Next
-                </button>
+                <TaskPager page={taskPage} totalPages={taskTotalPages} onPageChange={setTaskPage} />
               </div>
             </div>
           </div>
@@ -905,14 +858,10 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-200 lg:text-base">
-                        {task.source === "spotify" && <SpotifyIcon />}
-                        {task.source === "youtube" && <YouTubeIcon />}
-                        {task.source === "soundcloud" && <SoundCloudIcon />}
+                        <SourceIcon source={task.source} />
                         {taskDisplayName(task)}
                       </p>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md lg:text-sm ${statusClassName(task.status)}`}>
-                        {statusLabel(task.status)}
-                      </span>
+                      <TaskStatusBadge status={task.status} className="text-[10px] px-1.5 py-0.5 rounded-md lg:text-sm" />
                     </div>
                     <p className="mt-0.5 text-[10px] text-zinc-400 lg:text-sm">
                       {task.processedItems}
@@ -957,12 +906,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
                   />
                 ) : (
                   <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-cyan-500/30 bg-zinc-900 text-cyan-300 shadow-[0_0_24px_rgba(34,211,238,0.15)]">
-                    {featuredTask.source === "spotify" && <SpotifyIcon />}
-                    {featuredTask.source === "youtube" && <YouTubeIcon />}
-                    {featuredTask.source === "soundcloud" && <SoundCloudIcon />}
-                    {featuredTask.source !== "spotify" &&
-                      featuredTask.source !== "youtube" &&
-                      featuredTask.source !== "soundcloud" && <MusicIcon />}
+                    <SourceIcon source={featuredTask.source} showFallback />
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
@@ -994,9 +938,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
             <div className="flex items-center justify-between border-b border-zinc-800/60 bg-zinc-900/50 px-2.5 py-1.5">
               <span className="text-xs font-medium text-zinc-300">Selection</span>
               {selectedTask && (
-                <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${statusClassName(selectedTask.status)}`}>
-                  {statusLabel(selectedTask.status)}
-                </span>
+                <TaskStatusBadge status={selectedTask.status} className="rounded-md px-1.5 py-0.5 text-[10px]" />
               )}
             </div>
             {!selectedTask ? (
@@ -1004,9 +946,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
             ) : (
               <div className="space-y-2 p-3">
                 <p className="flex items-center gap-1.5 truncate text-sm font-medium text-zinc-200">
-                  {selectedTask.source === "spotify" && <SpotifyIcon />}
-                  {selectedTask.source === "youtube" && <YouTubeIcon />}
-                  {selectedTask.source === "soundcloud" && <SoundCloudIcon />}
+                  <SourceIcon source={selectedTask.source} />
                   {taskDisplayName(selectedTask)}
                 </p>
                 <div className="flex flex-wrap gap-1.5 text-[10px] text-zinc-300">
