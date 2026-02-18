@@ -17,24 +17,18 @@ import {
   ShuffleIcon,
 } from "./player/ui"
 import { useSeekBarHandlers } from "./player/useSeekBarHandlers"
+import {
+  MEDIA_SESSION_ACTIONS,
+  MINI_FADE_MS,
+  MOBILE_COLLAPSE_EASE,
+  MOBILE_COLLAPSE_MS,
+  MOBILE_EXPAND_EASE,
+  MOBILE_EXPAND_MS,
+  MOBILE_FADE_MS,
+  NORMALIZATION_STORAGE_KEY,
+  QUEUE_CLOSE_DRAG_THRESHOLD,
+} from "./player/constants"
 import type { PlayerProps, PlayerSong, RepeatMode } from "./player/types"
-const MOBILE_EXPAND_MS = 720
-const MOBILE_COLLAPSE_MS = 480
-const MOBILE_FADE_MS = 190
-const MINI_FADE_MS = 250
-const QUEUE_CLOSE_DRAG_THRESHOLD = 96
-const NORMALIZATION_STORAGE_KEY = "echodeck.player.normalization.enabled"
-const MOBILE_EXPAND_EASE = "cubic-bezier(0.22, 1, 0.36, 1)"
-const MOBILE_COLLAPSE_EASE = "cubic-bezier(0.4, 0, 1, 1)"
-const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
-  "play",
-  "pause",
-  "previoustrack",
-  "nexttrack",
-  "seekbackward",
-  "seekforward",
-  "seekto",
-]
 
 export default function Player({
   song,
