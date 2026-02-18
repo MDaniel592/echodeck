@@ -27,6 +27,7 @@
     "db:verify-ownership": "node --import tsx scripts/verify-ownership.ts",
     "db:backfill-playlist-entries": "node --import tsx scripts/backfill-playlist-entries.ts",
     "db:ensure-subsonic-tokens": "node --import tsx scripts/ensure-subsonic-tokens.ts",
+    "db:backfill-audio-metadata": "node --import tsx scripts/backfill-audio-metadata.ts",
     "db:organize-layout": "node --import tsx scripts/organize-download-layout.ts",
     "db:organize-layout:apply": "node --import tsx scripts/organize-download-layout.ts --apply",
     "db:studio": "prisma studio",
