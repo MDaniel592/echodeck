@@ -105,6 +105,15 @@ interface ParsedVideoInfo {
   original_url?: string
 }
 
+function resolveYtdlpJsRuntimes(): string {
+  const configured = (process.env.YTDLP_JS_RUNTIMES || "").trim()
+  return configured || "node"
+}
+
+export function buildYtdlpArgs(baseArgs: string[]): string[] {
+  return ["--js-runtimes", resolveYtdlpJsRuntimes(), ...baseArgs]
+}
+
 function codecPreferenceScore(codec: string | null | undefined, preference: "auto" | "opus" | "aac"): number {
   if (!codec) return 0
   const normalized = codec.toLowerCase()
@@ -214,7 +223,7 @@ async function getPreferredAudioFormatId(
       return
     }
 
-    const proc = spawn(bin, ["--dump-single-json", "--no-download", "--no-playlist", url], {
+    const proc = spawn(bin, buildYtdlpArgs(["--dump-single-json", "--no-download", "--no-playlist", url]), {
       env: ytdlpEnv(),
     })
 
@@ -396,7 +405,7 @@ function fetchVideoInfoJson(url: string, extraArgs: string[] = []): Promise<Pars
       return
     }
 
-    const args = ["--dump-single-json", "--no-download", "--no-playlist", ...extraArgs, url]
+    const args = buildYtdlpArgs(["--dump-single-json", "--no-download", "--no-playlist", ...extraArgs, url])
     const proc = spawn(bin, args, { env: ytdlpEnv() })
 
     let stdout = ""
@@ -433,7 +442,7 @@ export async function getPlaylistInfo(url: string): Promise<PlaylistInfo> {
       return
     }
 
-    const proc = spawn(bin, ["--flat-playlist", "--dump-single-json", "--skip-download", url], {
+    const proc = spawn(bin, buildYtdlpArgs(["--flat-playlist", "--dump-single-json", "--skip-download", url]), {
       env: ytdlpEnv(),
     })
 
@@ -569,12 +578,12 @@ export async function searchAudioSource(
     const searchQuery = `${searchPrefix}${safeLimit}:${trimmedQuery}`
     const proc = spawn(
       bin,
-      [
+      buildYtdlpArgs([
         "--flat-playlist",
         "--dump-single-json",
         "--skip-download",
         searchQuery,
-      ],
+      ]),
       { env: ytdlpEnv() }
     )
 
@@ -730,7 +739,7 @@ export function downloadAudio(
 
       args.push(url)
 
-      const proc = spawn(bin, args, { env: ytdlpEnv() })
+      const proc = spawn(bin, buildYtdlpArgs(args), { env: ytdlpEnv() })
       let stderr = ""
 
       proc.stdout.on("data", (data) => {
