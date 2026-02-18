@@ -1,6 +1,7 @@
 import { spawn } from "child_process"
 import fs from "fs"
 import fsPromises from "fs/promises"
+import { createRequire } from "module"
 import path from "path"
 import prisma from "./prisma"
 import { redactSensitiveText } from "./sanitize"
@@ -33,6 +34,7 @@ const DOWNLOAD_TASK_LOG_DIR =
 const DOWNLOAD_TASK_FILE_LOGGING_ENABLED = !/^(0|false|off|no)$/i.test(
   (process.env.DOWNLOAD_TASK_FILE_LOGGING || "1").trim()
 )
+const runtimeRequire = createRequire(path.join(process.cwd(), "package.json"))
 
 export class PlaylistSelectionError extends Error {
   status: number
@@ -324,15 +326,10 @@ async function spawnWorkerForClaimedTask(taskId: number) {
     throw new Error("Task not found while spawning worker")
   }
 
-  const tsxPath = path.join(
-    process.cwd(),
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "tsx.cmd" : "tsx"
-  )
-
-  if (!fs.existsSync(tsxPath)) {
-    throw new Error("Task runner not found: node_modules/.bin/tsx")
+  try {
+    runtimeRequire.resolve("tsx/package.json")
+  } catch {
+    throw new Error("Task runner not found: tsx package is required at runtime")
   }
 
   const workerScript = path.join(process.cwd(), "scripts", "run-download-task.ts")
@@ -340,7 +337,7 @@ async function spawnWorkerForClaimedTask(taskId: number) {
     throw new Error("Task worker script not found: scripts/run-download-task.ts")
   }
 
-  const child = spawn(tsxPath, [workerScript, String(taskId)], {
+  const child = spawn(process.execPath, ["--import", "tsx", workerScript, String(taskId)], {
     cwd: process.cwd(),
     env: process.env,
     detached: true,

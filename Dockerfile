@@ -53,14 +53,18 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Install only Prisma CLI runtime dependencies used by startup migrations.
+# Install runtime-only tools not traced into standalone:
+# - prisma + dotenv for startup migrations
+# - tsx for detached download task workers (`node --import tsx`)
 # Resolve exact versions from the lockfile to avoid runtime drift.
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm PRISMA_VERSION="$(node -p 'require("./package-lock.json").packages["node_modules/prisma"].version')" \
   && DOTENV_VERSION="$(node -p 'require("./package-lock.json").packages["node_modules/dotenv"].version')" \
+  && TSX_VERSION="$(node -p 'require("./package-lock.json").packages["node_modules/tsx"].version')" \
   && npm install --no-save --no-audit --no-fund --ignore-scripts \
     "prisma@${PRISMA_VERSION}" \
-    "dotenv@${DOTENV_VERSION}"
+    "dotenv@${DOTENV_VERSION}" \
+    "tsx@${TSX_VERSION}"
 
 # Copy standalone output.
 COPY --link --from=builder /app/.next/standalone ./
@@ -73,6 +77,11 @@ COPY --link --from=builder /app/prisma.config.ts ./prisma.config.ts
 
 # Generated Prisma client (standalone traces include it, but be explicit)
 COPY --link --from=builder /app/app/generated ./app/generated
+
+# Detached worker sources executed by tsx at runtime.
+COPY --link --from=builder /app/lib ./lib
+COPY --link --from=builder /app/scripts ./scripts
+COPY --link --from=builder /app/tsconfig.json ./tsconfig.json
 
 # Downloader binaries fetched during build
 COPY --link --from=builder /app/bin ./bin
