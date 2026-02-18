@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { NextRequest } from "next/server"
 import { proxy } from "../proxy"
 
@@ -7,6 +7,23 @@ vi.mock("../lib/auth", () => ({
 }))
 
 describe("proxy csrf guard", () => {
+  const previousTrustedOrigins = process.env.CSRF_TRUSTED_ORIGINS
+  const previousTrustProxy = process.env.TRUST_PROXY
+
+  afterEach(() => {
+    if (previousTrustedOrigins === undefined) {
+      delete process.env.CSRF_TRUSTED_ORIGINS
+    } else {
+      process.env.CSRF_TRUSTED_ORIGINS = previousTrustedOrigins
+    }
+
+    if (previousTrustProxy === undefined) {
+      delete process.env.TRUST_PROXY
+    } else {
+      process.env.TRUST_PROXY = previousTrustProxy
+    }
+  })
+
   it("blocks cross-origin api mutations", async () => {
     const request = new NextRequest("http://localhost/api/songs", {
       method: "POST",
@@ -27,6 +44,57 @@ describe("proxy csrf guard", () => {
       method: "POST",
       headers: {
         origin: "http://localhost",
+      },
+    })
+
+    const response = proxy(request)
+
+    expect(response.status).toBe(401)
+  })
+
+  it("allows same-origin api mutations behind reverse proxy headers", () => {
+    process.env.TRUST_PROXY = "1"
+
+    const request = new NextRequest("http://echodeck:3000/api/songs", {
+      method: "POST",
+      headers: {
+        origin: "https://music.example.com",
+        "x-forwarded-host": "music.example.com",
+        "x-forwarded-proto": "https",
+      },
+    })
+
+    const response = proxy(request)
+
+    expect(response.status).toBe(401)
+  })
+
+  it("does not trust forwarded headers when TRUST_PROXY is disabled", async () => {
+    process.env.TRUST_PROXY = "0"
+
+    const request = new NextRequest("http://echodeck:3000/api/songs", {
+      method: "POST",
+      headers: {
+        origin: "https://music.example.com",
+        "x-forwarded-host": "music.example.com",
+        "x-forwarded-proto": "https",
+      },
+    })
+
+    const response = proxy(request)
+    const body = await response.json()
+
+    expect(response.status).toBe(403)
+    expect(body.error).toBe("Forbidden")
+  })
+
+  it("allows configured trusted origin for reverse proxy deployments", () => {
+    process.env.CSRF_TRUSTED_ORIGINS = "https://music.example.com"
+
+    const request = new NextRequest("http://echodeck:3000/api/songs", {
+      method: "POST",
+      headers: {
+        origin: "https://music.example.com",
       },
     })
 

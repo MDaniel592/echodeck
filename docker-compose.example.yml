@@ -17,6 +17,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       SETUP_SECRET: ${SETUP_SECRET:?SETUP_SECRET is required for production}
       TRUST_PROXY: ${TRUST_PROXY:-0}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-}
       NODE_OPTIONS: "--max-old-space-size=256"
       NEXT_TELEMETRY_DISABLED: "1"
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}

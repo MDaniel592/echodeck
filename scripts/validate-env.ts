@@ -11,6 +11,7 @@ const ENV_VARS: EnvVar[] = [
   { name: "JWT_SECRET", required: "always", description: "Secret for signing JWT tokens" },
   { name: "SETUP_SECRET", required: "production", description: "One-time setup secret for first-user creation in production" },
   { name: "TRUST_PROXY", required: "never", description: "Set to 1 only when behind a trusted reverse proxy" },
+  { name: "CSRF_TRUSTED_ORIGINS", required: "never", description: "Comma-separated trusted origins for reverse-proxy CSRF checks" },
   { name: "DOWNLOAD_TASK_MAX_WORKERS", required: "never", description: "Max concurrent background download workers (1-20)" },
   { name: "TASK_SSE_POLL_MS", required: "never", description: "Task SSE snapshot poll interval in ms (minimum 2000)" },
   { name: "TASK_SSE_MAX_CLIENTS", required: "never", description: "Max concurrent clients for /api/tasks/stream" },
@@ -70,12 +71,37 @@ function validateReleaseToken(name: string) {
   }
 }
 
+function validateTrustedOrigins(name: string) {
+  const raw = process.env[name]
+  if (!raw) return
+  const values = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+
+  for (const value of values) {
+    try {
+      const parsed = new URL(value)
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error("invalid protocol")
+      }
+    } catch {
+      // Allow host[:port] shorthand for convenience.
+      if (!/^[a-z0-9.-]+(?::\d+)?$/i.test(value)) {
+        console.error(`  INVALID  ${name} — expected origin URL(s) like https://music.example.com or host[:port]`)
+        hasErrors = true
+      }
+    }
+  }
+}
+
 validateIntegerRange("DOWNLOAD_TASK_MAX_WORKERS", 1, 20)
 validateIntegerRange("TASK_SSE_POLL_MS", 2000, 60000)
 validateIntegerRange("TASK_SSE_MAX_CLIENTS", 1, 2000)
 validateIntegerRange("TASK_DETAIL_SSE_MAX_CLIENTS", 1, 5000)
 validateReleaseToken("YTDLP_VERSION")
 validateReleaseToken("SPOTDL_VERSION")
+validateTrustedOrigins("CSRF_TRUSTED_ORIGINS")
 
 if (isProduction && process.env.TRUST_PROXY !== "1") {
   console.log("  NOTE     TRUST_PROXY is not enabled. Enable only if behind a trusted reverse proxy.")

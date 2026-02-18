@@ -61,6 +61,7 @@ npm run db:migrate:baseline:init
 | `JWT_SECRET` | Yes | Secret for signing auth tokens |
 | `SUBSONIC_PASSWORD_KEY` | No | Optional dedicated key for encrypted Subsonic password auth secret storage (falls back to `JWT_SECRET`) |
 | `TRUST_PROXY` | No | Set to `1` only behind a trusted reverse proxy (enables forwarded IP headers for login rate limiting) |
+| `CSRF_TRUSTED_ORIGINS` | No | Comma-separated trusted browser origins for API mutation CSRF checks behind reverse proxies (for example: `https://music.example.com`) |
 | `DOWNLOAD_TASK_MAX_WORKERS` | No | Max concurrent detached download workers (default: `4`) |
 | `DOWNLOAD_TASK_FILE_LOGGING` | No | Set `0`/`false` to disable task event file logging (default: enabled) |
 | `DOWNLOAD_TASK_LOG_DIR` | No | Directory for JSONL task logs (default: `./logs/download-tasks`) |
