@@ -66,6 +66,7 @@ export default function Player({
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [volume, setVolume] = useState(0.3)
+  const lastNonZeroVolumeRef = useRef(0.3)
   const [normalizationEnabled, setNormalizationEnabled] = useState(() => {
     if (typeof window === "undefined") return false
     try {
@@ -464,7 +465,23 @@ export default function Player({
   function changeVolume(e: React.ChangeEvent<HTMLInputElement>) {
     const val = parseFloat(e.target.value)
     setVolume(val)
+    if (val > 0.001) {
+      lastNonZeroVolumeRef.current = val
+    }
     if (audioRef.current) audioRef.current.volume = val
+  }
+
+  function toggleMute() {
+    setVolume((prev) => {
+      if (prev <= 0.001) {
+        const restored = Math.min(1, Math.max(0.05, lastNonZeroVolumeRef.current || 0.3))
+        if (audioRef.current) audioRef.current.volume = restored
+        return restored
+      }
+      lastNonZeroVolumeRef.current = prev
+      if (audioRef.current) audioRef.current.volume = 0
+      return 0
+    })
   }
 
   function cycleRepeatMode() {
@@ -1375,7 +1392,7 @@ export default function Player({
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 z-[70] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 sm:px-4 lg:px-6 pt-3 lg:pt-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+      className="fixed bottom-0 left-0 right-0 z-[70] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 sm:px-4 lg:px-5 pt-3 lg:pt-3.5 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
     >
       <audio ref={audioRef} />
       <DesktopPlayerBar
@@ -1399,6 +1416,7 @@ export default function Player({
         onTogglePlay={togglePlay}
         onPlayNext={playNext}
         onCycleRepeat={cycleRepeatMode}
+        onToggleMute={toggleMute}
         onVolumeChange={changeVolume}
         onToggleQueue={toggleQueueSheet}
               onToggleNormalization={() => setNormalizationEnabled((prev) => !prev)}

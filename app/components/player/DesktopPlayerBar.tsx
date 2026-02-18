@@ -47,6 +47,7 @@ interface DesktopPlayerBarProps {
   onTogglePlay: () => void
   onPlayNext: () => void
   onCycleRepeat: () => void
+  onToggleMute: () => void
   onVolumeChange: (e: ChangeEvent<HTMLInputElement>) => void
   onToggleQueue: () => void
   onToggleNormalization: () => void
@@ -82,6 +83,7 @@ export default function DesktopPlayerBar({
   onTogglePlay,
   onPlayNext,
   onCycleRepeat,
+  onToggleMute,
   onVolumeChange,
   onToggleQueue,
   onToggleNormalization,
@@ -94,9 +96,9 @@ export default function DesktopPlayerBar({
   onDesktopSeekTouchEnd,
 }: DesktopPlayerBarProps) {
   return (
-    <div className="max-w-6xl mx-auto flex flex-col gap-3 lg:gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] sm:items-center">
+    <div className="max-w-6xl mx-auto flex flex-col gap-3 lg:gap-2.5 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(22rem,1.35fr)_minmax(0,1fr)] lg:items-center lg:gap-x-4">
       <div className="flex items-center gap-3 min-w-0 lg:gap-4">
-        <div className="w-12 h-12 rounded overflow-hidden bg-zinc-800 shrink-0 flex items-center justify-center lg:h-14 lg:w-14">
+        <div className="w-12 h-12 rounded overflow-hidden bg-zinc-800 shrink-0 flex items-center justify-center lg:h-[3.25rem] lg:w-[3.25rem]">
           {coverSrc ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -111,19 +113,19 @@ export default function DesktopPlayerBar({
         <div className="min-w-0">
           <ScrollingTitle
             text={song.title}
-            className="text-sm font-medium text-white lg:text-base"
+            className="text-sm font-medium text-white lg:text-[1.05rem]"
             speed={20}
           />
-          <p className="text-xs text-zinc-500 truncate lg:text-sm">{song.artist || "Unknown"}</p>
+          <p className="text-xs text-zinc-500 truncate lg:text-[0.9rem]">{song.artist || "Unknown"}</p>
         </div>
       </div>
 
-      <div className="flex flex-col gap-2 lg:gap-2.5 sm:px-4">
-        <div className="flex items-center justify-center gap-2.5 lg:gap-3">
+      <div className="flex flex-col gap-2 lg:gap-2 lg:px-3 lg:w-full lg:max-w-[42rem] lg:justify-self-center">
+        <div className="flex items-center justify-center gap-2.5 lg:gap-2.5">
           <button
             type="button"
             onClick={onToggleShuffle}
-            className={`h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center transition-all lg:h-12 lg:min-w-12 ${
+            className={`h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center transition-all lg:h-11 lg:min-w-11 ${
               shuffleEnabled
                 ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
                 : "text-zinc-400 hover:text-white hover:bg-zinc-800"
@@ -131,20 +133,20 @@ export default function DesktopPlayerBar({
             title="Shuffle"
             aria-label={shuffleEnabled ? "Disable shuffle" : "Enable shuffle"}
           >
-            <ShuffleIcon className="h-[1.1rem] w-[1.1rem] lg:h-[1.45rem] lg:w-[1.45rem]" />
+            <ShuffleIcon className="h-[1.1rem] w-[1.1rem] lg:h-[1.25rem] lg:w-[1.25rem]" />
           </button>
           <button
             type="button"
             onClick={onPlayPrev}
             disabled={!canGoPrev}
-            className="h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center text-zinc-300 hover:text-white hover:bg-zinc-800 hover:scale-105 disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:scale-100 transition-all lg:h-12 lg:min-w-12"
+            className="h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center text-zinc-300 hover:text-white hover:bg-zinc-800 hover:scale-105 disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:scale-100 transition-all lg:h-11 lg:min-w-11"
           >
-            <PrevIcon className="h-[1.4rem] w-[1.4rem] lg:h-[1.9rem] lg:w-[1.9rem]" />
+            <PrevIcon className="h-[1.4rem] w-[1.4rem] lg:h-[1.65rem] lg:w-[1.65rem]" />
           </button>
           <button
             type="button"
             onClick={onTogglePlay}
-            className="h-11 w-11 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-transform lg:h-14 lg:w-14"
+            className="h-11 w-11 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-transform lg:h-12 lg:w-12"
           >
             <PlayPauseIcon playing={playing} large />
           </button>
@@ -152,14 +154,14 @@ export default function DesktopPlayerBar({
             type="button"
             onClick={onPlayNext}
             disabled={!canGoNext}
-            className="h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center text-zinc-300 hover:text-white hover:bg-zinc-800 hover:scale-105 disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:scale-100 transition-all lg:h-12 lg:min-w-12"
+            className="h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center text-zinc-300 hover:text-white hover:bg-zinc-800 hover:scale-105 disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:scale-100 transition-all lg:h-11 lg:min-w-11"
           >
-            <NextIcon className="h-[1.4rem] w-[1.4rem] lg:h-[1.9rem] lg:w-[1.9rem]" />
+            <NextIcon className="h-[1.4rem] w-[1.4rem] lg:h-[1.65rem] lg:w-[1.65rem]" />
           </button>
           <button
             type="button"
             onClick={onCycleRepeat}
-            className={`h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center transition-all lg:h-12 lg:min-w-12 ${
+            className={`h-10 min-w-10 px-2.5 rounded-lg inline-flex items-center justify-center transition-all lg:h-11 lg:min-w-11 ${
               repeatMode !== "off"
                 ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
                 : "text-zinc-400 hover:text-white hover:bg-zinc-800"
@@ -167,11 +169,11 @@ export default function DesktopPlayerBar({
             title={repeatTitle}
             aria-label={repeatTitle}
           >
-            <RepeatIcon mode={repeatMode} className="h-[1.1rem] w-[1.1rem] lg:h-[1.45rem] lg:w-[1.45rem]" />
+            <RepeatIcon mode={repeatMode} className="h-[1.1rem] w-[1.1rem] lg:h-[1.25rem] lg:w-[1.25rem]" />
           </button>
         </div>
 
-        <div className="w-full flex items-center gap-2 lg:gap-2.5">
+        <div className="w-full flex items-center gap-2 lg:gap-2">
           <span className="text-[11px] text-zinc-500 w-9 text-right lg:w-10 lg:text-xs">{formatTime(currentTime)}</span>
           <div
             ref={desktopSeekBarRef}
@@ -193,62 +195,83 @@ export default function DesktopPlayerBar({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 w-full sm:w-auto sm:justify-end lg:gap-3">
-        <VolumeIcon className="h-[1.05rem] w-[1.05rem] text-zinc-400 lg:h-[1.6rem] lg:w-[1.6rem]" />
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
-          value={volume}
-          onChange={onVolumeChange}
-          className="w-full sm:w-28 lg:w-36 accent-emerald-500"
-        />
-        <button
-          type="button"
-          onClick={onToggleNormalization}
-          className={`h-10 min-w-10 rounded-lg px-2 text-xs font-semibold tracking-wide transition-colors lg:h-11 lg:min-w-11 ${
-            normalizationEnabled
-              ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
-              : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-          }`}
-          aria-label={normalizationEnabled ? "Disable audio normalization" : "Enable audio normalization"}
-          title={normalizationEnabled ? "Normalization enabled" : "Normalization disabled"}
-        >
-          NRM
-        </button>
-        <button
-          type="button"
-          onClick={onToggleGapless}
-          className={`h-10 min-w-10 rounded-lg px-2 text-xs font-semibold tracking-wide transition-colors lg:h-11 lg:min-w-11 ${
-            gaplessEnabled
-              ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
-              : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-          }`}
-          aria-label={gaplessEnabled ? "Disable gapless playback" : "Enable gapless playback"}
-          title={gaplessEnabled ? "Gapless enabled" : "Gapless disabled"}
-        >
-          GAP
-        </button>
-        <label className="hidden items-center gap-1 rounded-lg border border-zinc-700/70 px-2 py-1 text-[10px] text-zinc-300 lg:inline-flex">
-          XFD
+      <div className="w-full min-w-0 flex items-center gap-2 flex-wrap lg:w-full lg:max-w-[24rem] lg:justify-self-center lg:grid lg:grid-cols-[max-content_auto] lg:grid-rows-[auto_auto] lg:items-center lg:gap-x-2.5 lg:gap-y-1.5">
+        <div className="w-full sm:w-52 lg:w-[10.5rem] lg:row-start-1 lg:col-start-1 lg:justify-self-center min-w-0 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onToggleMute}
+            className={`h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md transition-colors ${
+              volume <= 0.001
+                ? "bg-zinc-800 text-zinc-200"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+            }`}
+            aria-label={volume <= 0.001 ? "Unmute volume" : "Mute volume"}
+            title={volume <= 0.001 ? "Unmute" : "Mute"}
+          >
+            <VolumeIcon
+              muted={volume <= 0.001}
+              className="h-[1.05rem] w-[1.05rem] lg:h-[1.35rem] lg:w-[1.35rem]"
+            />
+          </button>
           <input
             type="range"
-            min={0}
-            max={8}
-            step={0.5}
-            value={crossfadeSeconds}
-            onChange={(event) => onCrossfadeChange(Number.parseFloat(event.target.value))}
-            className="w-16 accent-emerald-500"
-            aria-label="Crossfade seconds"
+            min="0"
+            max="1"
+            step="0.01"
+            value={volume}
+            onChange={onVolumeChange}
+            className="w-full min-w-0 accent-emerald-500"
           />
-          <span className="w-8 text-right tabular-nums">{crossfadeSeconds.toFixed(1)}s</span>
-        </label>
+        </div>
+
+        <div className="inline-flex items-center rounded-lg border border-zinc-700/70 bg-zinc-900/50 p-1 lg:row-start-2 lg:col-start-1 lg:justify-self-center">
+          <button
+            type="button"
+            onClick={onToggleNormalization}
+            className={`h-7 min-w-7 rounded-md px-2 text-[10px] font-semibold tracking-wide transition-colors ${
+              normalizationEnabled
+                ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+            }`}
+            aria-label={normalizationEnabled ? "Disable audio normalization" : "Enable audio normalization"}
+            title={normalizationEnabled ? "Normalization enabled" : "Normalization disabled"}
+          >
+            NRM
+          </button>
+          <button
+            type="button"
+            onClick={onToggleGapless}
+            className={`ml-1 h-7 min-w-7 rounded-md px-2 text-[10px] font-semibold tracking-wide transition-colors ${
+              gaplessEnabled
+                ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+            }`}
+            aria-label={gaplessEnabled ? "Disable gapless playback" : "Enable gapless playback"}
+            title={gaplessEnabled ? "Gapless enabled" : "Gapless disabled"}
+          >
+            GAP
+          </button>
+          <label className="ml-1 hidden items-center gap-1 rounded-md border border-zinc-700/60 px-1.5 py-0.5 text-[10px] text-zinc-300 xl:inline-flex">
+            XFD
+            <input
+              type="range"
+              min={0}
+              max={8}
+              step={0.5}
+              value={crossfadeSeconds}
+              onChange={(event) => onCrossfadeChange(Number.parseFloat(event.target.value))}
+              className="w-12 accent-emerald-500"
+              aria-label="Crossfade seconds"
+            />
+            <span className="w-7 text-right tabular-nums">{crossfadeSeconds.toFixed(1)}s</span>
+          </label>
+        </div>
+
         <button
           type="button"
           onClick={onToggleQueue}
           disabled={songsLength === 0}
-          className={`h-10 min-w-10 rounded-lg inline-flex items-center justify-center transition-colors lg:h-11 lg:min-w-11 ${
+          className={`h-10 min-w-10 rounded-lg inline-flex items-center justify-center transition-colors lg:row-start-2 lg:col-start-2 lg:justify-self-start lg:h-11 lg:min-w-11 ${
             isQueueSheetOpen
               ? "bg-zinc-800 text-white"
               : "text-zinc-400 hover:text-white hover:bg-zinc-800"

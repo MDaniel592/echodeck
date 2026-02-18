@@ -46,6 +46,7 @@ Use `docker-compose.example.yml` as the committed template.
 Your local `docker-compose.yml` is intentionally gitignored and can contain private domain/reverse-proxy settings.
 `docker-compose.yml` requires `JWT_SECRET` and `SETUP_SECRET` for startup.
 On container start, the image applies Prisma versioned migrations with `prisma migrate deploy` before serving requests.
+Task JSONL logs are persisted on the host under `./logs` via `./logs:/app/logs`.
 
 If you are upgrading from an older EchoDeck install that was created without Prisma migrations, run this one-time baseline command before first start on the new image:
 

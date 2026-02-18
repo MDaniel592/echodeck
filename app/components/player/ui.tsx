@@ -97,7 +97,13 @@ export function QueueIcon() {
   )
 }
 
-export function VolumeIcon({ className = "h-4 w-4 text-zinc-400" }: { className?: string }) {
+export function VolumeIcon({
+  className = "h-4 w-4 text-zinc-400",
+  muted = false,
+}: {
+  className?: string
+  muted?: boolean
+}) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -110,8 +116,17 @@ export function VolumeIcon({ className = "h-4 w-4 text-zinc-400" }: { className?
       aria-hidden="true"
     >
       <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+      {muted ? (
+        <>
+          <path d="M16 9l6 6" />
+          <path d="M22 9l-6 6" />
+        </>
+      ) : (
+        <>
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+        </>
+      )}
     </svg>
   )
 }
