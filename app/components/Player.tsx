@@ -128,6 +128,7 @@ export default function Player({
   const audioContextRef = useRef<AudioContext | null>(null)
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
+  const compressorNodeRef = useRef<DynamicsCompressorNode | null>(null)
   const isBraveBrowser = useMemo(
     () => (typeof navigator !== "undefined" ? /Brave\//i.test(navigator.userAgent) : false),
     []
@@ -174,7 +175,7 @@ export default function Player({
     const audio = audioRef.current
     if (!audio) return
     if (typeof window === "undefined" || typeof window.AudioContext === "undefined") return
-    if (audioContextRef.current && gainNodeRef.current && mediaSourceRef.current) return
+    if (audioContextRef.current && gainNodeRef.current && mediaSourceRef.current && compressorNodeRef.current) return
 
     const context = audioContextRef.current ?? new window.AudioContext()
     audioContextRef.current = context
@@ -182,6 +183,46 @@ export default function Player({
     mediaSourceRef.current = source
     const gain = gainNodeRef.current ?? context.createGain()
     gainNodeRef.current = gain
+    const compressor = compressorNodeRef.current ?? context.createDynamicsCompressor()
+    compressorNodeRef.current = compressor
+
+    source.disconnect()
+    gain.disconnect()
+    compressor.disconnect()
+    source.connect(gain)
+    gain.connect(context.destination)
+  }, [])
+
+  const hasReplayGain = useCallback((currentSong: Song | null): boolean => {
+    if (!currentSong) return false
+    const gainDb = currentSong.replayGainTrackDb ?? currentSong.replayGainAlbumDb
+    return typeof gainDb === "number" && Number.isFinite(gainDb)
+  }, [])
+
+  const applyAudioRouting = useCallback((useCompressorFallback: boolean) => {
+    const source = mediaSourceRef.current
+    const gain = gainNodeRef.current
+    const compressor = compressorNodeRef.current
+    const context = audioContextRef.current
+    if (!source || !gain || !compressor || !context) return
+
+    source.disconnect()
+    gain.disconnect()
+    compressor.disconnect()
+
+    if (useCompressorFallback) {
+      // Gentle AGC-like fallback when ReplayGain tags are missing.
+      compressor.threshold.setValueAtTime(-24, context.currentTime)
+      compressor.knee.setValueAtTime(30, context.currentTime)
+      compressor.ratio.setValueAtTime(8, context.currentTime)
+      compressor.attack.setValueAtTime(0.003, context.currentTime)
+      compressor.release.setValueAtTime(0.25, context.currentTime)
+
+      source.connect(gain)
+      gain.connect(compressor)
+      compressor.connect(context.destination)
+      return
+    }
 
     source.connect(gain)
     gain.connect(context.destination)
@@ -270,6 +311,7 @@ export default function Player({
       audioContextRef.current = null
       mediaSourceRef.current = null
       gainNodeRef.current = null
+      compressorNodeRef.current = null
       if (context) {
         context.close().catch(() => {})
       }
@@ -281,9 +323,11 @@ export default function Player({
     const gainNode = gainNodeRef.current
     const context = audioContextRef.current
     if (!gainNode || !context) return
+    const useCompressorFallback = normalizationEnabled && !hasReplayGain(song)
+    applyAudioRouting(useCompressorFallback)
     const target = computeNormalizationLinearGain(song)
     gainNode.gain.setTargetAtTime(target, context.currentTime, 0.02)
-  }, [song, normalizationEnabled, computeNormalizationLinearGain, setupAudioGraph])
+  }, [song, normalizationEnabled, computeNormalizationLinearGain, setupAudioGraph, hasReplayGain, applyAudioRouting])
 
   useEffect(() => {
     const audio = audioRef.current

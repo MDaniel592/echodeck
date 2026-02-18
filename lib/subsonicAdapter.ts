@@ -18,6 +18,9 @@ type SubsonicSong = {
   rating?: number | null
   albumId?: number | null
   createdAt?: Date | null
+  filePath?: string | null
+  format?: string | null
+  bitrate?: number | null
 }
 
 export function subsonicResponse(
@@ -63,11 +66,13 @@ export function subsonicResponse(
 }
 
 export function mapSubsonicSong(song: SubsonicSong) {
-  const coverArtId = song.coverPath
-    ? String(song.id)
-    : song.albumId
-      ? `al-${song.albumId}`
+  const coverArtId = song.albumId
+    ? `al-${song.albumId}`
+    : song.coverPath
+      ? String(song.id)
       : undefined
+  const duration = typeof song.duration === "number" && song.duration > 0 ? song.duration : undefined
+  const track = typeof song.trackNumber === "number" && song.trackNumber > 0 ? song.trackNumber : undefined
 
   return {
     id: String(song.id),
@@ -79,10 +84,16 @@ export function mapSubsonicSong(song: SubsonicSong) {
     albumId: song.albumId ? String(song.albumId) : "",
     artistId: song.artistId ? String(song.artistId) : "",
     coverArt: coverArtId,
-    duration: song.duration || 0,
-    track: song.trackNumber || 0,
+    duration,
+    track,
     year: song.year || 1970,
     genre: song.genre || "",
+    suffix: song.format || undefined,
+    contentType: song.filePath ? resolveMediaMimeType(song.filePath) : undefined,
+    bitRate:
+      typeof song.bitrate === "number" && Number.isFinite(song.bitrate) && song.bitrate > 0
+        ? Math.round(song.bitrate / 1000)
+        : undefined,
     created: song.createdAt ? song.createdAt.toISOString() : undefined,
     starred: song.starredAt ? song.starredAt.toISOString() : undefined,
     playCount: song.playCount ?? 0,

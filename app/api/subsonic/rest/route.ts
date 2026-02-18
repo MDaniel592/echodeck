@@ -308,12 +308,54 @@ function canTranscodeToBitrate(songBitrate: number | null | undefined, maxBitRat
   return songBitrate > maxBitRateKbps * 1000
 }
 
-function transcodeToMp3(filePath: string, maxBitRateKbps: number) {
+function computeReplayGainLinearGain(song: {
+  replayGainTrackDb: number | null
+  replayGainAlbumDb: number | null
+  replayGainTrackPeak: number | null
+  replayGainAlbumPeak: number | null
+}): number | null {
+  const gainDb = song.replayGainTrackDb ?? song.replayGainAlbumDb
+  if (typeof gainDb !== "number" || !Number.isFinite(gainDb)) return null
+
+  let linear = Math.pow(10, gainDb / 20)
+  const peak = song.replayGainTrackPeak ?? song.replayGainAlbumPeak
+  if (typeof peak === "number" && Number.isFinite(peak) && peak > 0 && linear * peak > 1) {
+    linear = 1 / peak
+  }
+  return Math.min(3, Math.max(0.1, linear))
+}
+
+function resolveTranscodeBitrateKbps(songBitrate: number | null | undefined, maxBitRateKbps: number): number {
+  const fallbackKbps = songBitrate && songBitrate > 0 ? Math.round(songBitrate / 1000) : 192
+  if (maxBitRateKbps <= 0) {
+    return Math.max(32, Math.min(320, fallbackKbps))
+  }
+  if (songBitrate && songBitrate > 0) {
+    return Math.max(32, Math.min(maxBitRateKbps, Math.round(songBitrate / 1000)))
+  }
+  return Math.max(32, maxBitRateKbps)
+}
+
+function resolveNormalizationFilter(song: {
+  replayGainTrackDb: number | null
+  replayGainAlbumDb: number | null
+  replayGainTrackPeak: number | null
+  replayGainAlbumPeak: number | null
+}): string {
+  const replayGainLinear = computeReplayGainLinearGain(song)
+  if (typeof replayGainLinear === "number" && Number.isFinite(replayGainLinear)) {
+    return `volume=${replayGainLinear.toFixed(6)}`
+  }
+  // Fallback when track has no ReplayGain metadata.
+  return "loudnorm=I=-16:TP=-1.5:LRA=11"
+}
+
+function transcodeToMp3(filePath: string, maxBitRateKbps: number, audioFilter: string | null = null) {
   const ffmpegDir = getFfmpegDir()
   const ffmpegPath = path.join(ffmpegDir, "ffmpeg")
   if (!fs.existsSync(ffmpegPath)) return null
 
-  const proc = spawn(ffmpegPath, [
+  const args = [
     "-hide_banner",
     "-loglevel",
     "error",
@@ -322,14 +364,21 @@ function transcodeToMp3(filePath: string, maxBitRateKbps: number) {
     "-vn",
     "-map_metadata",
     "-1",
+  ]
+  if (audioFilter && audioFilter.trim()) {
+    args.push("-af", audioFilter.trim())
+  }
+  args.push(
     "-codec:a",
     "libmp3lame",
     "-b:a",
     `${maxBitRateKbps}k`,
     "-f",
     "mp3",
-    "pipe:1",
-  ], {
+    "pipe:1"
+  )
+
+  const proc = spawn(ffmpegPath, args, {
     stdio: ["ignore", "pipe", "pipe"],
   })
 
@@ -722,17 +771,33 @@ export async function GET(request: NextRequest) {
       const playlists = await prisma.playlist.findMany({
         where: { userId: user.id },
         orderBy: { createdAt: "desc" },
-        include: { _count: { select: { entries: true } } },
+        include: {
+          _count: { select: { entries: true } },
+          entries: {
+            select: {
+              song: {
+                select: { duration: true },
+              },
+            },
+          },
+        },
       })
 
       return response(request, {
         playlists: {
-          playlist: playlists.map((playlist) => ({
-            id: String(playlist.id),
-            name: playlist.name,
-            songCount: playlist._count.entries,
-            created: playlist.createdAt.toISOString(),
-          })),
+          playlist: playlists.map((playlist) => {
+            const totalDuration = playlist.entries.reduce(
+              (sum, entry) => sum + (entry.song?.duration || 0),
+              0
+            )
+            return {
+              id: String(playlist.id),
+              name: playlist.name,
+              songCount: playlist._count.entries,
+              duration: totalDuration,
+              created: playlist.createdAt.toISOString(),
+            }
+          }),
         },
       })
     }
@@ -1291,6 +1356,7 @@ export async function GET(request: NextRequest) {
           id: String(playlist.id),
           name: playlist.name,
           songCount: playlistSongs.length,
+          duration: playlistSongs.reduce((sum, item) => sum + (item.duration || 0), 0),
           entry: playlistSongs.map(mapSong),
         },
       })
@@ -1321,6 +1387,7 @@ export async function GET(request: NextRequest) {
           id: String(playlist.id),
           name: playlist.name,
           songCount: updatedSongs.length,
+          duration: updatedSongs.reduce((sum, item) => sum + (item.duration || 0), 0),
           entry: updatedSongs.map(mapSong),
         },
       })
@@ -1573,6 +1640,7 @@ export async function GET(request: NextRequest) {
 
       const fileSize = stat.size
       const contentType = resolveMimeType(resolvedPath)
+
       const range = request.headers.get("range")
       if (range) {
         const parsedRange = parseByteRange(range, fileSize)
@@ -1602,25 +1670,37 @@ export async function GET(request: NextRequest) {
       }
 
       const maxBitRate = parseIntParam(request.nextUrl.searchParams.get("maxBitRate"), 0)
-      if (canTranscodeToBitrate(song.bitrate, maxBitRate)) {
-        const transcoder = transcodeToMp3(resolvedPath, maxBitRate)
+      const forceNormalize = request.nextUrl.searchParams.get("normalize") === "1"
+      const normalizationFilter = resolveNormalizationFilter(song)
+      const shouldTranscodeForBitrate = canTranscodeToBitrate(song.bitrate, maxBitRate)
+      const shouldTranscodeForNormalization = forceNormalize
+
+      if (shouldTranscodeForBitrate || shouldTranscodeForNormalization) {
+        const targetBitRate = resolveTranscodeBitrateKbps(song.bitrate, maxBitRate)
+        const transcoder = transcodeToMp3(resolvedPath, targetBitRate, normalizationFilter)
         if (transcoder?.stdout) {
-          return new Response(nodeReadableToWebStream(transcoder.stdout), {
-            headers: {
-              "Content-Type": "audio/mpeg",
-              "Accept-Ranges": "none",
-            },
-          })
+          const headers: Record<string, string> = {
+            "Content-Type": "audio/mpeg",
+            "Accept-Ranges": "none",
+          }
+          if (song.duration && song.duration > 0) {
+            headers["X-Content-Duration"] = String(song.duration)
+          }
+          return new Response(nodeReadableToWebStream(transcoder.stdout), { headers })
         }
       }
 
+      const headers: Record<string, string> = {
+        "Content-Type": contentType,
+        "Content-Length": String(fileSize),
+        "Accept-Ranges": "bytes",
+      }
+      if (song.duration && song.duration > 0) {
+        headers["X-Content-Duration"] = String(song.duration)
+      }
       const stream = fs.createReadStream(resolvedPath)
       return new Response(nodeReadableToWebStream(stream), {
-        headers: {
-          "Content-Type": contentType,
-          "Content-Length": String(fileSize),
-          "Accept-Ranges": "bytes",
-        },
+        headers,
       })
     }
 
