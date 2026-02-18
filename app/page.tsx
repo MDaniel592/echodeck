@@ -1,18 +1,14 @@
 "use client"
 
-import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react"
-import Image from "next/image"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { useRouter } from "next/navigation"
 import DownloadForm from "./components/DownloadForm"
-import SongList from "./components/SongList"
 import Player from "./components/Player"
 import LibraryManagementPanel from "./components/library/LibraryManagementPanel"
-import LibraryToolbar from "./components/library/LibraryToolbar"
-import LibraryGroupFolder from "./components/library/LibraryGroupFolder"
-import SongGridCards from "./components/library/SongGridCards"
 import MaintenancePanel from "./components/admin/MaintenancePanel"
 import OrganizationPanel from "./components/organization/OrganizationPanel"
-import { DownloadTabIcon, GitHubIcon, LibraryTabIcon, LogoutIcon } from "./components/home/HomeIcons"
+import HomeHeader from "./components/home/HomeHeader"
+import HomePlayerTab from "./components/home/HomePlayerTab"
 import {
   type HomeTab,
   type LibrarySummary,
@@ -755,187 +751,38 @@ export default function Home() {
     })
   }
 
-  function renderGroupFolders(children: (group: { key: string; label: string; songs: Song[] }, isOpen: boolean) => ReactNode) {
-    return (
-      <div className="space-y-3">
-        {groupedVisibleSongs.map((group) => {
-          const isOpen = expandedGroupKey === group.key
-          return (
-            <LibraryGroupFolder
-              key={group.key}
-              label={group.label}
-              count={group.songs.length}
-              isOpen={isOpen}
-              onToggle={() => setExpandedGroupKey((prev) => (prev === group.key ? null : group.key))}
-            >
-              {children(group, isOpen)}
-            </LibraryGroupFolder>
-          )
-        })}
-      </div>
-    )
-  }
-
-  function renderGroupedGrid() {
-    if (scopeMode !== "all") {
-      return renderGroupFolders((group) => (
-        <SongGridCards
-          songs={group.songs}
-          currentSongId={currentSongId}
-          onPlay={handlePlaySong}
-          onPlayNext={handlePlayNext}
-          onAddToQueue={handleAddToQueue}
-          cardScale={gridCardScale}
-        />
-      ))
-    }
-
-    return (
-      <SongGridCards
-        songs={visibleSongs}
-        currentSongId={currentSongId}
-        onPlay={handlePlaySong}
-        onPlayNext={handlePlayNext}
-        onAddToQueue={handleAddToQueue}
-        cardScale={gridCardScale}
-      />
-    )
-  }
-
   return (
     <div className="relative h-full flex flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,#1d2a4a_0%,#111623_35%,#080a10_72%)] text-zinc-100">
       <div className="pointer-events-none absolute inset-0 opacity-40">
         <div className="absolute -top-28 left-[8%] h-72 w-72 rounded-full bg-sky-400/20 blur-3xl" />
         <div className="absolute top-[30%] -right-16 h-64 w-64 rounded-full bg-emerald-400/15 blur-3xl" />
       </div>
-      {/* ── Header ── */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#0a0f1a]/75 backdrop-blur-2xl">
-        <div className="w-full px-2.5 sm:px-6">
-          {/* Top row: brand + tabs + actions */}
-          <div className="flex h-10 items-center gap-2 md:h-14 md:gap-3 lg:h-16">
-            {/* Brand */}
-            <Image
-              src="/EchoDeck.png"
-              alt="EchoDeck"
-              width={542}
-              height={391}
-              priority
-              className="h-5 w-auto select-none shrink-0 md:h-7 lg:h-8"
-            />
-
-            {/* Tabs */}
-            <nav className="flex items-center rounded-xl px-0.5 py-0.5 md:px-1.5 md:py-1 lg:px-2 lg:py-1.5">
-              <button
-                type="button"
-                onClick={() => setActiveTab("player")}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-all md:gap-1.5 md:px-4 md:py-2 md:text-sm lg:px-5 lg:py-2.5 lg:text-base ${
-                  activeTab === "player"
-                    ? "bg-gradient-to-r from-sky-300 to-emerald-300 text-slate-900 shadow-sm"
-                    : "text-zinc-400 hover:text-white"
-                }`}
-              >
-                <LibraryTabIcon />
-                Library
-              </button>
-              <span className="mx-1 h-5 w-px bg-white/15 md:h-6 lg:h-7" aria-hidden="true" />
-              <button
-                type="button"
-                onClick={() => setActiveTab("download")}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-all md:gap-1.5 md:px-4 md:py-2 md:text-sm lg:px-5 lg:py-2.5 lg:text-base ${
-                  activeTab === "download"
-                    ? "bg-gradient-to-r from-sky-300 to-emerald-300 text-slate-900 shadow-sm"
-                    : "text-zinc-400 hover:text-white"
-                }`}
-              >
-                <DownloadTabIcon />
-                Download
-              </button>
-            </nav>
-
-            {/* Spacer */}
-            <div className="flex-1" />
-
-            {/* Song count */}
-            <span className="hidden sm:inline text-xs text-zinc-400 tabular-nums md:text-sm lg:text-base">
-              {songs.length} {songs.length === 1 ? "track" : "tracks"}
-            </span>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("manage")}
-              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
-            >
-              Manage
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("organize")}
-              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
-            >
-              Organize
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("maintenance")}
-              className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-200 hover:bg-white/10 md:text-sm"
-            >
-              Maintenance
-            </button>
-
-            <span className="hidden sm:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-zinc-400 md:text-sm">
-              v{appVersion}
-            </span>
-
-            <a
-              href="https://github.com/MDaniel592/echodeck"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 text-[11px] text-zinc-200 transition-colors hover:bg-white/10 md:h-8 md:gap-2 md:px-3 md:text-sm"
-              aria-label="Open EchoDeck GitHub repository"
-              title="GitHub repository"
-            >
-              <GitHubIcon />
-              <span className="hidden md:inline">GitHub</span>
-            </a>
-
-            {/* Logout */}
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-white/10 hover:text-zinc-100 md:h-8 md:w-8"
-              aria-label="Logout"
-              title="Logout"
-            >
-              <LogoutIcon />
-            </button>
-          </div>
-
-          {/* Toolbar row (library tab only) */}
-          {activeTab === "player" && (
-            <LibraryToolbar
-              searchQuery={searchQuery}
-              onSearchChange={setSearchQuery}
-              onClearSearch={() => setSearchQuery("")}
-              scopeMode={scopeMode}
-              onScopeModeChange={setScopeMode}
-              selectedPlaylist={selectedPlaylist}
-              onSelectedPlaylistChange={setSelectedPlaylist}
-              selectedTag={selectedTag}
-              onSelectedTagChange={setSelectedTag}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              cardScale={gridCardScale}
-              onCardScaleChange={setGridCardScale}
-              songsCount={songs.length}
-              unassignedCount={unassignedCount}
-              playlists={playlists}
-              tags={tags}
-            />
-          )}
-        </div>
-      </header>
+      <HomeHeader
+        activeTab={activeTab}
+        onActiveTabChange={setActiveTab}
+        songsCount={songs.length}
+        appVersion={appVersion}
+        onLogout={handleLogout}
+        toolbarProps={{
+          searchQuery,
+          onSearchChange: setSearchQuery,
+          onClearSearch: () => setSearchQuery(""),
+          scopeMode,
+          onScopeModeChange: setScopeMode,
+          selectedPlaylist,
+          onSelectedPlaylistChange: setSelectedPlaylist,
+          selectedTag,
+          onSelectedTagChange: setSelectedTag,
+          viewMode,
+          onViewModeChange: setViewMode,
+          cardScale: gridCardScale,
+          onCardScaleChange: setGridCardScale,
+          songsCount: songs.length,
+          unassignedCount,
+          playlists,
+          tags,
+        }}
+      />
 
       {/* ── Main ── */}
       <main className="custom-scrollbar relative z-10 flex-1 overflow-y-auto w-full px-2.5 pt-2 sm:px-6 sm:pt-4 pb-32 sm:pb-28">
@@ -976,84 +823,29 @@ export default function Home() {
         {activeTab === "maintenance" && <MaintenancePanel embedded />}
 
         {activeTab === "player" && (
-          <div className="animate-[app-fade-in_450ms_ease-out]">
-            <section className="mb-4 hidden grid-cols-1 gap-3 md:grid md:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Library</p>
-                <p className="mt-1 text-xl font-semibold text-white tabular-nums">{songs.length}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Visible</p>
-                <p className="mt-1 text-xl font-semibold text-white tabular-nums">{visibleSongs.length}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Queue</p>
-                <p className="mt-1 text-xl font-semibold text-white tabular-nums">{queueSongs.length}</p>
-              </div>
-            </section>
-            {loading ? (
-              <div className="flex items-center justify-center py-20">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-400" />
-              </div>
-            ) : songs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-zinc-900 text-3xl text-zinc-600">
-                  ♪
-                </div>
-                <p className="text-sm font-medium text-zinc-300">No tracks yet</p>
-                <p className="mt-1 text-xs text-zinc-600">
-                  Switch to the Download tab to add music.
-                </p>
-              </div>
-            ) : visibleSongs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800/60 bg-zinc-900/40 py-16 text-center">
-                <p className="text-sm font-medium text-zinc-300">No matches</p>
-                <p className="mt-1 text-xs text-zinc-500">
-                  {searchQuery.trim()
-                    ? "Try a different search term."
-                    : scopeMode === "libraries"
-                      ? "Try a different scope."
-                      : "Try a different playlist filter."}
-                </p>
-              </div>
-            ) : (
-              <>
-                {viewMode === "grid" ? (
-                  renderGroupedGrid()
-                ) : scopeMode === "all" ? (
-                  <SongList
-                    songs={visibleSongs}
-                    playlists={playlists}
-                    currentSongId={currentSongId}
-                    onPlay={handlePlaySong}
-                    onAddToQueue={handleAddToQueue}
-                    onPlayNext={handlePlayNext}
-                    onDelete={handleDelete}
-                    onDeleteMany={handleDeleteMany}
-                    onAssignPlaylist={handleAssignPlaylist}
-                    onAssignPlaylistMany={handleAssignPlaylistMany}
-                    onCreatePlaylist={createPlaylist}
-                  />
-                ) : (
-                  renderGroupFolders((group) => (
-                    <SongList
-                      songs={group.songs}
-                      playlists={playlists}
-                      currentSongId={currentSongId}
-                      onPlay={handlePlaySong}
-                      onAddToQueue={handleAddToQueue}
-                      onPlayNext={handlePlayNext}
-                      onDelete={handleDelete}
-                      onDeleteMany={handleDeleteMany}
-                      onAssignPlaylist={handleAssignPlaylist}
-                      onAssignPlaylistMany={handleAssignPlaylistMany}
-                      onCreatePlaylist={createPlaylist}
-                    />
-                  ))
-                )}
-              </>
-            )}
-          </div>
+          <HomePlayerTab
+            songs={songs}
+            visibleSongs={visibleSongs}
+            queueSongs={queueSongs}
+            loading={loading}
+            searchQuery={searchQuery}
+            scopeMode={scopeMode}
+            viewMode={viewMode}
+            groupedVisibleSongs={groupedVisibleSongs}
+            expandedGroupKey={expandedGroupKey}
+            onExpandedGroupKeyChange={setExpandedGroupKey}
+            currentSongId={currentSongId}
+            playlists={playlists}
+            cardScale={gridCardScale}
+            onPlay={handlePlaySong}
+            onAddToQueue={handleAddToQueue}
+            onPlayNext={handlePlayNext}
+            onDelete={handleDelete}
+            onDeleteMany={handleDeleteMany}
+            onAssignPlaylist={handleAssignPlaylist}
+            onAssignPlaylistMany={handleAssignPlaylistMany}
+            onCreatePlaylist={createPlaylist}
+          />
         )}
       </main>
 
