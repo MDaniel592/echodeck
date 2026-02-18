@@ -9,6 +9,7 @@ export default function SetupPage() {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [setupSecret, setSetupSecret] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(true)
@@ -64,7 +65,11 @@ export default function SetupPage() {
       const res = await fetch("/api/auth/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.trim(), password }),
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+          setupSecret: setupSecret.trim(),
+        }),
       })
 
       const data = await res.json()
@@ -159,6 +164,24 @@ export default function SetupPage() {
               className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
               placeholder="Repeat password"
             />
+          </div>
+
+          <div>
+            <label htmlFor="setupSecret" className="block text-sm text-zinc-400 mb-1">
+              Setup Secret
+            </label>
+            <input
+              id="setupSecret"
+              type="password"
+              value={setupSecret}
+              onChange={(e) => setSetupSecret(e.target.value)}
+              autoComplete="off"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+              placeholder="Required in production"
+            />
+            <p className="mt-1 text-xs text-zinc-500">
+              Needed only when the server is configured with SETUP_SECRET.
+            </p>
           </div>
 
           {error && (

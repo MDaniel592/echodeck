@@ -71,4 +71,41 @@ describe("auth/setup route", () => {
     expect(body.error).toBe("Invalid setup secret")
     expect(prismaMock.$transaction).not.toHaveBeenCalled()
   })
+
+  it("allows setup in production when setup secret is valid", async () => {
+    vi.stubEnv("NODE_ENV", "production")
+    vi.stubEnv("SETUP_SECRET", "correct-secret")
+    hashPasswordMock.mockResolvedValue("hash")
+    encryptSubsonicPasswordMock.mockReturnValue("enc")
+    createTokenMock.mockReturnValue("mock-token")
+
+    prismaMock.$transaction.mockImplementation(async (callback) => {
+      const tx = {
+        user: {
+          count: vi.fn().mockResolvedValue(0),
+          create: vi.fn().mockResolvedValue({ id: 7, authTokenVersion: 2 }),
+        },
+      }
+      return callback(tx)
+    })
+
+    const { POST } = await import("../app/api/auth/setup/route")
+    const req = new NextRequest("http://localhost/api/auth/setup", {
+      method: "POST",
+      body: JSON.stringify({
+        username: "admin",
+        password: "supersecure",
+        setupSecret: "correct-secret",
+      }),
+      headers: { "content-type": "application/json" },
+    })
+
+    const res = await POST(req)
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.success).toBe(true)
+    expect(createTokenMock).toHaveBeenCalledWith(7, 2)
+    expect(res.headers.get("set-cookie")).toContain("auth_token=mock-token")
+  })
 })
