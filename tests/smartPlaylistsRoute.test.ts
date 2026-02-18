@@ -103,6 +103,23 @@ describe("smart playlists routes", () => {
     expect(body.error).toBe("Invalid smart playlist rule")
   })
 
+  it("POST /api/smart-playlists rejects invalid metadata ranges", async () => {
+    const { POST } = await import("../app/api/smart-playlists/route")
+    const req = new NextRequest("http://localhost/api/smart-playlists", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Invalid Metadata Rule",
+        rule: { minBitrate: 320, maxBitrate: 128 },
+      }),
+    })
+    const res = await POST(req)
+    const body = await res.json()
+
+    expect(res.status).toBe(400)
+    expect(body.error).toBe("Invalid smart playlist rule")
+  })
+
   it("GET /api/smart-playlists/:id/songs returns 422 for malformed stored rule JSON", async () => {
     prismaMock.smartPlaylist.findFirst.mockResolvedValue({
       id: 10,

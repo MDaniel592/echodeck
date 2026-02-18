@@ -8,6 +8,12 @@ export type SmartPlaylistRule = {
   yearGte?: number
   yearLte?: number
   minPlayCount?: number
+  minBitrate?: number
+  maxBitrate?: number
+  minDurationSec?: number
+  maxDurationSec?: number
+  minRating?: number
+  playedWithinDays?: number
   starredOnly?: boolean
   hasLyrics?: boolean
   libraryId?: number
@@ -55,6 +61,12 @@ export function parseSmartPlaylistRule(input: unknown): { rule: SmartPlaylistRul
     yearGte: asPositiveInt(raw.yearGte),
     yearLte: asPositiveInt(raw.yearLte),
     minPlayCount: asPositiveInt(raw.minPlayCount),
+    minBitrate: asPositiveInt(raw.minBitrate),
+    maxBitrate: asPositiveInt(raw.maxBitrate),
+    minDurationSec: asPositiveInt(raw.minDurationSec),
+    maxDurationSec: asPositiveInt(raw.maxDurationSec),
+    minRating: asPositiveInt(raw.minRating),
+    playedWithinDays: asPositiveInt(raw.playedWithinDays),
     starredOnly: asBoolean(raw.starredOnly),
     hasLyrics: asBoolean(raw.hasLyrics),
     libraryId: asPositiveInt(raw.libraryId),
@@ -79,6 +91,15 @@ export function parseSmartPlaylistRule(input: unknown): { rule: SmartPlaylistRul
 
   if (rule.yearGte && rule.yearLte && rule.yearGte > rule.yearLte) {
     errors.push("yearGte cannot be greater than yearLte")
+  }
+  if (rule.minBitrate && rule.maxBitrate && rule.minBitrate > rule.maxBitrate) {
+    errors.push("minBitrate cannot be greater than maxBitrate")
+  }
+  if (rule.minDurationSec && rule.maxDurationSec && rule.minDurationSec > rule.maxDurationSec) {
+    errors.push("minDurationSec cannot be greater than maxDurationSec")
+  }
+  if (rule.minRating && (rule.minRating < 1 || rule.minRating > 5)) {
+    errors.push("minRating must be between 1 and 5")
   }
 
   return { rule, errors }
@@ -113,8 +134,27 @@ export function buildSmartPlaylistWhere(userId: number, rule: SmartPlaylistRule)
   if (rule.genreContains) where.genre = { contains: rule.genreContains }
   if (rule.sourceEquals) where.source = { equals: rule.sourceEquals }
   if (rule.minPlayCount) where.playCount = { gte: rule.minPlayCount }
+  if (rule.minRating) where.rating = { gte: rule.minRating }
   if (rule.libraryId) where.libraryId = rule.libraryId
   if (rule.starredOnly) where.starredAt = { not: null }
+
+  if (rule.minBitrate || rule.maxBitrate) {
+    where.bitrate = {
+      ...(rule.minBitrate ? { gte: rule.minBitrate } : {}),
+      ...(rule.maxBitrate ? { lte: rule.maxBitrate } : {}),
+    }
+  }
+  if (rule.minDurationSec || rule.maxDurationSec) {
+    where.duration = {
+      ...(rule.minDurationSec ? { gte: rule.minDurationSec } : {}),
+      ...(rule.maxDurationSec ? { lte: rule.maxDurationSec } : {}),
+    }
+  }
+  if (rule.playedWithinDays) {
+    where.lastPlayedAt = {
+      gte: new Date(Date.now() - rule.playedWithinDays * 24 * 60 * 60 * 1000),
+    }
+  }
 
   if (rule.hasLyrics === true) where.lyrics = { not: null }
   if (rule.hasLyrics === false) where.lyrics = null

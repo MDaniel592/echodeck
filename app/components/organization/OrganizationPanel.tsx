@@ -22,6 +22,12 @@ type SmartPlaylistRule = {
   yearGte?: number
   yearLte?: number
   minPlayCount?: number
+  minBitrate?: number
+  maxBitrate?: number
+  minDurationSec?: number
+  maxDurationSec?: number
+  minRating?: number
+  playedWithinDays?: number
   starredOnly?: boolean
   hasLyrics?: boolean
   libraryId?: number
@@ -599,6 +605,12 @@ export default function OrganizationPanel({
           <input className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" placeholder="Genre contains" value={newRule.genreContains || ""} onChange={(e) => setNewRule((prev) => ({ ...prev, genreContains: e.target.value || undefined }))} />
           <input className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" placeholder="Source equals (youtube/library)" value={newRule.sourceEquals || ""} onChange={(e) => setNewRule((prev) => ({ ...prev, sourceEquals: e.target.value || undefined }))} />
           <input className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" placeholder="Min play count" type="number" value={newRule.minPlayCount || ""} onChange={(e) => setNewRule((prev) => ({ ...prev, minPlayCount: e.target.value ? Number.parseInt(e.target.value, 10) : undefined }))} />
+          <input className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" placeholder="Min bitrate kbps" type="number" value={newRule.minBitrate || ""} onChange={(e) => setNewRule((prev) => ({ ...prev, minBitrate: e.target.value ? Number.parseInt(e.target.value, 10) : undefined }))} />
+          <input className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" placeholder="Max bitrate kbps" type="number" value={newRule.maxBitrate || ""} onChange={(e) => setNewRule((prev) => ({ ...prev, maxBitrate: e.target.value ? Number.parseInt(e.target.value, 10) : undefined }))} />
+          <input className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" placeholder="Min duration sec" type="number" value={newRule.minDurationSec || ""} onChange={(e) => setNewRule((prev) => ({ ...prev, minDurationSec: e.target.value ? Number.parseInt(e.target.value, 10) : undefined }))} />
+          <input className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" placeholder="Max duration sec" type="number" value={newRule.maxDurationSec || ""} onChange={(e) => setNewRule((prev) => ({ ...prev, maxDurationSec: e.target.value ? Number.parseInt(e.target.value, 10) : undefined }))} />
+          <input className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" placeholder="Min rating (1-5)" type="number" min={1} max={5} value={newRule.minRating || ""} onChange={(e) => setNewRule((prev) => ({ ...prev, minRating: e.target.value ? Number.parseInt(e.target.value, 10) : undefined }))} />
+          <input className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" placeholder="Played in last N days" type="number" value={newRule.playedWithinDays || ""} onChange={(e) => setNewRule((prev) => ({ ...prev, playedWithinDays: e.target.value ? Number.parseInt(e.target.value, 10) : undefined }))} />
           <label className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-200">
             <input type="checkbox" checked={Boolean(newRule.hasLyrics)} onChange={(e) => setNewRule((prev) => ({ ...prev, hasLyrics: e.target.checked || undefined }))} />
             Lyrics required

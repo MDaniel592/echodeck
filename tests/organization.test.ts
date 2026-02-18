@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { groupDuplicateSongs, parseSmartPlaylistRule, parseSmartPlaylistRuleJson } from "../lib/organization"
+import { buildSmartPlaylistWhere, groupDuplicateSongs, parseSmartPlaylistRule, parseSmartPlaylistRuleJson } from "../lib/organization"
 
 describe("organization helpers", () => {
   it("parses smart playlist rules and clamps limit", () => {
@@ -68,5 +68,26 @@ describe("organization helpers", () => {
     expect(parsed.invalidJson).toBe(true)
     expect(parsed.errors).toContain("Stored rule JSON is invalid")
     expect(parsed.rule).toEqual({})
+  })
+
+  it("supports advanced metadata rules", () => {
+    const { rule, errors } = parseSmartPlaylistRule({
+      minBitrate: 256,
+      maxBitrate: 320,
+      minDurationSec: 100,
+      maxDurationSec: 400,
+      minRating: 4,
+      playedWithinDays: 30,
+    })
+
+    expect(errors).toEqual([])
+    expect(rule.minBitrate).toBe(256)
+    expect(rule.maxDurationSec).toBe(400)
+
+    const where = buildSmartPlaylistWhere(7, rule)
+    expect(where.bitrate).toEqual({ gte: 256, lte: 320 })
+    expect(where.duration).toEqual({ gte: 100, lte: 400 })
+    expect(where.rating).toEqual({ gte: 4 })
+    expect(where.lastPlayedAt).toBeTruthy()
   })
 })
