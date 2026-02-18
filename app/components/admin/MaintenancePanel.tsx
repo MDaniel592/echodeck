@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 
 type MaintenanceAudit = {
@@ -69,6 +69,7 @@ interface MaintenancePanelProps {
 }
 
 const MIN_PROGRESS_PANEL_MS = 1200
+const RATE_METRICS_AUTO_REFRESH_MS = 15_000
 
 const ACTIONS: Array<{ id: MaintenanceAction; label: string; description: string }> = [
   {
@@ -188,6 +189,7 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
   const [rateMetrics, setRateMetrics] = useState<RateLimitMetrics | null>(null)
   const [loadingRateMetrics, setLoadingRateMetrics] = useState(true)
   const [refreshingRateMetrics, setRefreshingRateMetrics] = useState(false)
+  const [autoRefreshRateMetrics, setAutoRefreshRateMetrics] = useState(true)
   const [runningAction, setRunningAction] = useState<MaintenanceAction | null>(null)
   const [runningWorkflow, setRunningWorkflow] = useState<string | null>(null)
   const [error, setError] = useState("")
@@ -200,6 +202,25 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
   const [panelMode, setPanelMode] = useState<"running" | "complete" | "error">("running")
   const [activeResult, setActiveResult] = useState<MaintenanceResult | null>(null)
   const [forbidden, setForbidden] = useState(false)
+
+  const refreshRateLimitMetrics = useCallback(async () => {
+    setRefreshingRateMetrics(true)
+    setRateMetricsError("")
+    try {
+      const res = await fetch("/api/admin/rate-limit/metrics?limit=12", { cache: "no-store" })
+      const data = await res.json()
+      if (!res.ok) {
+        setRateMetricsError(data?.error || "Failed to load rate-limit metrics.")
+        return
+      }
+      setRateMetrics(data as RateLimitMetrics)
+    } catch {
+      setRateMetricsError("Failed to load rate-limit metrics.")
+    } finally {
+      setRefreshingRateMetrics(false)
+      setLoadingRateMetrics(false)
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -235,7 +256,7 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
     return () => {
       active = false
     }
-  }, [embedded, router])
+  }, [embedded, refreshRateLimitMetrics, router])
 
   useEffect(() => {
     if (!runStartedAt || !runningAction) {
@@ -266,26 +287,7 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
     }
   }
 
-  async function refreshRateLimitMetrics() {
-    setRefreshingRateMetrics(true)
-    setRateMetricsError("")
-    try {
-      const res = await fetch("/api/admin/rate-limit/metrics?limit=12", { cache: "no-store" })
-      const data = await res.json()
-      if (!res.ok) {
-        setRateMetricsError(data?.error || "Failed to load rate-limit metrics.")
-        return
-      }
-      setRateMetrics(data as RateLimitMetrics)
-    } catch {
-      setRateMetricsError("Failed to load rate-limit metrics.")
-    } finally {
-      setRefreshingRateMetrics(false)
-      setLoadingRateMetrics(false)
-    }
-  }
-
-  async function resetRateLimitMetricsAction() {
+  const resetRateLimitMetricsAction = useCallback(async () => {
     setRateMetricsError("")
     setRefreshingRateMetrics(true)
     try {
@@ -305,7 +307,15 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
     } finally {
       setRefreshingRateMetrics(false)
     }
-  }
+  }, [refreshRateLimitMetrics])
+
+  useEffect(() => {
+    if (forbidden || !autoRefreshRateMetrics) return
+    const interval = setInterval(() => {
+      void refreshRateLimitMetrics()
+    }, RATE_METRICS_AUTO_REFRESH_MS)
+    return () => clearInterval(interval)
+  }, [autoRefreshRateMetrics, forbidden, refreshRateLimitMetrics])
 
   async function runAction(action: MaintenanceAction, dryRun: boolean) {
     const startedAt = Date.now()
@@ -515,6 +525,15 @@ export default function MaintenancePanel({ embedded = false }: MaintenancePanelP
                 <p className="mt-1 text-xs text-zinc-400">Live counters by key prefix for login and Subsonic protections.</p>
               </div>
               <div className="flex gap-2">
+                <label className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-2 py-1.5 text-xs text-zinc-300">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-blue-500"
+                    checked={autoRefreshRateMetrics}
+                    onChange={(event) => setAutoRefreshRateMetrics(event.target.checked)}
+                  />
+                  Auto 15s
+                </label>
                 <button
                   type="button"
                   onClick={() => {
