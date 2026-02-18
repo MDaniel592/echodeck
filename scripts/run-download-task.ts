@@ -518,10 +518,32 @@ async function runVideoTask(taskId: number) {
   if (isPlaylist) {
     await logEvent(taskId, "status", "Fetching playlist info...")
     const playlist = await getPlaylistInfo(task.sourceUrl)
-    const total = playlist.entries.length
+    const uniqueEntries = Array.from(
+      new Map(
+        playlist.entries.map((entry) => [normalizeYouTubeUrl(entry.url), { ...entry, url: normalizeYouTubeUrl(entry.url) }])
+      ).values()
+    )
+    const totalRaw = playlist.entries.length
+    const total = uniqueEntries.length
     if (total === 0) {
       throw new Error("No downloadable tracks were found in this playlist.")
     }
+
+    const duplicateCount = Math.max(0, totalRaw - total)
+    const candidateUrls = uniqueEntries.map((entry) => entry.url)
+    const existingRows = candidateUrls.length > 0
+      ? await prisma.song.findMany({
+          where: {
+            userId,
+            source,
+            sourceUrl: { in: candidateUrls },
+          },
+          select: { sourceUrl: true },
+        })
+      : []
+    const existingUrlSet = new Set(existingRows.map((row) => row.sourceUrl).filter((value): value is string => Boolean(value)))
+    const estimatedExisting = existingUrlSet.size
+    const estimatedNew = Math.max(0, total - estimatedExisting)
 
     await prisma.downloadTask.update({
       where: { id: taskId },
@@ -533,15 +555,23 @@ async function runVideoTask(taskId: number) {
     })
 
     await logEvent(taskId, "info", `Playlist: ${playlist.title}`)
+    if (duplicateCount > 0) {
+      await logEvent(taskId, "info", `Playlist entries deduplicated: ${duplicateCount} duplicate item(s) removed.`)
+    }
+    await logEvent(
+      taskId,
+      "info",
+      `Pre-check: unique=${total} already_in_library=${estimatedExisting} estimated_new=${estimatedNew}`
+    )
     await logEvent(
       taskId,
       "status",
       `Found ${total} tracks. Starting background queue (${YOUTUBE_DOWNLOAD_CONCURRENCY} parallel downloads)...`
     )
 
-    await runWithConcurrency(playlist.entries, YOUTUBE_DOWNLOAD_CONCURRENCY, async (entry, index) => {
+    await runWithConcurrency(uniqueEntries, YOUTUBE_DOWNLOAD_CONCURRENCY, async (entry, index) => {
       const progressPrefix = `[${index + 1}/${total}]`
-      const normalizedTrackUrl = normalizeYouTubeUrl(entry.url)
+      const normalizedTrackUrl = entry.url
       let shouldThrottle = false
       let songToReplace: Awaited<ReturnType<typeof findReusableSongBySourceUrl>> | null = null
 
