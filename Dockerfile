@@ -18,7 +18,7 @@ ENV SKIP_SETUP=1
 
 # Native build tooling for better-sqlite3
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
+  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates xz-utils \
   && rm -rf /var/lib/apt/lists/*
 
 # Copy install-critical files first for better layer caching.
