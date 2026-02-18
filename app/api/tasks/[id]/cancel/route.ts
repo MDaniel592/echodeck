@@ -42,13 +42,7 @@ export async function POST(
     }
 
     // Try to kill the worker process if running
-    if (
-      task.status === "running" &&
-      task.workerPid &&
-      task.workerPid > 1 &&
-      task.heartbeatAt &&
-      Date.now() - task.heartbeatAt.getTime() < 2 * 60 * 1000
-    ) {
+    if (task.status === "running" && task.workerPid && task.workerPid > 1) {
       try {
         process.kill(task.workerPid, "SIGTERM")
       } catch {
@@ -56,8 +50,14 @@ export async function POST(
       }
     }
 
-    await prisma.downloadTask.updateMany({
-      where: { id: taskId, userId },
+    const cancelled = await prisma.downloadTask.updateMany({
+      where: {
+        id: taskId,
+        userId,
+        status: {
+          in: ["queued", "running"],
+        },
+      },
       data: {
         status: "failed",
         errorMessage: "Cancelled by user.",
@@ -65,6 +65,12 @@ export async function POST(
         workerPid: null,
       },
     })
+    if (cancelled.count === 0) {
+      return NextResponse.json(
+        { error: "Task can no longer be cancelled" },
+        { status: 409 }
+      )
+    }
 
     await appendTaskEvent(userId, taskId, "status", "Task cancelled by user.")
     await drainQueuedTaskWorkers()

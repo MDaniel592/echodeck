@@ -82,7 +82,11 @@ describe("tasks/:id/cancel route", () => {
     expect(res.status).toBe(200)
     expect(body).toEqual({ success: true })
     expect(prismaMock.downloadTask.updateMany).toHaveBeenCalledWith({
-      where: { id: 12, userId: 7 },
+      where: {
+        id: 12,
+        userId: 7,
+        status: { in: ["queued", "running"] },
+      },
       data: expect.objectContaining({
         status: "failed",
         errorMessage: "Cancelled by user.",
@@ -91,5 +95,26 @@ describe("tasks/:id/cancel route", () => {
     })
     expect(appendTaskEventMock).toHaveBeenCalledWith(7, 12, "status", "Task cancelled by user.")
     expect(drainQueuedTaskWorkersMock).toHaveBeenCalled()
+  })
+
+  it("tries to terminate worker even when heartbeat is stale", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true)
+    prismaMock.downloadTask.findFirst.mockResolvedValue({
+      id: 12,
+      status: "running",
+      workerPid: 4321,
+      heartbeatAt: new Date(Date.now() - 60 * 60 * 1000),
+    })
+
+    try {
+      const { POST } = await import("../app/api/tasks/[id]/cancel/route")
+      const req = new NextRequest("http://localhost/api/tasks/12/cancel", { method: "POST" })
+      const res = await POST(req, { params: Promise.resolve({ id: "12" }) })
+
+      expect(res.status).toBe(200)
+      expect(killSpy).toHaveBeenCalledWith(4321, "SIGTERM")
+    } finally {
+      killSpy.mockRestore()
+    }
   })
 })

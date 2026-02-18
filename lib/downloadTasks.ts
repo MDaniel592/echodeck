@@ -520,8 +520,8 @@ export async function recoverStaleTasks(): Promise<number> {
  * Update the heartbeat timestamp for a running task.
  */
 export async function updateTaskHeartbeat(taskId: number): Promise<void> {
-  await prisma.downloadTask.update({
-    where: { id: taskId },
+  await prisma.downloadTask.updateMany({
+    where: { id: taskId, status: "running" },
     data: { heartbeatAt: new Date() },
   })
 }

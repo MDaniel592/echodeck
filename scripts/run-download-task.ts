@@ -35,6 +35,28 @@ const DOWNLOADS_ROOT = path.resolve(process.cwd(), "downloads")
 const EXPORT_LRC_SIDECAR = /^1|true|yes|on$/i.test(process.env.EXPORT_LRC_SIDECAR || "")
 const DOWNLOAD_ASCII_FILENAMES = /^1|true|yes|on$/i.test(process.env.DOWNLOAD_ASCII_FILENAMES || "")
 
+class TaskCancelledError extends Error {
+  constructor(message = "Task cancelled by user.") {
+    super(message)
+    this.name = "TaskCancelledError"
+  }
+}
+
+async function isTaskRunning(taskId: number): Promise<boolean> {
+  const task = await prisma.downloadTask.findUnique({
+    where: { id: taskId },
+    select: { status: true },
+  })
+  return task?.status === "running"
+}
+
+async function ensureTaskRunning(taskId: number): Promise<void> {
+  if (await isTaskRunning(taskId)) {
+    return
+  }
+  throw new TaskCancelledError()
+}
+
 function extractVideoIdFromMixList(listId: string): string | null {
   if (!listId.startsWith("RD")) return null
 
@@ -506,6 +528,7 @@ async function runVideoTask(taskId: number) {
   const task = await prisma.downloadTask.findUnique({ where: { id: taskId } })
   if (!task) return
   if (!task.userId) throw new Error("Task has no owner")
+  await ensureTaskRunning(taskId)
 
   const userId = task.userId
   const source = task.source
@@ -573,9 +596,11 @@ async function runVideoTask(taskId: number) {
       const progressPrefix = `[${index + 1}/${total}]`
       const normalizedTrackUrl = entry.url
       let shouldThrottle = false
+      let cancelled = false
       let songToReplace: Awaited<ReturnType<typeof findReusableSongBySourceUrl>> | null = null
 
       try {
+        await ensureTaskRunning(taskId)
         const reusableSong = await findReusableSongBySourceUrl(userId, source, normalizedTrackUrl)
         if (reusableSong) {
           const shouldReplace = shouldReplaceExistingWithOpus({
@@ -758,11 +783,15 @@ async function runVideoTask(taskId: number) {
         await exportLyricsSidecarIfEnabled(taskId, song.id)
         await updateTaskCounts(taskId, { processed: 1, successful: 1 })
       } catch (error) {
+        if (error instanceof TaskCancelledError) {
+          cancelled = true
+          throw error
+        }
         const message = error instanceof Error ? error.message : "Unknown track error"
         await logEvent(taskId, "error", `${progressPrefix} Failed: ${message}`)
         await updateTaskCounts(taskId, { processed: 1, failed: 1 })
       } finally {
-        if (shouldThrottle) {
+        if (shouldThrottle && !cancelled) {
           const delayMs = await waitRandomDelay(DOWNLOAD_DELAY_MIN_MS, DOWNLOAD_DELAY_MAX_MS)
           await logEvent(taskId, "progress", `${progressPrefix} Cooldown ${Math.round(delayMs / 100) / 10}s`)
         }
@@ -807,10 +836,12 @@ async function runVideoTask(taskId: number) {
   }
 
   await logEvent(taskId, "status", "Fetching media info...")
+  await ensureTaskRunning(taskId)
   const info = await getVideoInfo(normalizedUrl)
   await logEvent(taskId, "info", `Track: ${info.title}`)
   await logEvent(taskId, "status", "Starting download...")
 
+  await ensureTaskRunning(taskId)
   const result = await downloadAudioWithRetry(
     { url: normalizedUrl, format, quality, bestAudioPreference },
     (message) => {
@@ -961,6 +992,7 @@ async function runSpotifyTask(taskId: number) {
   const task = await prisma.downloadTask.findUnique({ where: { id: taskId } })
   if (!task) return
   if (!task.userId) throw new Error("Task has no owner")
+  await ensureTaskRunning(taskId)
 
   const userId = task.userId
   const format = normalizeFormat(task.format)
@@ -989,6 +1021,10 @@ async function runSpotifyTask(taskId: number) {
       format,
       concurrency: SPOTIFY_DOWNLOAD_CONCURRENCY,
       shouldDownloadTrack: async (track, context) => {
+        if (!(await isTaskRunning(taskId))) {
+          return false
+        }
+
         if (context.total > 0) {
           await prisma.downloadTask.update({
             where: { id: taskId },
@@ -1028,7 +1064,9 @@ async function runSpotifyTask(taskId: number) {
     }
   )
 
+  await ensureTaskRunning(taskId)
   for (const result of results) {
+    await ensureTaskRunning(taskId)
     const reusableSong = await findReusableBySpotifyUrl(result.sourceUrl)
     if (reusableSong) {
       await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
@@ -1180,8 +1218,8 @@ async function logEvent(
 
 async function markTaskFailed(taskId: number, errorMessage: string) {
   const safeErrorMessage = redactSensitiveText(errorMessage)
-  await prisma.downloadTask.update({
-    where: { id: taskId },
+  const updated = await prisma.downloadTask.updateMany({
+    where: { id: taskId, status: "running" },
     data: {
       status: "failed",
       errorMessage: safeErrorMessage,
@@ -1189,6 +1227,9 @@ async function markTaskFailed(taskId: number, errorMessage: string) {
       workerPid: null,
     },
   })
+  if (updated.count === 0) {
+    return
+  }
   await logEvent(taskId, "error", safeErrorMessage)
 }
 
@@ -1204,8 +1245,8 @@ async function markTaskCompleted(taskId: number) {
       ? "Task completed successfully."
       : "Task completed with some errors."
 
-  await prisma.downloadTask.update({
-    where: { id: taskId },
+  const updated = await prisma.downloadTask.updateMany({
+    where: { id: taskId, status: "running" },
     data: {
       status: completedStatus,
       completedAt: new Date(),
@@ -1213,6 +1254,9 @@ async function markTaskCompleted(taskId: number) {
       errorMessage: null,
     },
   })
+  if (updated.count === 0) {
+    return
+  }
 
   await logEvent(taskId, "status", statusMessage)
 }
@@ -1268,8 +1312,12 @@ async function runTask(taskId: number) {
       throw new Error(`Unsupported task source: ${task.source}`)
     }
 
+    await ensureTaskRunning(taskId)
     await markTaskCompleted(taskId)
   } catch (error) {
+    if (error instanceof TaskCancelledError) {
+      return
+    }
     const message = redactSensitiveText(error instanceof Error ? error.message : "Unknown task failure")
     await markTaskFailed(taskId, message)
   } finally {
