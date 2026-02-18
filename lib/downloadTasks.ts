@@ -1,5 +1,6 @@
 import { spawn } from "child_process"
 import fs from "fs"
+import fsPromises from "fs/promises"
 import path from "path"
 import prisma from "./prisma"
 import { redactSensitiveText } from "./sanitize"
@@ -19,6 +20,12 @@ export const SPOTIFY_HOSTS = new Set(["open.spotify.com", "spotify.com", "www.sp
 export const AUDIO_FORMATS = new Set(["mp3", "flac", "wav", "ogg"])
 export const AUDIO_QUALITIES = new Set(["best", "320", "256", "192", "128"])
 export const BEST_AUDIO_PREFERENCES = new Set(["auto", "opus", "aac"])
+const DOWNLOAD_TASK_LOG_DIR =
+  (process.env.DOWNLOAD_TASK_LOG_DIR || "").trim() ||
+  path.join(process.cwd(), "logs", "download-tasks")
+const DOWNLOAD_TASK_FILE_LOGGING_ENABLED = !/^(0|false|off|no)$/i.test(
+  (process.env.DOWNLOAD_TASK_FILE_LOGGING || "1").trim()
+)
 
 export class PlaylistSelectionError extends Error {
   status: number
@@ -27,6 +34,37 @@ export class PlaylistSelectionError extends Error {
     super(message)
     this.name = "PlaylistSelectionError"
     this.status = status
+  }
+}
+
+async function appendTaskEventToFile(input: {
+  userId: number
+  taskId: number
+  level: "status" | "progress" | "track" | "error" | "info"
+  message: string
+  payload: string | null
+}) {
+  if (!DOWNLOAD_TASK_FILE_LOGGING_ENABLED) return
+
+  const timestamp = new Date().toISOString()
+  const dateBucket = timestamp.slice(0, 10)
+  const logPath = path.join(DOWNLOAD_TASK_LOG_DIR, `${dateBucket}.jsonl`)
+  const line = JSON.stringify({
+    ts: timestamp,
+    userId: input.userId,
+    taskId: input.taskId,
+    level: input.level,
+    message: input.message,
+    payload: input.payload,
+  })
+
+  try {
+    await fsPromises.mkdir(DOWNLOAD_TASK_LOG_DIR, { recursive: true })
+    await fsPromises.appendFile(logPath, `${line}\n`, "utf8")
+  } catch (error) {
+    // Best-effort disk logging should never break task processing.
+    const reason = error instanceof Error ? error.message : String(error)
+    console.error(`[download-task-log] Failed writing ${logPath}: ${reason}`)
   }
 }
 
@@ -174,6 +212,14 @@ export async function appendTaskEvent(
       message: safeMessage,
       payload: safePayload,
     },
+  })
+
+  await appendTaskEventToFile({
+    userId,
+    taskId,
+    level,
+    message: safeMessage,
+    payload: safePayload,
   })
 }
 

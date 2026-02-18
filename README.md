@@ -56,6 +56,8 @@ On container start, the image runs `npm run setup` automatically so `yt-dlp` and
 | `SUBSONIC_PASSWORD_KEY` | No | Optional dedicated key for encrypted Subsonic password auth secret storage (falls back to `JWT_SECRET`) |
 | `TRUST_PROXY` | No | Set to `1` only behind a trusted reverse proxy (enables forwarded IP headers for login rate limiting) |
 | `DOWNLOAD_TASK_MAX_WORKERS` | No | Max concurrent detached download workers (default: `4`) |
+| `DOWNLOAD_TASK_FILE_LOGGING` | No | Set `0`/`false` to disable task event file logging (default: enabled) |
+| `DOWNLOAD_TASK_LOG_DIR` | No | Directory for JSONL task logs (default: `./logs/download-tasks`) |
 | `EXPORT_LRC_SIDECAR` | No | Set `1`/`true` to export `.lrc` lyrics sidecar files next to downloaded audio |
 | `DOWNLOAD_ASCII_FILENAMES` | No | Set `1`/`true` to normalize new downloaded folder/file names to ASCII |
 | `SETUP_SECRET` | Production | Required in production to protect first-user setup |
