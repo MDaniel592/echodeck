@@ -108,6 +108,16 @@ interface SpotifyTrack {
   sourceUrl: string | null
 }
 
+export interface SpotifySearchResult {
+  provider: "spotify"
+  title: string
+  artist: string | null
+  url: string
+  duration: number | null
+  thumbnail: string | null
+  album: string | null
+}
+
 interface TrackMetadata {
   trackName: string
   artistName: string
@@ -778,6 +788,33 @@ async function getSpotifyTracks(type: SpotifyType, id: string, token: string): P
   }
 
   return tracks
+}
+
+export async function searchSpotifyTracks(query: string, limit = 5): Promise<SpotifySearchResult[]> {
+  const trimmedQuery = query.trim()
+  if (!trimmedQuery) return []
+  const safeLimit = Math.min(Math.max(limit, 1), 25)
+  const token = await getSpotifyAccessToken()
+
+  const payload = await spotifyFetchJson<{
+    tracks?: {
+      items?: SpotifyTrackItem[]
+    }
+  }>(`/search?type=track&limit=${safeLimit}&q=${encodeURIComponent(trimmedQuery)}`, token)
+
+  const items = Array.isArray(payload?.tracks?.items) ? payload.tracks.items : []
+  return items
+    .map((item) => mapSpotifyTrack(item))
+    .filter((item): item is SpotifyTrack => item !== null)
+    .map((item) => ({
+      provider: "spotify" as const,
+      title: item.title,
+      artist: item.artists.join(", ") || null,
+      url: item.sourceUrl || `https://open.spotify.com/track/${item.id}`,
+      duration: item.duration,
+      thumbnail: item.thumbnail,
+      album: item.albumName,
+    }))
 }
 
 function extractSpotifyTrackId(sourceUrl: string | null): string | null {

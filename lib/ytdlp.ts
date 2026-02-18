@@ -52,6 +52,15 @@ export interface DownloadResult {
   fileSize: number | null
 }
 
+export interface SourceSearchResult {
+  provider: "youtube" | "soundcloud"
+  title: string
+  artist: string | null
+  url: string
+  duration: number | null
+  thumbnail: string | null
+}
+
 interface ThumbnailCandidate {
   url?: string
   width?: number
@@ -70,6 +79,8 @@ interface RawAudioFormat {
 }
 
 interface ParsedVideoInfo {
+  id?: string
+  url?: string
   title?: string
   track?: string
   track_number?: number | string
@@ -90,6 +101,8 @@ interface ParsedVideoInfo {
   thumbnail?: string
   thumbnails?: ThumbnailCandidate[]
   entries?: ParsedVideoInfo[]
+  webpage_url?: string
+  original_url?: string
 }
 
 function codecPreferenceScore(codec: string | null | undefined, preference: "auto" | "opus" | "aac"): number {
@@ -531,6 +544,96 @@ export async function getPlaylistInfo(url: string): Promise<PlaylistInfo> {
         })
       } catch {
         reject(new Error("Failed to parse yt-dlp playlist output"))
+      }
+    })
+  })
+}
+
+export async function searchAudioSource(
+  provider: "youtube" | "soundcloud",
+  query: string,
+  limit = 5
+): Promise<SourceSearchResult[]> {
+  const trimmedQuery = query.trim()
+  if (!trimmedQuery) return []
+  const safeLimit = Math.min(Math.max(limit, 1), 20)
+
+  return new Promise((resolve, reject) => {
+    const bin = getYtdlpPath()
+    if (!fs.existsSync(bin)) {
+      reject(new Error("yt-dlp not found. Run: npm run setup"))
+      return
+    }
+
+    const searchPrefix = provider === "youtube" ? "ytsearch" : "scsearch"
+    const searchQuery = `${searchPrefix}${safeLimit}:${trimmedQuery}`
+    const proc = spawn(
+      bin,
+      [
+        "--flat-playlist",
+        "--dump-single-json",
+        "--skip-download",
+        searchQuery,
+      ],
+      { env: ytdlpEnv() }
+    )
+
+    let stdout = ""
+    let stderr = ""
+
+    proc.stdout.on("data", (data) => {
+      stdout += data.toString()
+    })
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString()
+    })
+    proc.on("error", (err) => {
+      reject(new Error(`Failed to start yt-dlp search: ${err.message}`))
+    })
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`yt-dlp search failed: ${stderr}`))
+        return
+      }
+
+      try {
+        const parsed = JSON.parse(stdout.trim()) as ParsedVideoInfo
+        const rawEntries = Array.isArray(parsed.entries) ? parsed.entries : []
+        const results = rawEntries
+          .map((entry): SourceSearchResult | null => {
+            const title =
+              (typeof entry.title === "string" && entry.title.trim()) ||
+              (typeof entry.track === "string" && entry.track.trim()) ||
+              "Unknown title"
+            const rawUrl =
+              (typeof entry.webpage_url === "string" && entry.webpage_url.trim()) ||
+              (typeof entry.original_url === "string" && entry.original_url.trim()) ||
+              (typeof entry.url === "string" && entry.url.trim()) ||
+              null
+            const url = (() => {
+              if (!rawUrl) return null
+              if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) return rawUrl
+              if (provider === "youtube") {
+                return `https://www.youtube.com/watch?v=${encodeURIComponent(rawUrl)}`
+              }
+              return `https://soundcloud.com/${rawUrl}`
+            })()
+            if (!url) return null
+
+            return {
+              provider,
+              title,
+              artist: entry.artist || entry.creator || entry.uploader || null,
+              url,
+              duration: typeof entry.duration === "number" ? Math.max(0, Math.round(entry.duration)) : null,
+              thumbnail: typeof entry.thumbnail === "string" && entry.thumbnail.trim() ? entry.thumbnail.trim() : null,
+            }
+          })
+          .filter((entry): entry is SourceSearchResult => entry !== null)
+          .slice(0, safeLimit)
+        resolve(results)
+      } catch {
+        reject(new Error("Failed to parse yt-dlp search output"))
       }
     })
   })

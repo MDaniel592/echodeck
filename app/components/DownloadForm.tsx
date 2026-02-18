@@ -12,6 +12,7 @@ import {
   type PlaylistOption,
   type ProgressPayload,
   type TaskListPayload,
+  type UnifiedSourceSearchResult,
   isTerminalTaskStatus,
   parseEventPayload,
   taskDisplayName,
@@ -45,6 +46,10 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
   const [playlists, setPlaylists] = useState<PlaylistOption[]>([])
   const [playlistChoice, setPlaylistChoice] = useState("__none__")
   const [newPlaylistName, setNewPlaylistName] = useState("")
+  const [sourceQuery, setSourceQuery] = useState("")
+  const [sourceSearchLoading, setSourceSearchLoading] = useState(false)
+  const [sourceSearchError, setSourceSearchError] = useState<string | null>(null)
+  const [sourceResults, setSourceResults] = useState<UnifiedSourceSearchResult[]>([])
   const seenStatusesRef = useRef<Map<number, string>>(new Map())
   const hasFetchedTasksRef = useRef(false)
 
@@ -126,6 +131,14 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
 
   const isValidUrl = validateUrl(url)
   const canSubmit = isValidUrl && !submitting && detectedPlatform !== null
+
+  function formatSeconds(value: number | null): string {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "--:--"
+    const total = Math.round(value)
+    const minutes = Math.floor(total / 60)
+    const seconds = total % 60
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`
+  }
 
   const fetchPlaylists = useCallback(async () => {
     try {
@@ -397,6 +410,135 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
     }
   }
 
+  const queueSourceResult = useCallback(async (result: UnifiedSourceSearchResult) => {
+    const info = getDownloadUrlInfo(result.url)
+    const endpoint = info.isSpotify ? "/api/download/spotify" : "/api/download/youtube"
+    const trimmedPlaylistName = newPlaylistName.trim()
+
+    let playlistPayload: { playlistId?: number; playlistName?: string } = {}
+    if (creatingPlaylist) {
+      if (!trimmedPlaylistName) {
+        setSourceSearchError("Playlist name is required.")
+        return
+      }
+      playlistPayload = { playlistName: trimmedPlaylistName }
+    } else if (playlistChoice !== "__none__") {
+      const parsedPlaylistId = Number.parseInt(playlistChoice, 10)
+      if (!Number.isInteger(parsedPlaylistId) || parsedPlaylistId <= 0) {
+        setSourceSearchError("Please choose a valid playlist.")
+        return
+      }
+      playlistPayload = { playlistId: parsedPlaylistId }
+    }
+
+    const payload = info.isSpotify
+      ? { url: result.url, format, ...playlistPayload }
+      : {
+          url: result.url,
+          quality,
+          bestAudioPreference,
+          format: quality === "best" ? undefined : format,
+          ...playlistPayload,
+        }
+
+    setSubmitting(true)
+    setSourceSearchError(null)
+    setQueueMessage(null)
+    onDownloadStart()
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const payloadJson = await res.json().catch(() => null)
+      if (!res.ok) {
+        const message =
+          payloadJson && typeof payloadJson.error === "string"
+            ? payloadJson.error
+            : "Failed to queue background task"
+        throw new Error(message)
+      }
+      const task = payloadJson?.task as DownloadTaskSummary | undefined
+      if (!task || typeof task.id !== "number") {
+        throw new Error("Task queued but server response was invalid")
+      }
+      seenStatusesRef.current.set(task.id, task.status)
+      if (isTerminalTaskStatus(task.status)) onDownloadComplete()
+      setQueueMessage(`Queued task #${task.id} from ${result.provider}.`)
+      setSelectedTaskId(task.id)
+      setTaskPage(1)
+      await fetchTasks()
+      await fetchTaskDetail(task.id)
+      await fetchPlaylists()
+    } catch (error) {
+      setSourceSearchError(error instanceof Error ? error.message : "Failed to queue task")
+    } finally {
+      setSubmitting(false)
+    }
+  }, [
+    bestAudioPreference,
+    creatingPlaylist,
+    fetchPlaylists,
+    fetchTaskDetail,
+    fetchTasks,
+    format,
+    newPlaylistName,
+    onDownloadComplete,
+    onDownloadStart,
+    playlistChoice,
+    quality,
+  ])
+
+  const runSourceSearch = useCallback(async () => {
+    const trimmed = sourceQuery.trim()
+    if (trimmed.length < 2) {
+      setSourceResults([])
+      setSourceSearchError("Type at least 2 characters.")
+      return
+    }
+
+    setSourceSearchLoading(true)
+    setSourceSearchError(null)
+    try {
+      const params = new URLSearchParams({
+        q: trimmed,
+        limit: "6",
+      })
+      const res = await fetch(`/api/search/unified?${params.toString()}`, { cache: "no-store" })
+      const payload = await res.json().catch(() => null)
+      if (!res.ok) {
+        const message =
+          payload && typeof payload.error === "string"
+            ? payload.error
+            : "Failed to search providers"
+        throw new Error(message)
+      }
+
+      const rows = Array.isArray(payload?.results) ? payload.results : []
+      const normalized = rows
+        .filter((item): item is UnifiedSourceSearchResult =>
+          item &&
+          typeof item.provider === "string" &&
+          typeof item.title === "string" &&
+          typeof item.url === "string"
+        )
+        .slice(0, 18)
+      setSourceResults(normalized)
+      const errors = Array.isArray(payload?.errors)
+        ? payload.errors.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0)
+        : []
+      if (errors.length > 0) {
+        setSourceSearchError(errors.join(" | "))
+      }
+    } catch (error) {
+      setSourceSearchError(error instanceof Error ? error.message : "Failed to search providers")
+      setSourceResults([])
+    } finally {
+      setSourceSearchLoading(false)
+    }
+  }, [sourceQuery])
+
   return (
     <div className="rounded-none border-0 bg-transparent p-0 md:rounded-xl md:border md:border-zinc-800/60 md:bg-zinc-900/50 md:p-4">
       <div className="mb-3 flex items-center gap-2">
@@ -410,6 +552,74 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-2.5">
+        <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/40 p-2.5">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <label htmlFor="source-search" className="text-xs font-medium text-zinc-300">
+              Unified Source Search
+            </label>
+            <span className="text-[10px] text-zinc-500">YouTube + SoundCloud + Spotify</span>
+          </div>
+          <div className="flex gap-2">
+            <input
+              id="source-search"
+              type="text"
+              value={sourceQuery}
+              onChange={(event) => setSourceQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault()
+                  void runSourceSearch()
+                }
+              }}
+              placeholder="Search song or artist..."
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-[13px] text-white placeholder-zinc-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={submitting || sourceSearchLoading}
+            />
+            <button
+              type="button"
+              onClick={() => { void runSourceSearch() }}
+              disabled={submitting || sourceSearchLoading}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {sourceSearchLoading ? "Searching..." : "Search"}
+            </button>
+          </div>
+          {sourceSearchError ? (
+            <p className="mt-1.5 text-xs text-amber-300">{sourceSearchError}</p>
+          ) : null}
+          {sourceResults.length > 0 ? (
+            <div className="mt-2 max-h-56 space-y-1.5 overflow-y-auto pr-1">
+              {sourceResults.map((result, index) => (
+                <div key={`${result.provider}-${result.url}-${index}`} className="rounded border border-zinc-700/60 bg-zinc-900/60 p-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-zinc-100">{result.title}</p>
+                      <p className="truncate text-[11px] text-zinc-400">
+                        {result.artist || "Unknown artist"} · {result.provider} · {formatSeconds(result.duration)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { void queueSourceResult(result) }}
+                      disabled={submitting}
+                      className="shrink-0 rounded bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Queue
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setUrl(result.url)}
+                    className="mt-1 text-[10px] text-zinc-500 hover:text-zinc-300"
+                  >
+                    Use URL in form
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
         {/* URL Input */}
         <div>
           <label htmlFor="download-url" className="mb-1.5 block text-xs text-zinc-400">

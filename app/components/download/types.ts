@@ -47,6 +47,16 @@ export interface PlaylistOption {
   name: string
 }
 
+export interface UnifiedSourceSearchResult {
+  provider: "youtube" | "soundcloud" | "spotify"
+  title: string
+  artist: string | null
+  url: string
+  duration: number | null
+  thumbnail: string | null
+  album?: string | null
+}
+
 export interface TaskListPayload {
   tasks: DownloadTaskSummary[]
   total: number
