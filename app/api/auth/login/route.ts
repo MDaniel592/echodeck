@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     }
 
     const client = getClientIdentifier(request)
-    const perClientLimit = checkRateLimit(
+    const perClientLimit = await checkRateLimit(
       `login:client:${client}`,
       LOGIN_MAX_ATTEMPTS_PER_CLIENT,
       LOGIN_WINDOW_MS
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     }
 
     const accountKey = `login:account:${username.toLowerCase()}:${client}`
-    const accountLimit = checkRateLimit(
+    const accountLimit = await checkRateLimit(
       accountKey,
       LOGIN_MAX_ATTEMPTS_PER_ACCOUNT,
       LOGIN_WINDOW_MS

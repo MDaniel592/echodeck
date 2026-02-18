@@ -380,3 +380,12 @@ model SongTagAssignment {
   @@unique([songId, tagId])
   @@index([tagId, createdAt])
 }
+
+model RateLimitEvent {
+  id        Int      @id @default(autoincrement())
+  key       String
+  createdAt DateTime @default(now())
+
+  @@index([key, createdAt])
+  @@index([createdAt])
+}

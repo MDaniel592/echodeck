@@ -132,13 +132,13 @@ async function authenticate(request: NextRequest): Promise<AuthResult> {
 
   if (!valid) {
     const client = getClientIdentifier(request)
-    const perClientLimit = checkRateLimit(
+    const perClientLimit = await checkRateLimit(
       `subsonic:failed:client:${client}`,
       SUBSONIC_MAX_FAILED_ATTEMPTS_PER_CLIENT,
       SUBSONIC_WINDOW_MS
     )
     const accountKey = `subsonic:failed:account:${username.toLowerCase()}:${client}`
-    const accountLimit = checkRateLimit(
+    const accountLimit = await checkRateLimit(
       accountKey,
       SUBSONIC_MAX_FAILED_ATTEMPTS_PER_ACCOUNT,
       SUBSONIC_WINDOW_MS

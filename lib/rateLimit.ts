@@ -1,7 +1,9 @@
+import prisma from "./prisma"
+
 /**
- * In-memory sliding-window rate limiter keyed by arbitrary string (e.g. IP).
- * Not shared across processes, so it resets on restart — acceptable for a
- * single-instance self-hosted app.
+ * Sliding-window rate limiter keyed by arbitrary string (e.g. IP).
+ * Default backend is database-backed so limits are shared across instances.
+ * Falls back to in-memory if DB is unavailable.
  */
 
 interface WindowEntry {
@@ -9,6 +11,7 @@ interface WindowEntry {
 }
 
 const store = new Map<string, WindowEntry>()
+let warnedDbFallback = false
 
 const CLEANUP_INTERVAL_MS = 60_000
 let lastCleanup = Date.now()
@@ -31,7 +34,7 @@ export interface RateLimitResult {
   retryAfterSeconds: number | null
 }
 
-export function checkRateLimit(
+function memoryCheckRateLimit(
   key: string,
   maxAttempts: number,
   windowMs: number
@@ -60,5 +63,87 @@ export function checkRateLimit(
     allowed: true,
     remaining: maxAttempts - entry.timestamps.length,
     retryAfterSeconds: null,
+  }
+}
+
+function shouldUseMemoryBackend(): boolean {
+  const configured = (process.env.RATE_LIMIT_BACKEND || "").trim().toLowerCase()
+  if (configured === "memory") return true
+  if (configured === "database" || configured === "db") return false
+  return process.env.NODE_ENV === "test"
+}
+
+async function databaseCheckRateLimit(
+  key: string,
+  maxAttempts: number,
+  windowMs: number
+): Promise<RateLimitResult> {
+  const now = Date.now()
+  const nowDate = new Date(now)
+  const cutoffDate = new Date(now - windowMs)
+
+  const shouldCleanup = now - lastCleanup >= CLEANUP_INTERVAL_MS
+  if (shouldCleanup) {
+    lastCleanup = now
+    await prisma.rateLimitEvent.deleteMany({
+      where: { createdAt: { lt: cutoffDate } },
+    })
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const attempts = await tx.rateLimitEvent.findMany({
+      where: {
+        key,
+        createdAt: { gt: cutoffDate },
+      },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, createdAt: true },
+    })
+
+    if (attempts.length >= maxAttempts) {
+      const oldest = attempts[0]?.createdAt
+      const retryAfterSeconds = oldest
+        ? Math.max(1, Math.ceil((oldest.getTime() + windowMs - nowDate.getTime()) / 1000))
+        : 1
+      return {
+        allowed: false,
+        remaining: 0,
+        retryAfterSeconds,
+      }
+    }
+
+    await tx.rateLimitEvent.create({
+      data: {
+        key,
+        createdAt: nowDate,
+      },
+    })
+
+    return {
+      allowed: true,
+      remaining: Math.max(0, maxAttempts - (attempts.length + 1)),
+      retryAfterSeconds: null,
+    }
+  })
+}
+
+export async function checkRateLimit(
+  key: string,
+  maxAttempts: number,
+  windowMs: number
+): Promise<RateLimitResult> {
+  if (shouldUseMemoryBackend()) {
+    return memoryCheckRateLimit(key, maxAttempts, windowMs)
+  }
+
+  try {
+    return await databaseCheckRateLimit(key, maxAttempts, windowMs)
+  } catch (error) {
+    if (!warnedDbFallback) {
+      warnedDbFallback = true
+      const reason = error instanceof Error ? error.message : String(error)
+      console.warn(`[rate-limit] Falling back to in-memory backend: ${reason}`)
+    }
+    return memoryCheckRateLimit(key, maxAttempts, windowMs)
   }
 }
