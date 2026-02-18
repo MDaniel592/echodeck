@@ -4,6 +4,7 @@ import crypto from "crypto"
 import prisma from "./prisma"
 import { extractAudioMetadataFromFile } from "./audioMetadata"
 import { normalizeSongTitle } from "./songTitle"
+import { validateLibraryPath } from "./libraryPaths"
 
 const AUDIO_EXTENSIONS = new Set([
   ".mp3",
@@ -227,9 +228,23 @@ export async function runLibraryScan(
 
   try {
     for (const libraryPath of library.paths) {
+      const validatedPath = await validateLibraryPath(libraryPath.path)
+      if (!validatedPath.ok) {
+        stats.errors += 1
+        continue
+      }
+
+      const scanRoot = validatedPath.normalizedPath
+      if (scanRoot !== libraryPath.path) {
+        await prisma.libraryPath.update({
+          where: { id: libraryPath.id },
+          data: { path: scanRoot },
+        }).catch(() => {})
+      }
+
       let files: string[] = []
       try {
-        files = await listAudioFiles(libraryPath.path)
+        files = await listAudioFiles(scanRoot)
       } catch {
         stats.errors += 1
         continue
@@ -263,7 +278,7 @@ export async function runLibraryScan(
       for (const file of files) {
         stats.scannedFiles += 1
         try {
-          const relativePath = path.relative(libraryPath.path, file)
+          const relativePath = path.relative(scanRoot, file)
           if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
             stats.skippedSongs += 1
             continue

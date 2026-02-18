@@ -75,6 +75,51 @@ describe("subsonic auth matrix", () => {
     expect(body["subsonic-response"].status).toBe("ok")
   })
 
+  it("applies failed-attempt rate limiting for unknown users", async () => {
+    prismaMock.user.findUnique.mockResolvedValue(null)
+
+    const { GET } = await import("../app/api/subsonic/rest/route")
+    const req = new NextRequest(
+      "http://localhost/api/subsonic/rest?command=getMusicFolders&u=ghost&p=bad-pass&v=1.16.1&c=t&f=json"
+    )
+    const res = await GET(req)
+    const body = await res.json()
+    const payload = body["subsonic-response"]
+
+    expect(payload.status).toBe("failed")
+    expect(payload.error.message).toBe("Wrong username or password")
+    expect(checkRateLimitMock).toHaveBeenCalledWith(
+      expect.stringContaining("subsonic:failed:client:"),
+      expect.any(Number),
+      expect.any(Number)
+    )
+    expect(checkRateLimitMock).toHaveBeenCalledWith(
+      "subsonic:failed:account:ghost",
+      expect.any(Number),
+      expect.any(Number)
+    )
+  })
+
+  it("returns 429 when unknown-user auth attempts are rate limited", async () => {
+    prismaMock.user.findUnique.mockResolvedValue(null)
+    checkRateLimitMock
+      .mockReturnValueOnce({ allowed: true, retryAfterSeconds: 0 })
+      .mockReturnValueOnce({ allowed: false, retryAfterSeconds: 9 })
+
+    const { GET } = await import("../app/api/subsonic/rest/route")
+    const req = new NextRequest(
+      "http://localhost/api/subsonic/rest?command=getMusicFolders&u=ghost&p=bad-pass&v=1.16.1&c=t&f=json"
+    )
+    const res = await GET(req)
+    const body = await res.json()
+    const payload = body["subsonic-response"]
+
+    expect(res.status).toBe(429)
+    expect(payload.status).toBe("failed")
+    expect(payload.error.message).toContain("Too many failed login attempts")
+    expect(res.headers.get("retry-after")).toBe("9")
+  })
+
   it("returns 404 when getCoverArt file is missing", async () => {
     verifyPasswordMock.mockResolvedValue(true)
     prismaMock.user.findUnique.mockResolvedValue({
@@ -100,6 +145,30 @@ describe("subsonic auth matrix", () => {
 
     expect(res.status).toBe(404)
     expect(body).toBe("Cover not found")
+  })
+
+  it("hides internal errors from Subsonic clients", async () => {
+    verifyPasswordMock.mockResolvedValue(true)
+    prismaMock.user.findUnique.mockResolvedValue({
+      id: 1,
+      username: "alice",
+      passwordHash: "hash",
+      subsonicToken: "legacy",
+      subsonicPasswordEnc: null,
+      disabledAt: null,
+    })
+    prismaMock.library.findMany.mockRejectedValue(new Error("database exploded"))
+
+    const { GET } = await import("../app/api/subsonic/rest/route")
+    const req = new NextRequest(
+      "http://localhost/api/subsonic/rest?command=getMusicFolders&u=alice&p=plain-pass&v=1.16.1&c=t&f=json"
+    )
+    const res = await GET(req)
+    const body = await res.json()
+    const payload = body["subsonic-response"]
+
+    expect(payload.status).toBe("failed")
+    expect(payload.error.message).toBe("Unhandled server error")
   })
 
   it("returns 404 when getAvatar file is missing", async () => {

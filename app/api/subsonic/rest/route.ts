@@ -2392,7 +2392,7 @@ export async function GET(request: NextRequest) {
 
     return response(request, { error: { code: 0, message: `Unsupported command: ${cmd}` } }, "failed")
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unhandled server error"
-    return response(request, { error: { code: 0, message } }, "failed")
+    console.error("Subsonic route failed:", error)
+    return response(request, { error: { code: 0, message: "Unhandled server error" } }, "failed")
   }
 }

@@ -3,8 +3,8 @@ import prisma from "../../../../lib/prisma"
 import { AuthError, requireAuth } from "../../../../lib/requireAuth"
 import { sanitizeSong } from "../../../../lib/sanitize"
 import fs from "fs/promises"
-import { resolveSafeDownloadPathForDelete } from "../../../../lib/downloadPaths"
 import { assignSongToPlaylistForUser } from "../../../../lib/playlistEntries"
+import { getSafeDeletePathsForRemovedSongs } from "../../../../lib/songFiles"
 
 export async function PATCH(
   request: NextRequest,
@@ -162,25 +162,17 @@ export async function DELETE(
       return NextResponse.json({ error: "Song not found" }, { status: 404 })
     }
 
-    // Delete files from disk (async)
-    try {
-      const safeSongPath = resolveSafeDownloadPathForDelete(song.filePath)
-      if (safeSongPath) {
-        await fs.unlink(safeSongPath).catch(() => {})
-      }
-
-      if (song.coverPath) {
-        const safeCoverPath = resolveSafeDownloadPathForDelete(song.coverPath)
-        if (safeCoverPath) {
-          await fs.unlink(safeCoverPath).catch(() => {})
-        }
-      }
-    } catch (err) {
-      console.error("Failed to delete file:", err)
-    }
-
     // Delete from database
     await prisma.song.deleteMany({ where: { id: songId, userId: auth.userId } })
+
+    try {
+      const safeDeletePaths = await getSafeDeletePathsForRemovedSongs([
+        { filePath: song.filePath, coverPath: song.coverPath },
+      ])
+      await Promise.allSettled(safeDeletePaths.map((filePath) => fs.unlink(filePath).catch(() => {})))
+    } catch (err) {
+      console.error("Failed to finalize file deletion:", err)
+    }
 
     return NextResponse.json({ success: true })
   } catch (error) {

@@ -1,6 +1,7 @@
 import fs from "fs"
 import prisma from "./prisma"
 import { runLibraryScan } from "./libraryScanner"
+import { validateLibraryPath } from "./libraryPaths"
 
 let draining = false
 let schedulerStarted = false
@@ -215,7 +216,12 @@ async function refreshPathWatchers(): Promise<void> {
   for (const libraryPath of paths) {
     if (watchHandles.has(libraryPath.id)) continue
     try {
-      const watcher = fs.watch(libraryPath.path, { recursive: true }, () => {
+      const validatedPath = await validateLibraryPath(libraryPath.path)
+      if (!validatedPath.ok) {
+        continue
+      }
+
+      const watcher = fs.watch(validatedPath.normalizedPath, { recursive: true }, () => {
         const key = libraryPath.library.id
         const previous = libraryDebounceTimers.get(key)
         if (previous) clearTimeout(previous)

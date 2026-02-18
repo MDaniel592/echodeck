@@ -13,7 +13,29 @@ const mocks = vi.hoisted(() => {
       findMany: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      delete: vi.fn(),
     },
+    playlistSong: {
+      updateMany: vi.fn(),
+    },
+    playbackQueueItem: {
+      updateMany: vi.fn(),
+    },
+    playbackSession: {
+      updateMany: vi.fn(),
+    },
+    bookmark: {
+      updateMany: vi.fn(),
+    },
+    shareEntry: {
+      updateMany: vi.fn(),
+    },
+    songTagAssignment: {
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    $transaction: vi.fn(),
   }
 
   return {
@@ -268,6 +290,106 @@ describe("adminMaintenance refresh_origin_metadata", () => {
 
     if (previousConcurrency === undefined) delete process.env.ORIGIN_METADATA_CONCURRENCY
     else process.env.ORIGIN_METADATA_CONCURRENCY = previousConcurrency
+  })
+})
+
+describe("adminMaintenance dedupe_library_imports", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("reassigns dependent records before deleting duplicate import songs", async () => {
+    mocks.prisma.song.findMany
+      .mockResolvedValueOnce([
+        {
+          id: 91,
+          title: "Track One",
+          filePath: "/downloads/library-imports/1/9/1712345678-track-one.mp3",
+          coverPath: "/downloads/library-imports/1/9/1712345678-track-one.cover.jpg",
+          artist: "Artist",
+          duration: 181,
+          fileSize: 4_000_000,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 12,
+          title: "Track One",
+          filePath: "/downloads/Artist/Album/track-one.mp3",
+          coverPath: null,
+          artist: "Artist",
+          duration: 181,
+          fileSize: 4_000_000,
+        },
+      ])
+
+    const tx = {
+      song: {
+        update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
+      },
+      playlistSong: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
+      playbackQueueItem: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      playbackSession: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      bookmark: { updateMany: vi.fn().mockResolvedValue({ count: 3 }) },
+      shareEntry: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      songTagAssignment: {
+        findMany: vi.fn().mockResolvedValue([{ tagId: 1 }]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        updateMany: vi.fn().mockResolvedValue({ count: 4 }),
+      },
+    }
+    mocks.prisma.$transaction.mockImplementation(async (callback: (transaction: unknown) => Promise<unknown>) =>
+      callback(tx)
+    )
+
+    const result = await runMaintenanceAction(1, "dedupe_library_imports", false)
+
+    expect(result.details.duplicateCandidates).toBe(1)
+    expect(result.details.deletedSongs).toBe(1)
+    expect(result.details.reassignedPlaylistEntries).toBe(2)
+    expect(result.details.reassignedQueueEntries).toBe(1)
+    expect(result.details.reassignedCurrentSong).toBe(1)
+    expect(result.details.reassignedBookmarks).toBe(3)
+    expect(result.details.reassignedShareEntries).toBe(1)
+    expect(result.details.reassignedTagAssignments).toBe(4)
+    expect(result.details.copiedCovers).toBe(1)
+    expect(tx.songTagAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { songId: 91, tagId: { in: [1] } },
+    })
+    expect(tx.song.delete).toHaveBeenCalledWith({ where: { id: 91 } })
+  })
+
+  it("avoids basename-only merges without corroborating metadata", async () => {
+    mocks.prisma.song.findMany
+      .mockResolvedValueOnce([
+        {
+          id: 91,
+          title: "Track One (Live)",
+          filePath: "/downloads/library-imports/1/9/1712345678-track-one.mp3",
+          coverPath: null,
+          artist: "Artist",
+          duration: null,
+          fileSize: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 12,
+          title: "Track One",
+          filePath: "/downloads/Artist/Album/track-one.mp3",
+          coverPath: null,
+          artist: "Artist",
+          duration: null,
+          fileSize: null,
+        },
+      ])
+
+    const result = await runMaintenanceAction(1, "dedupe_library_imports", true)
+
+    expect(result.details.duplicateCandidates).toBe(0)
+    expect(result.details.deletedSongs).toBe(0)
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled()
   })
 })
 

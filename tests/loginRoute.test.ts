@@ -92,6 +92,21 @@ describe("auth/login route", () => {
     expect(body.error).toBe("Account is disabled")
   })
 
+  it("uses an account-only rate limit key", async () => {
+    prismaMock.user.findUnique.mockResolvedValue(null)
+
+    const { POST } = await import("../app/api/auth/login/route")
+    const req = new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username: "Admin", password: "pw" }),
+      headers: { "content-type": "application/json" },
+    })
+    const res = await POST(req)
+
+    expect(res.status).toBe(401)
+    expect(checkRateLimitMock.mock.calls[1]?.[0]).toBe("login:account:admin")
+  })
+
   it("sets auth cookie on successful login", async () => {
     prismaMock.user.findUnique.mockResolvedValue({
       id: 1,

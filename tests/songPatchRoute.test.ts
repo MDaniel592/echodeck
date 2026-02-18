@@ -5,6 +5,7 @@ const prismaMock = vi.hoisted(() => ({
   song: {
     findFirst: vi.fn(),
     update: vi.fn(),
+    deleteMany: vi.fn(),
   },
   playlist: {
     findFirst: vi.fn(),
@@ -14,6 +15,8 @@ const prismaMock = vi.hoisted(() => ({
 const requireAuthMock = vi.hoisted(() => vi.fn())
 const sanitizeSongMock = vi.hoisted(() => vi.fn((s: Record<string, unknown>) => s))
 const assignSongToPlaylistForUserMock = vi.hoisted(() => vi.fn())
+const getSafeDeletePathsForRemovedSongsMock = vi.hoisted(() => vi.fn())
+const unlinkMock = vi.hoisted(() => vi.fn())
 
 vi.mock("../lib/prisma", () => ({
   default: prismaMock,
@@ -35,12 +38,12 @@ vi.mock("../lib/playlistEntries", () => ({
   assignSongToPlaylistForUser: assignSongToPlaylistForUserMock,
 }))
 
-vi.mock("../lib/downloadPaths", () => ({
-  resolveSafeDownloadPathForDelete: vi.fn(),
+vi.mock("../lib/songFiles", () => ({
+  getSafeDeletePathsForRemovedSongs: getSafeDeletePathsForRemovedSongsMock,
 }))
 
 vi.mock("fs/promises", () => ({
-  default: { unlink: vi.fn() },
+  default: { unlink: unlinkMock },
 }))
 
 function makeRequest(body: unknown) {
@@ -57,6 +60,7 @@ const baseSong = {
   artist: "Original Artist",
   album: "Original Album",
   filePath: "/downloads/song.mp3",
+  coverPath: null,
   userId: 7,
 }
 
@@ -69,8 +73,11 @@ describe("PATCH /api/songs/[id]", () => {
       ...baseSong,
       ...data,
     }))
+    prismaMock.song.deleteMany.mockResolvedValue({ count: 1 })
     sanitizeSongMock.mockImplementation((s: Record<string, unknown>) => s)
     assignSongToPlaylistForUserMock.mockResolvedValue(undefined)
+    getSafeDeletePathsForRemovedSongsMock.mockResolvedValue([])
+    unlinkMock.mockResolvedValue(undefined)
   })
 
   it("returns 400 for invalid song ID", async () => {
@@ -203,5 +210,41 @@ describe("PATCH /api/songs/[id]", () => {
     const { PATCH } = await import("../app/api/songs/[id]/route")
     const res = await PATCH(makeRequest({ title: "New" }), { params: Promise.resolve({ id: "1" }) })
     expect(res.status).toBe(401)
+  })
+})
+
+describe("DELETE /api/songs/[id]", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    requireAuthMock.mockResolvedValue({ userId: 7, role: "user", username: "u" })
+    prismaMock.song.findFirst.mockResolvedValue(baseSong)
+    prismaMock.song.deleteMany.mockResolvedValue({ count: 1 })
+    getSafeDeletePathsForRemovedSongsMock.mockResolvedValue(["/downloads/song.mp3"])
+    unlinkMock.mockResolvedValue(undefined)
+  })
+
+  it("deletes the song and only unlinks validated unreferenced paths", async () => {
+    const { DELETE } = await import("../app/api/songs/[id]/route")
+    const req = new NextRequest("http://localhost/api/songs/1", { method: "DELETE" })
+    const res = await DELETE(req, { params: Promise.resolve({ id: "1" }) })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body).toEqual({ success: true })
+    expect(prismaMock.song.deleteMany).toHaveBeenCalledWith({ where: { id: 1, userId: 7 } })
+    expect(getSafeDeletePathsForRemovedSongsMock).toHaveBeenCalledWith([
+      { filePath: "/downloads/song.mp3", coverPath: null },
+    ])
+    expect(unlinkMock).toHaveBeenCalledWith("/downloads/song.mp3")
+  })
+
+  it("returns 404 when song does not exist", async () => {
+    prismaMock.song.findFirst.mockResolvedValue(null)
+    const { DELETE } = await import("../app/api/songs/[id]/route")
+    const req = new NextRequest("http://localhost/api/songs/1", { method: "DELETE" })
+    const res = await DELETE(req, { params: Promise.resolve({ id: "1" }) })
+
+    expect(res.status).toBe(404)
+    expect(prismaMock.song.deleteMany).not.toHaveBeenCalled()
   })
 })

@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const accountKey = `login:account:${username.toLowerCase()}:${client}`
+    const accountKey = `login:account:${username.toLowerCase()}`
     const accountLimit = await checkRateLimit(
       accountKey,
       LOGIN_MAX_ATTEMPTS_PER_ACCOUNT,

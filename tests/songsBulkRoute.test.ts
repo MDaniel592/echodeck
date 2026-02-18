@@ -18,8 +18,8 @@ const prismaMock = vi.hoisted(() => ({
 }))
 
 const requireAuthMock = vi.hoisted(() => vi.fn())
-const resolveSafeDownloadPathForDeleteMock = vi.hoisted(() => vi.fn())
 const fsUnlinkMock = vi.hoisted(() => vi.fn())
+const getSafeDeletePathsForRemovedSongsMock = vi.hoisted(() => vi.fn())
 
 vi.mock("../lib/prisma", () => ({
   default: prismaMock,
@@ -33,8 +33,8 @@ vi.mock("../lib/requireAuth", async () => {
   }
 })
 
-vi.mock("../lib/downloadPaths", () => ({
-  resolveSafeDownloadPathForDelete: resolveSafeDownloadPathForDeleteMock,
+vi.mock("../lib/songFiles", () => ({
+  getSafeDeletePathsForRemovedSongs: getSafeDeletePathsForRemovedSongsMock,
 }))
 
 vi.mock("fs/promises", () => ({
@@ -53,6 +53,7 @@ describe("PATCH /api/songs/bulk", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     requireAuthMock.mockResolvedValue({ userId: 7, role: "user", username: "u" })
+    getSafeDeletePathsForRemovedSongsMock.mockResolvedValue([])
   })
 
   it("returns 400 for empty ids array", async () => {
@@ -234,7 +235,11 @@ describe("DELETE /api/songs/bulk", () => {
       { id: 2, filePath: "/downloads/b.mp3", coverPath: null },
     ])
     prismaMock.song.deleteMany.mockResolvedValue({ count: 2 })
-    resolveSafeDownloadPathForDeleteMock.mockImplementation((p: string) => p)
+    getSafeDeletePathsForRemovedSongsMock.mockResolvedValue([
+      "/downloads/a.mp3",
+      "/downloads/a.jpg",
+      "/downloads/b.mp3",
+    ])
     fsUnlinkMock.mockResolvedValue(undefined)
 
     const { DELETE } = await import("../app/api/songs/bulk/route")
@@ -246,6 +251,10 @@ describe("DELETE /api/songs/bulk", () => {
     expect(prismaMock.song.deleteMany).toHaveBeenCalledWith({
       where: { userId: 7, id: { in: [1, 2] } },
     })
+    expect(getSafeDeletePathsForRemovedSongsMock).toHaveBeenCalledWith([
+      { id: 1, filePath: "/downloads/a.mp3", coverPath: "/downloads/a.jpg" },
+      { id: 2, filePath: "/downloads/b.mp3", coverPath: null },
+    ])
     expect(fsUnlinkMock).toHaveBeenCalledTimes(3)
   })
 
@@ -254,7 +263,7 @@ describe("DELETE /api/songs/bulk", () => {
       { id: 1, filePath: "/downloads/a.mp3", coverPath: null },
     ])
     prismaMock.song.deleteMany.mockResolvedValue({ count: 1 })
-    resolveSafeDownloadPathForDeleteMock.mockReturnValue("/downloads/a.mp3")
+    getSafeDeletePathsForRemovedSongsMock.mockResolvedValue(["/downloads/a.mp3"])
     fsUnlinkMock.mockRejectedValue(new Error("ENOENT"))
 
     const { DELETE } = await import("../app/api/songs/bulk/route")

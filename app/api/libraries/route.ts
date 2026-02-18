@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../lib/prisma"
-import { AuthError, requireAuth } from "../../../lib/requireAuth"
+import { AuthError, requireAdmin, requireAuth } from "../../../lib/requireAuth"
+import { validateLibraryPath } from "../../../lib/libraryPaths"
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,6 +28,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
+    requireAdmin(auth)
     const body = await request.json()
     const name = typeof body?.name === "string" ? body.name.trim() : ""
     const inputPath = typeof body?.path === "string" ? body.path.trim() : ""
@@ -37,6 +39,10 @@ export async function POST(request: NextRequest) {
     if (!inputPath) {
       return NextResponse.json({ error: "Initial path is required" }, { status: 400 })
     }
+    const validatedPath = await validateLibraryPath(inputPath)
+    if (!validatedPath.ok) {
+      return NextResponse.json({ error: validatedPath.error }, { status: 400 })
+    }
 
     const created = await prisma.library.create({
       data: {
@@ -44,7 +50,7 @@ export async function POST(request: NextRequest) {
         name,
         paths: {
           create: {
-            path: inputPath,
+            path: validatedPath.normalizedPath,
             enabled: true,
           },
         },

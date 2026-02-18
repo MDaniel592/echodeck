@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../../lib/prisma"
 import { enqueueLibraryScan, isLibraryScanActive } from "../../../../../lib/libraryScanQueue"
 import { runLibraryScan } from "../../../../../lib/libraryScanner"
-import { AuthError, requireAuth } from "../../../../../lib/requireAuth"
+import { AuthError, requireAdmin, requireAuth } from "../../../../../lib/requireAuth"
+import { validateLibraryPath } from "../../../../../lib/libraryPaths"
 
 export async function POST(
   request: NextRequest,
@@ -10,6 +11,7 @@ export async function POST(
 ) {
   try {
     const auth = await requireAuth(request)
+    requireAdmin(auth)
     const { id } = await params
     const libraryId = Number.parseInt(id, 10)
     if (!Number.isInteger(libraryId) || libraryId <= 0) {
@@ -18,10 +20,19 @@ export async function POST(
 
     const library = await prisma.library.findFirst({
       where: { id: libraryId, userId: auth.userId },
-      select: { id: true },
+      select: { id: true, paths: { where: { enabled: true }, select: { path: true } } },
     })
     if (!library) {
       return NextResponse.json({ error: "Library not found" }, { status: 404 })
+    }
+    for (const libraryPath of library.paths) {
+      const validated = await validateLibraryPath(libraryPath.path)
+      if (!validated.ok) {
+        return NextResponse.json(
+          { error: `Library path '${libraryPath.path}' is invalid: ${validated.error}` },
+          { status: 400 }
+        )
+      }
     }
 
     const mode = request.nextUrl.searchParams.get("mode") || "async"

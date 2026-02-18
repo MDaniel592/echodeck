@@ -142,6 +142,69 @@ function normalizeImportBasename(filePath: string): string {
   return path.basename(filePath).replace(/^[0-9]{10,}-/, "").toLowerCase()
 }
 
+function normalizeComparable(value: string | null | undefined): string {
+  return (value || "").trim().toLowerCase()
+}
+
+function hasStringConflict(left: string | null | undefined, right: string | null | undefined): boolean {
+  const normalizedLeft = normalizeComparable(left)
+  const normalizedRight = normalizeComparable(right)
+  if (!normalizedLeft || !normalizedRight) return false
+  return normalizedLeft !== normalizedRight
+}
+
+function areSongsLikelySameTrack(
+  importSong: {
+    title: string
+    artist: string | null
+    duration: number | null
+    fileSize: number | null
+  },
+  originalSong: {
+    title: string
+    artist: string | null
+    duration: number | null
+    fileSize: number | null
+  }
+): boolean {
+  if (hasStringConflict(importSong.title, originalSong.title)) return false
+  if (hasStringConflict(importSong.artist, originalSong.artist)) return false
+
+  if (
+    typeof importSong.duration === "number" &&
+    typeof originalSong.duration === "number" &&
+    Math.abs(importSong.duration - originalSong.duration) > 2
+  ) {
+    return false
+  }
+
+  if (
+    typeof importSong.fileSize === "number" &&
+    typeof originalSong.fileSize === "number" &&
+    importSong.fileSize !== originalSong.fileSize
+  ) {
+    return false
+  }
+
+  const titleMatch =
+    normalizeComparable(importSong.title).length > 0 &&
+    normalizeComparable(importSong.title) === normalizeComparable(originalSong.title)
+  const artistMatch =
+    normalizeComparable(importSong.artist).length > 0 &&
+    normalizeComparable(importSong.artist) === normalizeComparable(originalSong.artist)
+  const titleAndArtistMatch = titleMatch && (artistMatch || !normalizeComparable(importSong.artist))
+  const durationMatch =
+    typeof importSong.duration === "number" &&
+    typeof originalSong.duration === "number" &&
+    Math.abs(importSong.duration - originalSong.duration) <= 2
+  const fileSizeMatch =
+    typeof importSong.fileSize === "number" &&
+    typeof originalSong.fileSize === "number" &&
+    importSong.fileSize === originalSong.fileSize
+
+  return fileSizeMatch || durationMatch || titleAndArtistMatch
+}
+
 function sanitizeTitleFromFilename(filePath: string, title: string): string {
   const fromPath = path.basename(filePath).replace(/\.[^.]+$/, "")
   const candidate = normalizeSongTitle((fromPath || title).replace(MALFORMED_PREFIX, "").trim(), title)
@@ -152,28 +215,50 @@ async function getDuplicateImportSongs(userId: number) {
   const [imports, originals] = await Promise.all([
     prisma.song.findMany({
       where: { userId, filePath: { contains: "/library-imports/" } },
-      select: { id: true, title: true, filePath: true, coverPath: true, artist: true },
+      select: {
+        id: true,
+        title: true,
+        filePath: true,
+        coverPath: true,
+        artist: true,
+        duration: true,
+        fileSize: true,
+      },
       orderBy: { id: "asc" },
     }),
     prisma.song.findMany({
       where: { userId, NOT: { filePath: { contains: "/library-imports/" } } },
-      select: { id: true, filePath: true, coverPath: true, title: true, artist: true },
+      select: {
+        id: true,
+        filePath: true,
+        coverPath: true,
+        title: true,
+        artist: true,
+        duration: true,
+        fileSize: true,
+      },
     }),
   ])
 
-  const originalByBase = new Map<string, (typeof originals)[number]>()
+  const originalByBase = new Map<string, Array<(typeof originals)[number]>>()
   for (const row of originals) {
     const key = normalizeImportBasename(row.filePath)
-    if (!originalByBase.has(key)) {
-      originalByBase.set(key, row)
-    }
+    const entries = originalByBase.get(key) || []
+    entries.push(row)
+    originalByBase.set(key, entries)
   }
 
   return imports
-    .map((importSong) => ({
-      importSong,
-      originalSong: originalByBase.get(normalizeImportBasename(importSong.filePath)) || null,
-    }))
+    .map((importSong) => {
+      const candidates = (originalByBase.get(normalizeImportBasename(importSong.filePath)) || []).filter(
+        (originalSong) => areSongsLikelySameTrack(importSong, originalSong)
+      )
+
+      if (candidates.length !== 1) {
+        return { importSong, originalSong: null as (typeof originals)[number] | null }
+      }
+      return { importSong, originalSong: candidates[0] }
+    })
     .filter((entry) => entry.originalSong !== null)
 }
 
@@ -452,6 +537,9 @@ async function runDedupeLibraryImports(
   let reassignedPlaylistEntries = 0
   let reassignedQueueEntries = 0
   let reassignedCurrentSong = 0
+  let reassignedBookmarks = 0
+  let reassignedShareEntries = 0
+  let reassignedTagAssignments = 0
   let copiedCovers = 0
 
   progress({ phase: "scan", processed: 0, total: duplicates.length, message: "Duplicate candidates loaded." })
@@ -462,33 +550,74 @@ async function runDedupeLibraryImports(
       const originalSong = entry.originalSong
       if (!originalSong) continue
 
-      if (!originalSong.coverPath && importSong.coverPath) {
-        await prisma.song.update({
-          where: { id: originalSong.id },
-          data: { coverPath: importSong.coverPath },
+      const reassignmentResult = await prisma.$transaction(async (tx) => {
+        let copiedCover = 0
+        if (!originalSong.coverPath && importSong.coverPath) {
+          await tx.song.update({
+            where: { id: originalSong.id },
+            data: { coverPath: importSong.coverPath },
+          })
+          copiedCover = 1
+        }
+
+        const [playlistResult, queueResult, currentResult, bookmarkResult, shareResult, originalTagAssignments] =
+          await Promise.all([
+            tx.playlistSong.updateMany({
+              where: { songId: importSong.id },
+              data: { songId: originalSong.id },
+            }),
+            tx.playbackQueueItem.updateMany({
+              where: { songId: importSong.id },
+              data: { songId: originalSong.id },
+            }),
+            tx.playbackSession.updateMany({
+              where: { userId, currentSongId: importSong.id },
+              data: { currentSongId: originalSong.id },
+            }),
+            tx.bookmark.updateMany({
+              where: { songId: importSong.id },
+              data: { songId: originalSong.id },
+            }),
+            tx.shareEntry.updateMany({
+              where: { songId: importSong.id },
+              data: { songId: originalSong.id },
+            }),
+            tx.songTagAssignment.findMany({
+              where: { songId: originalSong.id },
+              select: { tagId: true },
+            }),
+          ])
+
+        const existingTagIds = Array.from(new Set(originalTagAssignments.map((assignment) => assignment.tagId)))
+        if (existingTagIds.length > 0) {
+          await tx.songTagAssignment.deleteMany({
+            where: { songId: importSong.id, tagId: { in: existingTagIds } },
+          })
+        }
+        const tagResult = await tx.songTagAssignment.updateMany({
+          where: { songId: importSong.id },
+          data: { songId: originalSong.id },
         })
-        copiedCovers += 1
-      }
 
-      const playlistResult = await prisma.playlistSong.updateMany({
-        where: { songId: importSong.id },
-        data: { songId: originalSong.id },
+        await tx.song.delete({ where: { id: importSong.id } })
+        return {
+          copiedCover,
+          playlistCount: playlistResult.count,
+          queueCount: queueResult.count,
+          currentCount: currentResult.count,
+          bookmarkCount: bookmarkResult.count,
+          shareCount: shareResult.count,
+          tagCount: tagResult.count,
+        }
       })
-      reassignedPlaylistEntries += playlistResult.count
 
-      const queueResult = await prisma.playbackQueueItem.updateMany({
-        where: { songId: importSong.id },
-        data: { songId: originalSong.id },
-      })
-      reassignedQueueEntries += queueResult.count
-
-      const currentResult = await prisma.playbackSession.updateMany({
-        where: { userId, currentSongId: importSong.id },
-        data: { currentSongId: originalSong.id },
-      })
-      reassignedCurrentSong += currentResult.count
-
-      await prisma.song.delete({ where: { id: importSong.id } })
+      copiedCovers += reassignmentResult.copiedCover
+      reassignedPlaylistEntries += reassignmentResult.playlistCount
+      reassignedQueueEntries += reassignmentResult.queueCount
+      reassignedCurrentSong += reassignmentResult.currentCount
+      reassignedBookmarks += reassignmentResult.bookmarkCount
+      reassignedShareEntries += reassignmentResult.shareCount
+      reassignedTagAssignments += reassignmentResult.tagCount
       deletedSongs += 1
       if (shouldReportProgress(i + 1, duplicates.length)) {
         progress({
@@ -510,6 +639,9 @@ async function runDedupeLibraryImports(
       reassignedPlaylistEntries,
       reassignedQueueEntries,
       reassignedCurrentSong,
+      reassignedBookmarks,
+      reassignedShareEntries,
+      reassignedTagAssignments,
       copiedCovers,
     },
   }

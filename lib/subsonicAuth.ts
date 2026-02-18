@@ -31,6 +31,35 @@ function decodePassword(raw: string): string {
   return raw
 }
 
+async function checkSubsonicFailedAttemptLimit(
+  request: NextRequest,
+  username: string
+): Promise<{ rateLimited: boolean; retryAfterSeconds?: number }> {
+  const client = getClientIdentifier(request, "subsonic")
+  const perClientLimit = await checkRateLimit(
+    `subsonic:failed:client:${client}`,
+    SUBSONIC_MAX_FAILED_ATTEMPTS_PER_CLIENT,
+    SUBSONIC_WINDOW_MS
+  )
+  const accountKey = `subsonic:failed:account:${username.toLowerCase()}`
+  const accountLimit = await checkRateLimit(
+    accountKey,
+    SUBSONIC_MAX_FAILED_ATTEMPTS_PER_ACCOUNT,
+    SUBSONIC_WINDOW_MS
+  )
+  if (!perClientLimit.allowed || !accountLimit.allowed) {
+    return {
+      rateLimited: true,
+      retryAfterSeconds: Math.max(
+        perClientLimit.retryAfterSeconds || 0,
+        accountLimit.retryAfterSeconds || 0,
+        1
+      ),
+    }
+  }
+  return { rateLimited: false }
+}
+
 export async function authenticateSubsonicRequest(
   request: NextRequest
 ): Promise<SubsonicAuthResult> {
@@ -51,7 +80,13 @@ export async function authenticateSubsonicRequest(
       disabledAt: true,
     },
   })
-  if (!user || user.disabledAt) return { ok: false, rateLimited: false }
+  if (!user || user.disabledAt) {
+    const limited = await checkSubsonicFailedAttemptLimit(request, username)
+    if (limited.rateLimited) {
+      return { ok: false, rateLimited: true, retryAfterSeconds: limited.retryAfterSeconds || 1 }
+    }
+    return { ok: false, rateLimited: false }
+  }
 
   let valid = false
   if (passwordRaw) {
@@ -80,25 +115,9 @@ export async function authenticateSubsonicRequest(
   }
 
   if (!valid) {
-    const client = getClientIdentifier(request, "subsonic")
-    const perClientLimit = await checkRateLimit(
-      `subsonic:failed:client:${client}`,
-      SUBSONIC_MAX_FAILED_ATTEMPTS_PER_CLIENT,
-      SUBSONIC_WINDOW_MS
-    )
-    const accountKey = `subsonic:failed:account:${username.toLowerCase()}:${client}`
-    const accountLimit = await checkRateLimit(
-      accountKey,
-      SUBSONIC_MAX_FAILED_ATTEMPTS_PER_ACCOUNT,
-      SUBSONIC_WINDOW_MS
-    )
-    if (!perClientLimit.allowed || !accountLimit.allowed) {
-      const retryAfterSeconds = Math.max(
-        perClientLimit.retryAfterSeconds || 0,
-        accountLimit.retryAfterSeconds || 0,
-        1
-      )
-      return { ok: false, rateLimited: true, retryAfterSeconds }
+    const limited = await checkSubsonicFailedAttemptLimit(request, username)
+    if (limited.rateLimited) {
+      return { ok: false, rateLimited: true, retryAfterSeconds: limited.retryAfterSeconds || 1 }
     }
     return { ok: false, rateLimited: false }
   }

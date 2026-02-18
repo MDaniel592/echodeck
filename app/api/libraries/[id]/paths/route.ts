@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "../../../../../lib/prisma"
-import { AuthError, requireAuth } from "../../../../../lib/requireAuth"
+import { AuthError, requireAdmin, requireAuth } from "../../../../../lib/requireAuth"
+import { validateLibraryPath } from "../../../../../lib/libraryPaths"
 
 export async function PATCH(
   request: NextRequest,
@@ -8,6 +9,7 @@ export async function PATCH(
 ) {
   try {
     const auth = await requireAuth(request)
+    requireAdmin(auth)
     const { id } = await params
     const libraryId = Number.parseInt(id, 10)
     if (!Number.isInteger(libraryId) || libraryId <= 0) {
@@ -27,10 +29,26 @@ export async function PATCH(
       return NextResponse.json({ error: "paths array is required" }, { status: 400 })
     }
 
-    const cleanPaths = body.paths
-      .map((value: unknown) => (typeof value === "string" ? value.trim() : ""))
-      .filter((value: string) => value.length > 0)
-    const unique: string[] = Array.from(new Set(cleanPaths))
+    const cleanPaths: string[] = body.paths
+      .map((value: unknown): string => (typeof value === "string" ? value.trim() : ""))
+      .filter((value: string): boolean => value.length > 0)
+    const validatedPaths = await Promise.all(
+      cleanPaths.map(async (libraryPath: string) => ({
+        input: libraryPath,
+        result: await validateLibraryPath(libraryPath),
+      }))
+    )
+    const invalid = validatedPaths.find((entry) => !entry.result.ok)
+    if (invalid && !invalid.result.ok) {
+      return NextResponse.json(
+        { error: `Invalid library path '${invalid.input}': ${invalid.result.error}` },
+        { status: 400 }
+      )
+    }
+
+    const unique: string[] = Array.from(
+      new Set(validatedPaths.map((entry) => (entry.result.ok ? entry.result.normalizedPath : "")))
+    ).filter((entry) => entry.length > 0)
 
     await prisma.$transaction(async (tx) => {
       await tx.libraryPath.deleteMany({ where: { libraryId } })

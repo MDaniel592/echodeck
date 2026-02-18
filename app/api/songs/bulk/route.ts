@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server"
 import fs from "fs/promises"
 import prisma from "../../../../lib/prisma"
 import { AuthError, requireAuth } from "../../../../lib/requireAuth"
-import { resolveSafeDownloadPathForDelete } from "../../../../lib/downloadPaths"
 import {
   assignSongsToPlaylistForUser,
   parsePlaylistId,
   PlaylistServiceError,
 } from "../../../../lib/services.playlist"
+import { getSafeDeletePathsForRemovedSongs } from "../../../../lib/songFiles"
 
 function parseSongIds(input: unknown): number[] {
   if (!Array.isArray(input)) return []
@@ -58,21 +58,16 @@ export async function DELETE(request: NextRequest) {
       where: { userId: auth.userId, id: { in: ids } },
     })
 
-    const deletionCandidates = new Set<string>()
-    for (const song of songs) {
-      const safeSongPath = resolveSafeDownloadPathForDelete(song.filePath)
-      if (safeSongPath) deletionCandidates.add(safeSongPath)
-      if (song.coverPath) {
-        const safeCoverPath = resolveSafeDownloadPathForDelete(song.coverPath)
-        if (safeCoverPath) deletionCandidates.add(safeCoverPath)
-      }
+    try {
+      const safeDeletePaths = await getSafeDeletePathsForRemovedSongs(songs)
+      await Promise.allSettled(
+        safeDeletePaths.map(async (filePath) => {
+          await fs.unlink(filePath).catch(() => {})
+        })
+      )
+    } catch (err) {
+      console.error("Failed to finalize bulk file deletion:", err)
     }
-
-    await Promise.allSettled(
-      Array.from(deletionCandidates).map(async (filePath) => {
-        await fs.unlink(filePath).catch(() => {})
-      })
-    )
 
     return NextResponse.json({ success: true, deletedIds: ids })
   } catch (error) {
