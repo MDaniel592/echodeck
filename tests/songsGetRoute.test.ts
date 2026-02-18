@@ -100,12 +100,25 @@ describe("GET /api/songs", () => {
   })
 
   it("pagination calculates skip correctly", async () => {
-    const { GET } = await import("../app/api/songs/route")
-    await GET(makeRequest({ page: "3", limit: "25" }))
+    const ordered = [
+      makeSong({ id: 1, filePath: "/a" }),
+      makeSong({ id: 2, filePath: "/b" }),
+      makeSong({ id: 3, filePath: "/c" }),
+      makeSong({ id: 4, filePath: "/d" }),
+      makeSong({ id: 5, filePath: "/e" }),
+    ]
+    prismaMock.song.findMany
+      .mockResolvedValueOnce(ordered)
+      .mockResolvedValueOnce([ordered[4]])
 
-    const call = prismaMock.song.findMany.mock.calls[0][0]
-    expect(call.skip).toBe(50) // (3-1) * 25
-    expect(call.take).toBe(25)
+    const { GET } = await import("../app/api/songs/route")
+    const res = await GET(makeRequest({ page: "3", limit: "2" }))
+    const body = await res.json()
+
+    expect(body.songs).toHaveLength(1)
+    expect(body.songs[0]?.id).toBe(5)
+    const secondCall = prismaMock.song.findMany.mock.calls[1][0]
+    expect(secondCall.where.id.in).toEqual([5])
   })
 
   it("invalid sort field falls back to createdAt", async () => {
@@ -128,7 +141,9 @@ describe("GET /api/songs", () => {
     const librarySong = makeSong({ id: 1, source: "library", artist: null, filePath: "/downloads/a.mp3" })
     const ytSong = makeSong({ id: 2, source: "youtube", artist: "Artist", filePath: "/downloads/a.mp3" })
 
-    prismaMock.song.findMany.mockResolvedValue([librarySong, ytSong])
+    prismaMock.song.findMany
+      .mockResolvedValueOnce([librarySong, ytSong])
+      .mockResolvedValueOnce([ytSong])
     prismaMock.song.count.mockResolvedValue(2)
 
     const { GET } = await import("../app/api/songs/route")
@@ -145,7 +160,9 @@ describe("GET /api/songs", () => {
     const libSong = makeSong({ id: 1, source: "library", artist: "A", album: "B", title: "Song", filePath: "/a" })
     const dlSong = makeSong({ id: 2, source: "youtube", artist: "A", album: "B", title: "Song", filePath: "/a" })
 
-    prismaMock.song.findMany.mockResolvedValue([libSong, dlSong])
+    prismaMock.song.findMany
+      .mockResolvedValueOnce([libSong, dlSong])
+      .mockResolvedValueOnce([dlSong])
     prismaMock.song.count.mockResolvedValue(2)
 
     const { GET } = await import("../app/api/songs/route")
@@ -161,7 +178,9 @@ describe("GET /api/songs", () => {
     const numericTitle = makeSong({ id: 1, source: "youtube", artist: "A", album: "B", title: "12345", filePath: "/a" })
     const normalTitle = makeSong({ id: 2, source: "youtube", artist: "A", album: "B", title: "Real Song", filePath: "/a" })
 
-    prismaMock.song.findMany.mockResolvedValue([numericTitle, normalTitle])
+    prismaMock.song.findMany
+      .mockResolvedValueOnce([numericTitle, normalTitle])
+      .mockResolvedValueOnce([normalTitle])
     prismaMock.song.count.mockResolvedValue(2)
 
     const { GET } = await import("../app/api/songs/route")
@@ -173,8 +192,15 @@ describe("GET /api/songs", () => {
   })
 
   it("returns correct pagination metadata", async () => {
-    prismaMock.song.findMany.mockResolvedValue([])
-    prismaMock.song.count.mockResolvedValue(250)
+    const ordered = Array.from({ length: 250 }, (_, i) =>
+      makeSong({
+        id: i + 1,
+        filePath: `/downloads/${i + 1}.mp3`,
+      })
+    )
+    prismaMock.song.findMany
+      .mockResolvedValueOnce(ordered)
+      .mockResolvedValueOnce(ordered.slice(50, 100))
 
     const { GET } = await import("../app/api/songs/route")
     const res = await GET(makeRequest({ page: "2", limit: "50" }))
@@ -184,6 +210,32 @@ describe("GET /api/songs", () => {
     expect(body.page).toBe(2)
     expect(body.limit).toBe(50)
     expect(body.totalPages).toBe(5)
+  })
+
+  it("paginates after dedupe so duplicates do not leak to later pages", async () => {
+    const lowPriority = makeSong({ id: 1, source: "library", artist: null, filePath: "/dup.mp3" })
+    const highPriority = makeSong({ id: 2, source: "youtube", artist: "Artist", filePath: "/dup.mp3" })
+    const uniqueSong = makeSong({ id: 3, filePath: "/unique.mp3" })
+
+    const { GET } = await import("../app/api/songs/route")
+
+    prismaMock.song.findMany
+      .mockResolvedValueOnce([lowPriority, highPriority, uniqueSong])
+      .mockResolvedValueOnce([highPriority])
+
+    const page1 = await GET(makeRequest({ page: "1", limit: "1" }))
+    const body1 = await page1.json()
+    expect(body1.songs[0]?.id).toBe(2)
+    expect(body1.total).toBe(2)
+
+    prismaMock.song.findMany
+      .mockResolvedValueOnce([lowPriority, highPriority, uniqueSong])
+      .mockResolvedValueOnce([uniqueSong])
+
+    const page2 = await GET(makeRequest({ page: "2", limit: "1" }))
+    const body2 = await page2.json()
+    expect(body2.songs[0]?.id).toBe(3)
+    expect(body2.total).toBe(2)
   })
 
   it("auth error returns correct status", async () => {

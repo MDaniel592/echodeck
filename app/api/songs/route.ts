@@ -111,18 +111,21 @@ export async function GET(request: NextRequest) {
     const validSortFields = new Set(["createdAt", "title", "artist", "source", "year", "genre", "album"])
     const orderField = validSortFields.has(sortBy) ? sortBy : "createdAt"
 
-    const [songs, total] = await Promise.all([
-      prisma.song.findMany({
-        where,
-        orderBy: { [orderField]: sortOrder },
-        skip,
-        take: limit,
-      }),
-      prisma.song.count({ where }),
-    ])
+    const orderedCandidates = await prisma.song.findMany({
+      where,
+      orderBy: { [orderField]: sortOrder },
+      select: {
+        id: true,
+        source: true,
+        artist: true,
+        album: true,
+        title: true,
+        filePath: true,
+      },
+    })
 
-    const bestByPath = new Map<string, (typeof songs)[number]>()
-    for (const song of songs) {
+    const bestByPath = new Map<string, (typeof orderedCandidates)[number]>()
+    for (const song of orderedCandidates) {
       const key = song.filePath.trim().toLowerCase()
       const current = bestByPath.get(key)
       if (!current) {
@@ -133,15 +136,31 @@ export async function GET(request: NextRequest) {
         bestByPath.set(key, song)
       }
     }
-    const dedupedSongs = Array.from(bestByPath.values())
+    const dedupedCandidates = Array.from(bestByPath.values())
+    const total = dedupedCandidates.length
+    const pageIds = dedupedCandidates.slice(skip, skip + limit).map((song) => song.id)
+
+    const songs = pageIds.length > 0
+      ? await prisma.song.findMany({
+          where: {
+            userId: auth.userId,
+            id: { in: pageIds },
+          },
+        })
+      : []
+
+    const songsById = new Map(songs.map((song) => [song.id, song]))
+    const pagedSongs = pageIds
+      .map((id) => songsById.get(id))
+      .filter((song): song is (typeof songs)[number] => Boolean(song))
 
     return NextResponse.json({
-      songs: dedupedSongs.map(sanitizeSong),
+      songs: pagedSongs.map(sanitizeSong),
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
-      dedupedInPage: songs.length - dedupedSongs.length,
+      dedupedInPage: orderedCandidates.length - dedupedCandidates.length,
     })
   } catch (error) {
     if (error instanceof AuthError) {
