@@ -8,6 +8,7 @@ import {
 const prismaMock = {
   user: {
     findUnique: vi.fn(),
+    findFirst: vi.fn(),
     update: vi.fn(),
   },
   library: {
@@ -45,6 +46,7 @@ describe("subsonic auth matrix", () => {
     vi.stubEnv("JWT_SECRET", "test-secret")
     checkRateLimitMock.mockReturnValue({ allowed: true, retryAfterSeconds: 0 })
     prismaMock.library.findMany.mockResolvedValue([])
+    prismaMock.user.findFirst.mockResolvedValue(null)
     prismaMock.user.update.mockResolvedValue({})
     prismaMock.song.findFirst.mockResolvedValue(null)
     prismaMock.song.update.mockResolvedValue({})
@@ -71,6 +73,61 @@ describe("subsonic auth matrix", () => {
 
     expect(verifyPasswordMock).toHaveBeenCalledWith("plain-pass", "hash")
     expect(body["subsonic-response"].status).toBe("ok")
+  })
+
+  it("returns 404 when getCoverArt file is missing", async () => {
+    verifyPasswordMock.mockResolvedValue(true)
+    prismaMock.user.findUnique.mockResolvedValue({
+      id: 1,
+      username: "alice",
+      passwordHash: "hash",
+      subsonicToken: "legacy",
+      subsonicPasswordEnc: null,
+      disabledAt: null,
+    })
+    prismaMock.song.findFirst.mockResolvedValue({
+      id: 123,
+      coverPath: "/opt/docker/apps/echodeck/downloads/does-not-exist-cover.jpg",
+      albumId: null,
+    })
+
+    const { GET } = await import("../app/api/subsonic/rest/route")
+    const req = new NextRequest(
+      "http://localhost/api/subsonic/rest?command=getCoverArt&id=123&u=alice&p=plain-pass&v=1.16.1&c=t&f=json"
+    )
+    const res = await GET(req)
+    const body = await res.text()
+
+    expect(res.status).toBe(404)
+    expect(body).toBe("Cover not found")
+  })
+
+  it("returns 404 when getAvatar file is missing", async () => {
+    verifyPasswordMock.mockResolvedValue(true)
+    prismaMock.user.findUnique.mockResolvedValue({
+      id: 1,
+      username: "alice",
+      passwordHash: "hash",
+      subsonicToken: "legacy",
+      subsonicPasswordEnc: null,
+      disabledAt: null,
+    })
+    prismaMock.user.findFirst
+      .mockResolvedValueOnce({ id: 1, role: "user", username: "alice" })
+      .mockResolvedValueOnce({ role: "user", username: "alice" })
+    prismaMock.song.findFirst.mockResolvedValue({
+      coverPath: "/opt/docker/apps/echodeck/downloads/does-not-exist-avatar.jpg",
+    })
+
+    const { GET } = await import("../app/api/subsonic/rest/route")
+    const req = new NextRequest(
+      "http://localhost/api/subsonic/rest?command=getAvatar&u=alice&p=plain-pass&v=1.16.1&c=t&f=json"
+    )
+    const res = await GET(req)
+    const body = await res.text()
+
+    expect(res.status).toBe(404)
+    expect(body).toBe("Avatar not found")
   })
 
   it("accepts u+p enc:hex", async () => {

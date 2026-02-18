@@ -1756,6 +1756,13 @@ export async function GET(request: NextRequest) {
         return new Response("Access denied", { status: 403 })
       }
 
+      let stat: Awaited<ReturnType<typeof fsPromises.stat>>
+      try {
+        stat = await fsPromises.stat(resolvedPath)
+      } catch {
+        return new Response("Cover not found", { status: 404 })
+      }
+
       if (path.extname(resolvedPath).toLowerCase() === ".webp") {
         const transcoder = transcodeImageToJpeg(resolvedPath)
         if (transcoder?.stdout) {
@@ -1768,12 +1775,6 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      let stat: Awaited<ReturnType<typeof fsPromises.stat>>
-      try {
-        stat = await fsPromises.stat(resolvedPath)
-      } catch {
-        return new Response("Cover not found", { status: 404 })
-      }
       const stream = fs.createReadStream(resolvedPath)
       return new Response(nodeReadableToWebStream(stream), {
         headers: {
@@ -1820,6 +1821,13 @@ export async function GET(request: NextRequest) {
         return new Response("Access denied", { status: 403 })
       }
 
+      let stat: Awaited<ReturnType<typeof fsPromises.stat>>
+      try {
+        stat = await fsPromises.stat(resolvedPath)
+      } catch {
+        return new Response("Avatar not found", { status: 404 })
+      }
+
       if (path.extname(resolvedPath).toLowerCase() === ".webp") {
         const transcoder = transcodeImageToJpeg(resolvedPath)
         if (transcoder?.stdout) {
@@ -1832,12 +1840,6 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      let stat: Awaited<ReturnType<typeof fsPromises.stat>>
-      try {
-        stat = await fsPromises.stat(resolvedPath)
-      } catch {
-        return new Response("Avatar not found", { status: 404 })
-      }
       const stream = fs.createReadStream(resolvedPath)
       return new Response(nodeReadableToWebStream(stream), {
         headers: {
