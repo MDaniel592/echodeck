@@ -110,6 +110,7 @@ Run `npm run validate-env` to check your configuration.
 | `npm run db:verify-ownership` | Fail if any rows still have missing ownership |
 | `npm run db:backfill-playlist-entries` | Backfill playlist join entries from legacy song playlist links |
 | `npm run db:ensure-subsonic-tokens` | Ensure each user has a Subsonic token |
+| `npm run db:backfill-audio-metadata` | Backfill duration/bitrate/sample rate/channels/replaygain from local files |
 | `npm run db:organize-layout` | Dry-run local file layout normalization and DB path updates |
 | `npm run db:organize-layout:apply` | Move files to normalized layout and persist DB path changes |
 | `npm run db:studio` | Open Prisma Studio GUI |
