@@ -22,6 +22,7 @@ import { redactSensitiveText } from "../lib/sanitize"
 import { findReusableSongBySourceUrl, normalizeSoundCloudUrl, normalizeSpotifyTrackUrl } from "../lib/songDedup"
 import { assignSongToPlaylistForUser } from "../lib/playlistEntries"
 import { lookupLyrics } from "../lib/lyricsProvider"
+import { analyzeAndTagReplayGain } from "../lib/audioNormalize"
 
 const YOUTUBE_VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/
 const YOUTUBE_DOWNLOAD_CONCURRENCY = 6
@@ -680,6 +681,11 @@ async function runVideoTask(taskId: number) {
             : normalizeSongTitle(rawTitle),
           preferredExt: result.format,
         })
+        await logEvent(taskId, "progress", `${progressPrefix} Analyzing audio levels...`)
+        const replayGain = await analyzeAndTagReplayGain(organized.filePath)
+        if (replayGain) {
+          await logEvent(taskId, "info", `${progressPrefix} ReplayGain: ${replayGain.trackGainDb.toFixed(2)} dB`)
+        }
         const songCreateData = {
           userId,
           title: cleanYouTubeTitle(rawTitle, refs.artist || ""),
@@ -705,6 +711,8 @@ async function runVideoTask(taskId: number) {
           fileSize: organized.fileSize || result.fileSize,
           downloadTaskId: taskId,
           playlistId: taskPlaylistId,
+          replayGainTrackDb: replayGain?.trackGainDb ?? null,
+          replayGainTrackPeak: replayGain?.trackPeak ?? null,
         }
 
         await logEvent(
@@ -883,6 +891,11 @@ async function runVideoTask(taskId: number) {
       : normalizeSongTitle(rawTitle),
     preferredExt: result.format,
   })
+  await logEvent(taskId, "progress", "Analyzing audio levels...")
+  const replayGain = await analyzeAndTagReplayGain(organized.filePath)
+  if (replayGain) {
+    await logEvent(taskId, "info", `ReplayGain: ${replayGain.trackGainDb.toFixed(2)} dB`)
+  }
   const songCreateData = {
     userId,
     title: cleanYouTubeTitle(rawTitle, refs.artist || ""),
@@ -908,6 +921,8 @@ async function runVideoTask(taskId: number) {
     fileSize: organized.fileSize || result.fileSize,
     downloadTaskId: taskId,
     playlistId: taskPlaylistId,
+    replayGainTrackDb: replayGain?.trackGainDb ?? null,
+    replayGainTrackPeak: replayGain?.trackPeak ?? null,
   }
 
   await logEvent(
@@ -1100,6 +1115,11 @@ async function runSpotifyTask(taskId: number) {
       title: normalizedTitle,
       preferredExt: result.format,
     })
+    await logEvent(taskId, "progress", "[spotify] Analyzing audio levels...")
+    const replayGain = await analyzeAndTagReplayGain(organized.filePath)
+    if (replayGain) {
+      await logEvent(taskId, "info", `[spotify] ReplayGain: ${replayGain.trackGainDb.toFixed(2)} dB`)
+    }
 
     const songSourceUrl = normalizedSourceUrl || result.sourceUrl || null
     const songCreateData = {
@@ -1126,6 +1146,8 @@ async function runSpotifyTask(taskId: number) {
       fileSize: organized.fileSize || result.fileSize,
       downloadTaskId: taskId,
       playlistId: taskPlaylistId,
+      replayGainTrackDb: replayGain?.trackGainDb ?? null,
+      replayGainTrackPeak: replayGain?.trackPeak ?? null,
     }
 
     await logEvent(

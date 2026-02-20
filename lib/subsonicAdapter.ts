@@ -21,6 +21,10 @@ type SubsonicSong = {
   filePath?: string | null
   format?: string | null
   bitrate?: number | null
+  replayGainTrackDb?: number | null
+  replayGainAlbumDb?: number | null
+  replayGainTrackPeak?: number | null
+  replayGainAlbumPeak?: number | null
 }
 
 export function subsonicResponse(
@@ -98,6 +102,20 @@ export function mapSubsonicSong(song: SubsonicSong) {
     starred: song.starredAt ? song.starredAt.toISOString() : undefined,
     playCount: song.playCount ?? 0,
     userRating: song.rating ?? undefined,
+    ...(buildReplayGainObject(song)),
+  }
+}
+
+function buildReplayGainObject(song: SubsonicSong): Record<string, unknown> {
+  const rg = song.replayGainTrackDb ?? song.replayGainAlbumDb
+  if (typeof rg !== "number") return {}
+  return {
+    replayGain: {
+      ...(typeof song.replayGainTrackDb === "number" ? { trackGain: song.replayGainTrackDb } : {}),
+      ...(typeof song.replayGainAlbumDb === "number" ? { albumGain: song.replayGainAlbumDb } : {}),
+      ...(typeof song.replayGainTrackPeak === "number" ? { trackPeak: song.replayGainTrackPeak } : {}),
+      ...(typeof song.replayGainAlbumPeak === "number" ? { albumPeak: song.replayGainAlbumPeak } : {}),
+    },
   }
 }
 
