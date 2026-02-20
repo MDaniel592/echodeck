@@ -15,6 +15,7 @@ export interface PlayerSong {
   replayGainAlbumDb?: number | null
   replayGainTrackPeak?: number | null
   replayGainAlbumPeak?: number | null
+  lyrics?: string | null
   playlistId: number | null
   createdAt: string
 }

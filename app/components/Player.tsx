@@ -5,6 +5,7 @@ import { queuePositionLabel } from "../../lib/playbackQueue"
 import DesktopQueuePanel from "./player/DesktopQueuePanel"
 import DesktopPlayerBar from "./player/DesktopPlayerBar"
 import MobileQueueSheet from "./player/MobileQueueSheet"
+import LyricsPanel from "./player/LyricsPanel"
 import {
   formatTime,
   MinimizePlayerIcon,
@@ -30,6 +31,11 @@ import {
   NORMALIZATION_STORAGE_KEY,
   QUEUE_CLOSE_DRAG_THRESHOLD,
 } from "./player/constants"
+
+const PLAYBACK_RATE_KEY = "echodeck.playbackRate"
+const SILENCE_SKIP_KEY = "echodeck.silenceSkip"
+const SHOW_LYRICS_KEY = "echodeck.showLyrics"
+const VALID_PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2]
 import {
   canGoNextInQueue,
   canGoPrevInQueue,
@@ -95,6 +101,32 @@ export default function Player({
     }
   })
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("off")
+  const [playbackRate, setPlaybackRate] = useState<number>(() => {
+    if (typeof window === "undefined") return 1
+    try {
+      const stored = parseFloat(localStorage.getItem(PLAYBACK_RATE_KEY) || "1")
+      return VALID_PLAYBACK_RATES.includes(stored) ? stored : 1
+    } catch {
+      return 1
+    }
+  })
+  const [silenceSkipEnabled, setSilenceSkipEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false
+    try {
+      return localStorage.getItem(SILENCE_SKIP_KEY) === "1"
+    } catch {
+      return false
+    }
+  })
+  const [showLyrics, setShowLyrics] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false
+    try {
+      return localStorage.getItem(SHOW_LYRICS_KEY) === "1"
+    } catch {
+      return false
+    }
+  })
+  const [accentColor, setAccentColor] = useState<string>("#10b981")
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [isMobileCollapsed, setIsMobileCollapsed] = useState(true)
   const [mobileDragOffset, setMobileDragOffset] = useState(0)
@@ -119,6 +151,8 @@ export default function Player({
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const compressorNodeRef = useRef<DynamicsCompressorNode | null>(null)
+  const analyserNodeRef = useRef<AnalyserNode | null>(null)
+  const silenceStartRef = useRef<number | null>(null)
   const isBraveBrowser = useMemo(
     () => (typeof navigator !== "undefined" ? /Brave\//i.test(navigator.userAgent) : false),
     []
@@ -165,6 +199,11 @@ export default function Player({
     compressor.disconnect()
     source.connect(gain)
     gain.connect(context.destination)
+
+    const analyser = analyserNodeRef.current ?? context.createAnalyser()
+    analyserNodeRef.current = analyser
+    analyser.fftSize = 256
+    gain.connect(analyser)
   }, [])
 
   const hasReplayGain = useCallback((currentSong: PlayerSong | null): boolean => {
@@ -294,6 +333,65 @@ export default function Player({
     }
   }, [crossfadeSeconds])
 
+  // Playback rate effect
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio) return
+    audio.playbackRate = playbackRate
+  }, [playbackRate])
+
+  // Silence skip effect
+  useEffect(() => {
+    if (!silenceSkipEnabled || !playing) return
+    const SILENCE_RMS = 0.003
+    const SILENCE_SEC = 1.5
+    const SKIP_SEC = 3
+    const id = setInterval(() => {
+      const analyser = analyserNodeRef.current
+      const audio = audioRef.current
+      if (!analyser || !audio || !audio.duration) return
+      const buf = new Float32Array(analyser.fftSize)
+      analyser.getFloatTimeDomainData(buf)
+      const rms = Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length)
+      if (rms < SILENCE_RMS) {
+        if (silenceStartRef.current === null) silenceStartRef.current = audio.currentTime
+        else if (audio.currentTime - silenceStartRef.current >= SILENCE_SEC) {
+          const skipTo = Math.min(audio.currentTime + SKIP_SEC, audio.duration - 1)
+          if (skipTo > audio.currentTime) audio.currentTime = skipTo
+          silenceStartRef.current = null
+        }
+      } else {
+        silenceStartRef.current = null
+      }
+    }, 200)
+    return () => clearInterval(id)
+  }, [silenceSkipEnabled, playing])
+
+  // Dynamic theming effect
+  useEffect(() => {
+    const coverSrc = song?.coverPath ? `/api/cover/${song.id}` : song?.thumbnail ?? null
+    if (!coverSrc) { setAccentColor("#10b981"); return }
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    img.onload = () => {
+      const canvas = document.createElement("canvas")
+      canvas.width = 16; canvas.height = 16
+      const ctx = canvas.getContext("2d")
+      if (!ctx) return
+      ctx.drawImage(img, 0, 0, 16, 16)
+      const { data } = ctx.getImageData(0, 0, 16, 16)
+      let r = 0, g = 0, b = 0, n = 0
+      for (let i = 0; i < data.length; i += 4) {
+        const bright = (data[i] + data[i + 1] + data[i + 2]) / 3
+        if (bright < 30 || bright > 220) continue
+        r += data[i]; g += data[i + 1]; b += data[i + 2]; n++
+      }
+      if (n > 0) setAccentColor(`rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`)
+    }
+    img.onerror = () => setAccentColor("#10b981")
+    img.src = coverSrc
+  }, [song?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     setupAudioGraph()
     return () => {
@@ -302,6 +400,7 @@ export default function Player({
       mediaSourceRef.current = null
       gainNodeRef.current = null
       compressorNodeRef.current = null
+      analyserNodeRef.current = null
       if (context) {
         context.close().catch(() => {})
       }
@@ -329,6 +428,7 @@ export default function Player({
     audio.src = `/api/stream/${song.id}`
     audio.currentTime = 0
     audio.volume = volume
+    audio.playbackRate = playbackRate
     transitionTriggeredSongIdRef.current = null
     audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
   }, [song?.id, clearMediaSessionPosition, syncMediaSessionPosition]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -414,6 +514,7 @@ export default function Player({
     }
 
     const onSeeked = () => {
+      silenceStartRef.current = null
       syncMediaSessionPosition(audio, true)
     }
 
@@ -491,6 +592,27 @@ export default function Player({
       return "off"
     })
   }
+
+  const handlePlaybackRateChange = useCallback((rate: number) => {
+    setPlaybackRate(rate)
+    try { localStorage.setItem(PLAYBACK_RATE_KEY, String(rate)) } catch {}
+  }, [])
+
+  const handleToggleSilenceSkip = useCallback(() => {
+    setSilenceSkipEnabled(v => {
+      const next = !v
+      try { localStorage.setItem(SILENCE_SKIP_KEY, next ? "1" : "0") } catch {}
+      return next
+    })
+  }, [])
+
+  const handleToggleLyrics = useCallback(() => {
+    setShowLyrics(v => {
+      const next = !v
+      try { localStorage.setItem(SHOW_LYRICS_KEY, next ? "1" : "0") } catch {}
+      return next
+    })
+  }, [])
 
   const canGoPrev = canGoPrevInQueue({
     currentIndex,
@@ -1208,20 +1330,36 @@ export default function Player({
               >
                 <MinimizePlayerIcon />
               </button>
-              <button
-                type="button"
-                onClick={toggleQueueSheet}
-                disabled={songs.length === 0}
-                className={`h-9 w-9 inline-flex items-center justify-center rounded-full transition-colors ${
-                  isQueueSheetOpen
-                    ? "bg-zinc-800 text-white"
-                    : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-                } disabled:opacity-40 disabled:hover:text-zinc-400 disabled:hover:bg-transparent`}
-                aria-label={isQueueSheetOpen ? "Close queue" : "Open queue"}
-                aria-expanded={isQueueSheetOpen}
-              >
-                <QueueIcon />
-              </button>
+              <div className="flex items-center gap-1">
+                {song?.lyrics && (
+                  <button
+                    type="button"
+                    onClick={handleToggleLyrics}
+                    className={`h-9 min-w-9 px-2 inline-flex items-center justify-center rounded-full text-[10px] font-semibold tracking-wide transition-colors ${
+                      showLyrics
+                        ? "bg-zinc-800 text-white"
+                        : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+                    }`}
+                    aria-label={showLyrics ? "Hide lyrics" : "Show lyrics"}
+                  >
+                    LYR
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={toggleQueueSheet}
+                  disabled={songs.length === 0}
+                  className={`h-9 w-9 inline-flex items-center justify-center rounded-full transition-colors ${
+                    isQueueSheetOpen
+                      ? "bg-zinc-800 text-white"
+                      : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+                  } disabled:opacity-40 disabled:hover:text-zinc-400 disabled:hover:bg-transparent`}
+                  aria-label={isQueueSheetOpen ? "Close queue" : "Open queue"}
+                  aria-expanded={isQueueSheetOpen}
+                >
+                  <QueueIcon />
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 flex flex-col justify-center gap-6">
@@ -1232,6 +1370,7 @@ export default function Player({
                   transform: `translate3d(${artworkTranslateX}px, ${artworkTranslateY}px, 0) scale(${artworkScale})`,
                   transformOrigin: "center center",
                   borderRadius: `${artworkBorderRadius}px`,
+                  boxShadow: coverSrc ? `0 0 40px ${accentColor}40` : undefined,
                   transition: isMobileDragging
                     ? "none"
                     : isMobileTransitioning
@@ -1256,6 +1395,20 @@ export default function Player({
                   </div>
                 )}
               </div>
+
+              {showLyrics && song?.lyrics && (
+                <div
+                  className="w-full max-w-sm mx-auto h-40 bg-zinc-900/60 rounded-xl overflow-hidden border border-zinc-800/60"
+                  style={{
+                    opacity: expandedDetailsProgress,
+                    transition: isMobileDragging
+                      ? "none"
+                      : `opacity ${MOBILE_FADE_MS}ms ${MOBILE_EXPAND_EASE}`,
+                  }}
+                >
+                  <LyricsPanel lyrics={song.lyrics} currentTime={currentTime} />
+                </div>
+              )}
 
               <div
                 className="text-center"
@@ -1301,8 +1454,8 @@ export default function Player({
                     onTouchCancel={handleMobileSeekTouchEnd}
                   >
                     <div
-                      className="h-full bg-emerald-500 rounded-full relative group-hover:bg-emerald-400 transition-colors"
-                      style={{ width: `${progress}%` }}
+                      className="h-full rounded-full relative transition-colors"
+                      style={{ width: `${progress}%`, backgroundColor: accentColor }}
                     >
                       <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
                     </div>
@@ -1391,56 +1544,70 @@ export default function Player({
   }
 
   return (
-    <div
-      className="fixed bottom-0 left-0 right-0 z-[70] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 sm:px-4 lg:px-5 pt-3 lg:pt-3.5 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
-    >
-      <audio ref={audioRef} />
-      <DesktopPlayerBar
-        song={song}
-        songsLength={songs.length}
-        playing={playing}
-        shuffleEnabled={shuffleEnabled}
-        repeatMode={repeatMode}
-        repeatTitle={repeatTitle}
-        canGoPrev={canGoPrev}
-        canGoNext={canGoNext}
-        currentTime={currentTime}
-        duration={duration}
-        progress={progress}
-        volume={volume}
-        isQueueSheetOpen={isQueueSheetOpen}
-        normalizationEnabled={normalizationEnabled}
-        coverSrc={coverSrc}
-        onToggleShuffle={() => setShuffleEnabled((prev) => !prev)}
-        onPlayPrev={playPrev}
-        onTogglePlay={togglePlay}
-        onPlayNext={playNext}
-        onCycleRepeat={cycleRepeatMode}
-        onToggleMute={toggleMute}
-        onVolumeChange={changeVolume}
-        onToggleQueue={toggleQueueSheet}
-              onToggleNormalization={() => setNormalizationEnabled((prev) => !prev)}
-              gaplessEnabled={gaplessEnabled}
-              crossfadeSeconds={crossfadeSeconds}
-              onToggleGapless={() => setGaplessEnabled((prev) => !prev)}
-              onCrossfadeChange={(value) => setCrossfadeSeconds(Math.min(8, Math.max(0, value)))}
-              desktopSeekBarRef={desktopSeekBarRef}
-        onDesktopSeekClick={handleDesktopSeekClick}
-        onDesktopSeekTouchStart={handleDesktopSeekTouchStart}
-        onDesktopSeekTouchMove={handleDesktopSeekTouchMove}
-        onDesktopSeekTouchEnd={handleDesktopSeekTouchEnd}
-      />
-      {isQueueSheetOpen && (
-        <DesktopQueuePanel
-          songs={songs}
-          currentSongId={songId}
-          queuePosition={queuePosition}
-          onClose={closeQueueSheet}
-          onSelectSong={(queueSong) => onSongChange(queueSong)}
-          onRemove={(queueSongId, index) => removeQueueItem(queueSongId, index)}
-          onClear={() => onQueueClear?.()}
-        />
+    <>
+      {showLyrics && song?.lyrics && (
+        <div className="fixed bottom-[5.5rem] right-4 w-80 h-96 bg-zinc-900/95 backdrop-blur border border-zinc-700/70 rounded-xl shadow-xl overflow-hidden z-40">
+          <LyricsPanel lyrics={song.lyrics} currentTime={currentTime} />
+        </div>
       )}
-    </div>
+      <div
+        className="fixed bottom-0 left-0 right-0 z-[70] border-t border-zinc-800/80 bg-[linear-gradient(180deg,rgba(39,39,42,0.90)_0%,rgba(24,24,27,0.88)_100%)] backdrop-blur-xl shadow-[0_-18px_40px_rgba(0,0,0,0.55)] px-3 sm:px-4 lg:px-5 pt-3 lg:pt-3.5 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+      >
+        <audio ref={audioRef} />
+        <DesktopPlayerBar
+          song={song}
+          songsLength={songs.length}
+          playing={playing}
+          shuffleEnabled={shuffleEnabled}
+          repeatMode={repeatMode}
+          repeatTitle={repeatTitle}
+          canGoPrev={canGoPrev}
+          canGoNext={canGoNext}
+          currentTime={currentTime}
+          duration={duration}
+          progress={progress}
+          volume={volume}
+          isQueueSheetOpen={isQueueSheetOpen}
+          normalizationEnabled={normalizationEnabled}
+          coverSrc={coverSrc}
+          accentColor={accentColor}
+          playbackRate={playbackRate}
+          silenceSkipEnabled={silenceSkipEnabled}
+          showLyrics={showLyrics}
+          onToggleShuffle={() => setShuffleEnabled((prev) => !prev)}
+          onPlayPrev={playPrev}
+          onTogglePlay={togglePlay}
+          onPlayNext={playNext}
+          onCycleRepeat={cycleRepeatMode}
+          onToggleMute={toggleMute}
+          onVolumeChange={changeVolume}
+          onToggleQueue={toggleQueueSheet}
+          onToggleNormalization={() => setNormalizationEnabled((prev) => !prev)}
+          gaplessEnabled={gaplessEnabled}
+          crossfadeSeconds={crossfadeSeconds}
+          onToggleGapless={() => setGaplessEnabled((prev) => !prev)}
+          onCrossfadeChange={(value) => setCrossfadeSeconds(Math.min(8, Math.max(0, value)))}
+          onPlaybackRateChange={handlePlaybackRateChange}
+          onToggleSilenceSkip={handleToggleSilenceSkip}
+          onToggleLyrics={handleToggleLyrics}
+          desktopSeekBarRef={desktopSeekBarRef}
+          onDesktopSeekClick={handleDesktopSeekClick}
+          onDesktopSeekTouchStart={handleDesktopSeekTouchStart}
+          onDesktopSeekTouchMove={handleDesktopSeekTouchMove}
+          onDesktopSeekTouchEnd={handleDesktopSeekTouchEnd}
+        />
+        {isQueueSheetOpen && (
+          <DesktopQueuePanel
+            songs={songs}
+            currentSongId={songId}
+            queuePosition={queuePosition}
+            onClose={closeQueueSheet}
+            onSelectSong={(queueSong) => onSongChange(queueSong)}
+            onRemove={(queueSongId, index) => removeQueueItem(queueSongId, index)}
+            onClear={() => onQueueClear?.()}
+          />
+        )}
+      </div>
+    </>
   )
 }

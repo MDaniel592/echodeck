@@ -24,6 +24,8 @@ interface Song {
   createdAt: string
 }
 
+const PLAYBACK_RATE_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2]
+
 interface DesktopPlayerBarProps {
   song: Song
   songsLength: number
@@ -42,6 +44,10 @@ interface DesktopPlayerBarProps {
   gaplessEnabled: boolean
   crossfadeSeconds: number
   coverSrc: string | null
+  accentColor: string
+  playbackRate: number
+  silenceSkipEnabled: boolean
+  showLyrics: boolean
   onToggleShuffle: () => void
   onPlayPrev: () => void
   onTogglePlay: () => void
@@ -53,6 +59,9 @@ interface DesktopPlayerBarProps {
   onToggleNormalization: () => void
   onToggleGapless: () => void
   onCrossfadeChange: (value: number) => void
+  onPlaybackRateChange: (rate: number) => void
+  onToggleSilenceSkip: () => void
+  onToggleLyrics: () => void
   desktopSeekBarRef: RefObject<HTMLDivElement | null>
   onDesktopSeekClick: (e: MouseEvent<HTMLDivElement>) => void
   onDesktopSeekTouchStart: (e: TouchEvent<HTMLDivElement>) => void
@@ -78,6 +87,10 @@ export default function DesktopPlayerBar({
   gaplessEnabled,
   crossfadeSeconds,
   coverSrc,
+  accentColor,
+  playbackRate,
+  silenceSkipEnabled,
+  showLyrics,
   onToggleShuffle,
   onPlayPrev,
   onTogglePlay,
@@ -89,6 +102,9 @@ export default function DesktopPlayerBar({
   onToggleNormalization,
   onToggleGapless,
   onCrossfadeChange,
+  onPlaybackRateChange,
+  onToggleSilenceSkip,
+  onToggleLyrics,
   desktopSeekBarRef,
   onDesktopSeekClick,
   onDesktopSeekTouchStart,
@@ -185,8 +201,8 @@ export default function DesktopPlayerBar({
             onTouchCancel={onDesktopSeekTouchEnd}
           >
             <div
-              className="h-full bg-emerald-500 rounded-full relative group-hover:bg-emerald-400 transition-colors"
-              style={{ width: `${progress}%` }}
+              className="h-full rounded-full relative transition-colors"
+              style={{ width: `${progress}%`, backgroundColor: accentColor }}
             >
               <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity lg:h-3.5 lg:w-3.5" />
             </div>
@@ -251,6 +267,19 @@ export default function DesktopPlayerBar({
           >
             GAP
           </button>
+          <button
+            type="button"
+            onClick={onToggleSilenceSkip}
+            className={`ml-1 h-7 min-w-7 rounded-md px-2 text-[10px] font-semibold tracking-wide transition-colors ${
+              silenceSkipEnabled
+                ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+            }`}
+            aria-label={silenceSkipEnabled ? "Disable silence skip" : "Enable silence skip"}
+            title={silenceSkipEnabled ? "Silence skip enabled" : "Silence skip disabled"}
+          >
+            SKP
+          </button>
           <label className="ml-1 hidden items-center gap-1 rounded-md border border-zinc-700/60 px-1.5 py-0.5 text-[10px] text-zinc-300 xl:inline-flex">
             XFD
             <input
@@ -265,22 +294,52 @@ export default function DesktopPlayerBar({
             />
             <span className="w-7 text-right tabular-nums">{crossfadeSeconds.toFixed(1)}s</span>
           </label>
+          <label className="ml-1 inline-flex items-center gap-1 rounded-md border border-zinc-700/60 px-1.5 py-0.5 text-[10px] text-zinc-300">
+            SPD
+            <select
+              value={playbackRate}
+              onChange={(e) => onPlaybackRateChange(Number.parseFloat(e.target.value))}
+              className="bg-transparent text-[10px] text-zinc-300 outline-none cursor-pointer"
+              aria-label="Playback speed"
+            >
+              {PLAYBACK_RATE_OPTIONS.map((rate) => (
+                <option key={rate} value={rate} className="bg-zinc-900">
+                  {rate === 1 ? "1×" : `${rate}×`}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
-        <button
-          type="button"
-          onClick={onToggleQueue}
-          disabled={songsLength === 0}
-          className={`h-10 min-w-10 rounded-lg inline-flex items-center justify-center transition-colors lg:row-start-2 lg:col-start-2 lg:justify-self-start lg:h-11 lg:min-w-11 ${
-            isQueueSheetOpen
-              ? "bg-zinc-800 text-white"
-              : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-          } disabled:opacity-40 disabled:hover:text-zinc-400 disabled:hover:bg-transparent`}
-          aria-label={isQueueSheetOpen ? "Close queue" : "Open queue"}
-          aria-expanded={isQueueSheetOpen}
-        >
-          <QueueIcon />
-        </button>
+        <div className="inline-flex items-center gap-1 lg:row-start-2 lg:col-start-2 lg:justify-self-start">
+          <button
+            type="button"
+            onClick={onToggleQueue}
+            disabled={songsLength === 0}
+            className={`h-10 min-w-10 rounded-lg inline-flex items-center justify-center transition-colors lg:h-11 lg:min-w-11 ${
+              isQueueSheetOpen
+                ? "bg-zinc-800 text-white"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+            } disabled:opacity-40 disabled:hover:text-zinc-400 disabled:hover:bg-transparent`}
+            aria-label={isQueueSheetOpen ? "Close queue" : "Open queue"}
+            aria-expanded={isQueueSheetOpen}
+          >
+            <QueueIcon />
+          </button>
+          <button
+            type="button"
+            onClick={onToggleLyrics}
+            className={`h-10 min-w-10 rounded-lg inline-flex items-center justify-center text-[10px] font-semibold tracking-wide transition-colors lg:h-11 lg:min-w-10 px-2 ${
+              showLyrics
+                ? "bg-zinc-800 text-white"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+            }`}
+            aria-label={showLyrics ? "Hide lyrics" : "Show lyrics"}
+            title={showLyrics ? "Hide lyrics" : "Show lyrics"}
+          >
+            LYR
+          </button>
+        </div>
       </div>
     </div>
   )

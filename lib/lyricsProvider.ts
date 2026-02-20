@@ -105,7 +105,7 @@ async function lookupLrcLib(query: LookupQuery, timeoutMs: number): Promise<stri
   for (const raw of payload) {
     if (!raw || typeof raw !== "object") continue
     const candidate = raw as LrcLibSearchResult
-    const lyrics = cleanLyrics(candidate.plainLyrics || candidate.syncedLyrics)
+    const lyrics = cleanLyrics(candidate.syncedLyrics || candidate.plainLyrics)
     if (!lyrics) continue
     const score = scoreCandidate(candidate, normalizedQuery)
     if (!best || score > best.score) {

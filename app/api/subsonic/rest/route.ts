@@ -27,6 +27,7 @@ import {
   subsonicResponse as response,
 } from "../../../../lib/subsonicAdapter"
 import { resolveAndPersistLyricsForSong, resolveLyricsWithoutSong } from "../../../../lib/services.lyrics"
+import { parseLrc, isLrcFormat } from "../../../../lib/lyricsParser"
 
 type SubsonicAlbum = {
   id: number
@@ -43,6 +44,20 @@ type SubsonicAlbum = {
 
 const SUBSONIC_JUKEBOX_DEVICE_ID = "subsonic:jukebox"
 const MAX_SHARE_ENTRIES = 500
+
+function buildStructuredLyrics(song: { title: string; artist: string | null }, lrcText: string) {
+  const lines = parseLrc(lrcText)
+  if (!lines) return null
+  return {
+    displayArtist: song.artist || undefined,
+    displayTitle: song.title,
+    isSynced: true,
+    synced: true,
+    lang: "xxx",
+    offset: 0,
+    lines: lines.map((l) => ({ start: Math.round(l.timestamp * 1000), value: l.text })),
+  }
+}
 
 function commandFromRequest(request: NextRequest): string {
   const raw = request.nextUrl.searchParams.get("command")
@@ -2278,10 +2293,12 @@ export async function GET(request: NextRequest) {
         })
       }
 
+      const structured = resolvedLyrics && isLrcFormat(resolvedLyrics)
+        ? buildStructuredLyrics(song, resolvedLyrics) : null
       return response(request, {
         lyricsList: {
-          structuredLyrics: [],
-          lyrics: resolvedLyrics
+          structuredLyrics: structured ? [structured] : [],
+          lyrics: !structured && resolvedLyrics
             ? [
                 {
                   artist: song.artist || undefined,
