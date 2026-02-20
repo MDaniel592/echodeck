@@ -6,15 +6,24 @@ import { parseLrc, isLrcFormat } from "../../../lib/lyricsParser"
 interface LyricsPanelProps {
   lyrics: string | null
   currentTime: number
+  loading?: boolean
 }
 
-export default function LyricsPanel({ lyrics, currentTime }: LyricsPanelProps) {
+export default function LyricsPanel({ lyrics, currentTime, loading }: LyricsPanelProps) {
   const activeLineRef = useRef<HTMLParagraphElement | null>(null)
+
+  if (loading) {
+    return (
+      <div className="h-full overflow-y-auto px-6 py-4 flex items-center justify-center">
+        <p className="text-zinc-500 text-sm animate-pulse">Searching lyrics…</p>
+      </div>
+    )
+  }
 
   if (!lyrics) {
     return (
       <div className="h-full overflow-y-auto px-6 py-4 flex items-center justify-center">
-        <p className="text-zinc-600 text-sm">No lyrics</p>
+        <p className="text-zinc-600 text-sm">No lyrics found</p>
       </div>
     )
   }

@@ -127,6 +127,9 @@ export default function Player({
     }
   })
   const [accentColor, setAccentColor] = useState<string>("#10b981")
+  // Local lyrics state: keyed by song ID so switching songs resets it
+  const [localLyrics, setLocalLyrics] = useState<string | null>(null)
+  const [lyricsLoading, setLyricsLoading] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [isMobileCollapsed, setIsMobileCollapsed] = useState(true)
   const [mobileDragOffset, setMobileDragOffset] = useState(0)
@@ -366,6 +369,25 @@ export default function Player({
     }, 200)
     return () => clearInterval(id)
   }, [silenceSkipEnabled, playing])
+
+  // Auto-fetch lyrics when song changes
+  useEffect(() => {
+    if (!song) { setLocalLyrics(null); return }
+    if (song.lyrics) { setLocalLyrics(song.lyrics); return }
+    // Song has no lyrics yet — fetch in background
+    setLocalLyrics(null)
+    setLyricsLoading(true)
+    let cancelled = false
+    fetch(`/api/songs/${song.id}/lyrics`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { lyrics: string | null } | null) => {
+        if (cancelled) return
+        setLocalLyrics(data?.lyrics ?? null)
+      })
+      .catch(() => { if (!cancelled) setLocalLyrics(null) })
+      .finally(() => { if (!cancelled) setLyricsLoading(false) })
+    return () => { cancelled = true }
+  }, [song?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Dynamic theming effect
   useEffect(() => {
@@ -1331,20 +1353,18 @@ export default function Player({
                 <MinimizePlayerIcon />
               </button>
               <div className="flex items-center gap-1">
-                {song?.lyrics && (
-                  <button
-                    type="button"
-                    onClick={handleToggleLyrics}
-                    className={`h-9 min-w-9 px-2 inline-flex items-center justify-center rounded-full text-[10px] font-semibold tracking-wide transition-colors ${
-                      showLyrics
-                        ? "bg-zinc-800 text-white"
-                        : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-                    }`}
-                    aria-label={showLyrics ? "Hide lyrics" : "Show lyrics"}
-                  >
-                    LYR
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={handleToggleLyrics}
+                  className={`h-9 min-w-9 px-2 inline-flex items-center justify-center rounded-full text-[10px] font-semibold tracking-wide transition-colors ${
+                    showLyrics
+                      ? "bg-zinc-800 text-white"
+                      : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+                  }`}
+                  aria-label={showLyrics ? "Hide lyrics" : "Show lyrics"}
+                >
+                  LYR
+                </button>
                 <button
                   type="button"
                   onClick={toggleQueueSheet}
@@ -1396,7 +1416,7 @@ export default function Player({
                 )}
               </div>
 
-              {showLyrics && song?.lyrics && (
+              {showLyrics && (
                 <div
                   className="w-full max-w-sm mx-auto h-40 bg-zinc-900/60 rounded-xl overflow-hidden border border-zinc-800/60"
                   style={{
@@ -1406,7 +1426,7 @@ export default function Player({
                       : `opacity ${MOBILE_FADE_MS}ms ${MOBILE_EXPAND_EASE}`,
                   }}
                 >
-                  <LyricsPanel lyrics={song.lyrics} currentTime={currentTime} />
+                  <LyricsPanel lyrics={localLyrics} currentTime={currentTime} loading={lyricsLoading} />
                 </div>
               )}
 
@@ -1545,9 +1565,9 @@ export default function Player({
 
   return (
     <>
-      {showLyrics && song?.lyrics && (
+      {showLyrics && (
         <div className="fixed bottom-[5.5rem] right-4 w-80 h-96 bg-zinc-900/95 backdrop-blur border border-zinc-700/70 rounded-xl shadow-xl overflow-hidden z-40">
-          <LyricsPanel lyrics={song.lyrics} currentTime={currentTime} />
+          <LyricsPanel lyrics={localLyrics} currentTime={currentTime} loading={lyricsLoading} />
         </div>
       )}
       <div
