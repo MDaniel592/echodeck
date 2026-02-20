@@ -27,16 +27,23 @@ export async function resolveAndPersistLyricsForSong(input: {
     album: (input.album || "").trim(),
     duration: input.duration ?? null,
     timeoutMs: SUBSONIC_LYRICS_LOOKUP_TIMEOUT_MS,
-  }).catch(() => null)
+  }).catch((error) => {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.warn(`[lyrics] lookup failed for "${title}" (songId=${input.songId}): ${msg}`)
+    return null
+  })
 
   if (!fetched) return null
 
-  await prisma.song
-    .update({
+  try {
+    await prisma.song.update({
       where: { id: input.songId },
       data: { lyrics: fetched },
     })
-    .catch(() => {})
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.warn(`[lyrics] failed to persist lyrics for songId=${input.songId}: ${msg}`)
+  }
 
   return fetched
 }

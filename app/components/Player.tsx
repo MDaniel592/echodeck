@@ -130,6 +130,7 @@ export default function Player({
   // Local lyrics state: keyed by song ID so switching songs resets it
   const [localLyrics, setLocalLyrics] = useState<string | null>(null)
   const [lyricsLoading, setLyricsLoading] = useState(false)
+  const lyricsCacheRef = useRef<Map<number, string>>(new Map())
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [isMobileCollapsed, setIsMobileCollapsed] = useState(true)
   const [mobileDragOffset, setMobileDragOffset] = useState(0)
@@ -372,22 +373,58 @@ export default function Player({
 
   // Auto-fetch lyrics when song changes
   useEffect(() => {
-    if (!song) { setLocalLyrics(null); return }
-    if (song.lyrics) { setLocalLyrics(song.lyrics); return }
+    if (!song) {
+      setLocalLyrics(null)
+      setLyricsLoading(false)
+      return
+    }
+
+    const songLyrics = typeof song.lyrics === "string" ? song.lyrics.trim() : ""
+    if (songLyrics) {
+      lyricsCacheRef.current.set(song.id, songLyrics)
+      setLocalLyrics(songLyrics)
+      setLyricsLoading(false)
+      return
+    }
+
+    const cachedLyrics = lyricsCacheRef.current.get(song.id)
+    if (cachedLyrics) {
+      setLocalLyrics(cachedLyrics)
+      setLyricsLoading(false)
+      return
+    }
+
     // Song has no lyrics yet — fetch in background
     setLocalLyrics(null)
     setLyricsLoading(true)
     let cancelled = false
-    fetch(`/api/songs/${song.id}/lyrics`)
+    const controller = new AbortController()
+    fetch(`/api/songs/${song.id}/lyrics`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
       .then(r => r.ok ? r.json() : null)
       .then((data: { lyrics: string | null } | null) => {
         if (cancelled) return
-        setLocalLyrics(data?.lyrics ?? null)
+        const fetchedLyrics = typeof data?.lyrics === "string" ? data.lyrics.trim() : ""
+        if (fetchedLyrics) {
+          lyricsCacheRef.current.set(song.id, fetchedLyrics)
+          setLocalLyrics(fetchedLyrics)
+          return
+        }
+        setLocalLyrics(null)
       })
-      .catch(() => { if (!cancelled) setLocalLyrics(null) })
+      .catch((error) => {
+        if (cancelled) return
+        if (error instanceof DOMException && error.name === "AbortError") return
+        setLocalLyrics(null)
+      })
       .finally(() => { if (!cancelled) setLyricsLoading(false) })
-    return () => { cancelled = true }
-  }, [song?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [song?.id, song?.lyrics]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Dynamic theming effect
   useEffect(() => {

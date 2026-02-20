@@ -1,29 +1,19 @@
-import { readFileSync } from "fs"
-import { join } from "path"
-import { safeFetch } from "./safeFetch"
-import { normalizeToken, extractTitleFromArtistDash, stripAllTags, toAscii } from "./songTitle"
-
-const MAX_LYRICS_LENGTH = 20_000
-const DEFAULT_BUDGET_MS = 6_000
-const FETCH_MAX_BYTES = 512_000
-
-// Build User-Agent from package.json at module load
-const LYRICS_USER_AGENT = (() => {
-  try {
-    const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"))
-    return `${pkg.name}/${pkg.version} (https://github.com/MDaniel592/echodeck)`
-  } catch {
-    return "EchoDeck/unknown (https://github.com/MDaniel592/echodeck)"
-  }
-})()
-
-type LrcLibSearchResult = {
-  trackName?: string
-  artistName?: string
-  duration?: number
-  plainLyrics?: string
-  syncedLyrics?: string
-}
+import { normalizeToken, extractTitleFromArtistDash, stripAllTags } from "./songTitle"
+import {
+  DEFAULT_BUDGET_MS,
+  appendLyricsSearchLog,
+  firstNonNull,
+  lookupGenius,
+  lookupLrcLib,
+  lookupLyricsOvh,
+  lookupMusixmatch,
+  lookupMusixmatchMobile,
+  segmentTitle,
+  splitArtistTokens,
+  trimDanglingSeparators,
+  uniqueByNormalized,
+  type LookupQuery,
+} from "./lyricsProviders"
 
 export type LyricsLookupInput = {
   title: string
@@ -34,154 +24,18 @@ export type LyricsLookupInput = {
   timeoutMs?: number
 }
 
-type LookupQuery = {
-  title: string
-  artist: string
-  album: string
-  duration: number | null
-}
-
-function cleanLyrics(value: unknown): string | null {
-  if (typeof value !== "string") return null
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  return trimmed.slice(0, MAX_LYRICS_LENGTH)
-}
-
-function scoreCandidate(
-  candidate: LrcLibSearchResult,
-  query: { title: string; artist: string; duration: number | null }
-): number {
-  const candidateTitle = normalizeToken(candidate.trackName || "")
-  const candidateArtist = normalizeToken(candidate.artistName || "")
-
-  let score = 0
-  if (candidateTitle && candidateTitle === query.title) score += 5
-  if (candidateArtist && candidateArtist === query.artist) score += 5
-  if (candidateTitle && query.title && (candidateTitle.includes(query.title) || query.title.includes(candidateTitle))) {
-    score += 2
-  }
-  if (candidateArtist && query.artist && (candidateArtist.includes(query.artist) || query.artist.includes(candidateArtist))) {
-    score += 2
-  }
-  if (typeof candidate.duration === "number" && typeof query.duration === "number") {
-    const delta = Math.abs(candidate.duration - query.duration)
-    if (delta <= 2) score += 4
-    else if (delta <= 5) score += 2
-    else if (delta <= 10) score += 1
-  }
-  return score
-}
-
-async function lookupLrcLib(query: LookupQuery, timeoutMs: number): Promise<string | null> {
-  if (!query.title) return null
-
-  const params = new URLSearchParams()
-  params.set("track_name", toAscii(query.title) || query.title)
-  if (query.artist) params.set("artist_name", toAscii(query.artist) || query.artist)
-  if (query.album) params.set("album_name", toAscii(query.album) || query.album)
-
-  const response = await safeFetch(
-    `https://lrclib.net/api/search?${params.toString()}`,
-    { headers: { "User-Agent": LYRICS_USER_AGENT } },
-    {
-      allowedContentTypes: ["application/json"],
-      timeoutMs,
-      maxBytes: FETCH_MAX_BYTES,
-    }
-  )
-  if (!response.ok) return null
-
-  const payload = (await response.json().catch(() => null)) as unknown
-  if (!Array.isArray(payload) || payload.length === 0) return null
-
-  const normalizedQuery = {
-    title: normalizeToken(query.title),
-    artist: normalizeToken(query.artist),
-    duration: query.duration,
-  }
-
-  let best: { lyrics: string; score: number; candidate: LrcLibSearchResult } | null = null
-  for (const raw of payload) {
-    if (!raw || typeof raw !== "object") continue
-    const candidate = raw as LrcLibSearchResult
-    const lyrics = cleanLyrics(candidate.syncedLyrics || candidate.plainLyrics)
-    if (!lyrics) continue
-    const score = scoreCandidate(candidate, normalizedQuery)
-    if (!best || score > best.score) {
-      best = { lyrics, score, candidate }
-    }
-  }
-
-  if (!best) return null
-
-  // If artist is unknown, require strict title match to reduce false positives.
-  if (!normalizedQuery.artist) {
-    const bestTitle = normalizeToken(best.candidate.trackName || "")
-    if (!bestTitle || bestTitle !== normalizedQuery.title) {
-      return null
-    }
-    if (
-      typeof normalizedQuery.duration === "number" &&
-      typeof best.candidate.duration === "number" &&
-      Math.abs(best.candidate.duration - normalizedQuery.duration) > 8
-    ) {
-      return null
-    }
-  }
-
-  return best.lyrics
-}
-
-async function lookupLyricsOvh(query: LookupQuery, timeoutMs: number): Promise<string | null> {
-  if (!query.title || !query.artist) return null
-  const response = await safeFetch(
-    `https://api.lyrics.ovh/v1/${encodeURIComponent(query.artist)}/${encodeURIComponent(query.title)}`,
-    { headers: { "User-Agent": LYRICS_USER_AGENT } },
-    {
-      allowedContentTypes: ["application/json"],
-      timeoutMs,
-      maxBytes: FETCH_MAX_BYTES,
-    }
-  )
-  if (!response.ok) return null
-  const payload = (await response.json().catch(() => null)) as unknown
-  if (!payload || typeof payload !== "object") return null
-  const rawLyrics = (payload as { lyrics?: unknown }).lyrics
-  return cleanLyrics(rawLyrics)
-}
-
-function firstNonNull(promises: Array<Promise<string | null>>): Promise<string | null> {
-  if (promises.length === 0) return Promise.resolve(null)
-
-  return new Promise((resolve) => {
-    let pending = promises.length
-    let resolved = false
-
-    const settle = (value: string | null) => {
-      if (resolved) return
-      if (value) {
-        resolved = true
-        resolve(value)
-        return
-      }
-      pending -= 1
-      if (pending === 0) {
-        resolve(null)
-      }
-    }
-
-    for (const promise of promises) {
-      promise.then(settle).catch(() => settle(null))
-    }
-  })
-}
-
 export async function lookupLyrics(input: LyricsLookupInput): Promise<string | null> {
   const title = input.title.trim()
   const artist = (input.artist || "").trim()
   const album = (input.album || "").trim()
   if (!title) return null
+  appendLyricsSearchLog("lookup_start", {
+    title,
+    artist,
+    album,
+    duration: input.duration ?? null,
+    timeoutMs: input.timeoutMs ?? DEFAULT_BUDGET_MS,
+  })
 
   const budget = input.timeoutMs ?? DEFAULT_BUDGET_MS
   // Primary gets 40% of budget, fallback rounds share remaining 60%
@@ -198,13 +52,20 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
 
   // Try extracting title from "ARTIST - TITLE" YouTube format
   const extractedTitle = extractTitleFromArtistDash(title, artist)
+  const dashIdx = title.indexOf(" - ")
+  const dashLeftArtist = dashIdx >= 0
+    ? trimDanglingSeparators(stripAllTags(title.slice(0, dashIdx).trim()))
+    : ""
+  const dashLeftArtistCandidates = splitArtistTokens(dashLeftArtist)
+  const dashRightTitle = dashIdx >= 0
+    ? trimDanglingSeparators(stripAllTags(title.slice(dashIdx + 3).trim()))
+    : ""
 
   // Try REVERSE interpretation: "TITLE - REAL_ARTIST" (common for remix/slowed channels)
   // Also handles "TITLE - REAL_ARTIST (junk) + more junk"
   let reversedTitle: string | null = null
   let reversedArtist: string | null = null
-  if (!extractedTitle && title.includes(" - ")) {
-    const dashIdx = title.indexOf(" - ")
+  if (!extractedTitle && dashIdx >= 0) {
     reversedTitle = stripAllTags(title.slice(0, dashIdx).trim()) || null
     // Clean the artist part aggressively: strip tags, then take only the portion
     // before any "+", "|", "｜" separators which usually indicate added effects/noise
@@ -216,16 +77,24 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
   // Aggressively strip ALL tags for search (including Slowed+Reverb — lyrics are the same)
   const strippedTitle = stripAllTags(extractedTitle || title)
   // Best cleaned title to use for searches
-  const cleanTitle = strippedTitle || extractedTitle || title
+  const cleanTitleRaw = strippedTitle || extractedTitle || title
+  const cleanTitle = trimDanglingSeparators(cleanTitleRaw) || cleanTitleRaw
+  const segmentedCleanTitle = segmentTitle(cleanTitle)
 
   // Extract first artist from multi-artist strings ("Øneheart, reidenshi" → "Øneheart")
-  const firstArtist = artist.includes(",") ? artist.split(",")[0].trim() : null
+  const artistCandidates = splitArtistTokens(artist)
+  const firstArtist = artistCandidates[0] || null
+  const musixTitleHint = dashRightTitle || reversedTitle || segmentedCleanTitle || cleanTitle
+  const musixArtistHint = reversedArtist || dashLeftArtistCandidates[0] || firstArtist || artist
 
   // --- Round 1: primary search with original metadata ---
   const primary = await lookupLrcLib(query, primaryTimeout).catch(() => null)
-  if (primary) return primary
+  if (primary) {
+    appendLyricsSearchLog("lookup_end", { title, artist, provider: "lrclib_primary", found: true })
+    return primary
+  }
 
-  // --- Round 2: cleaned title, reversed interpretation, first-artist, lyrics.ovh (parallel) ---
+  // --- Round 2: cleaned title, reversed interpretation, first-artist, Musixmatch, lyrics.ovh (parallel) ---
   const round2: Array<Promise<string | null>> = []
 
   if (cleanTitle !== title) {
@@ -233,6 +102,60 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
       lookupLrcLib({
         ...query,
         title: cleanTitle,
+        album: "",
+      }, secondaryTimeout).catch(() => null)
+    )
+  }
+
+  if (
+    dashRightTitle &&
+    normalizeToken(dashRightTitle) !== normalizeToken(cleanTitle) &&
+    normalizeToken(dashRightTitle) !== normalizeToken(title)
+  ) {
+    round2.push(
+      lookupLrcLib({
+        ...query,
+        title: dashRightTitle,
+        album: "",
+      }, secondaryTimeout).catch(() => null)
+    )
+  }
+
+  if (
+    dashRightTitle &&
+    dashLeftArtist &&
+    normalizeToken(dashLeftArtist) !== normalizeToken(artist)
+  ) {
+    round2.push(
+      lookupLrcLib({
+        title: dashRightTitle,
+        artist: dashLeftArtist,
+        album: "",
+        duration: query.duration,
+      }, secondaryTimeout).catch(() => null)
+    )
+  }
+
+  if (
+    dashRightTitle &&
+    dashLeftArtistCandidates[0] &&
+    normalizeToken(dashLeftArtistCandidates[0]) !== normalizeToken(dashLeftArtist)
+  ) {
+    round2.push(
+      lookupLrcLib({
+        title: dashRightTitle,
+        artist: dashLeftArtistCandidates[0],
+        album: "",
+        duration: query.duration,
+      }, secondaryTimeout).catch(() => null)
+    )
+  }
+
+  if (segmentedCleanTitle && segmentedCleanTitle !== cleanTitle) {
+    round2.push(
+      lookupLrcLib({
+        ...query,
+        title: segmentedCleanTitle,
         album: "",
       }, secondaryTimeout).catch(() => null)
     )
@@ -255,10 +178,62 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
     round2.push(
       lookupLrcLib({
         ...query,
-        title: cleanTitle,
+        title: segmentedCleanTitle || cleanTitle,
         artist: firstArtist,
         album: "",
       }, secondaryTimeout).catch(() => null)
+    )
+  }
+
+  for (const artistVariant of artistCandidates.slice(1, 3)) {
+    if (normalizeToken(artistVariant) === normalizeToken(firstArtist || "")) continue
+    round2.push(
+      lookupLrcLib({
+        ...query,
+        title: segmentedCleanTitle || cleanTitle,
+        artist: artistVariant,
+        album: "",
+      }, secondaryTimeout).catch(() => null)
+    )
+  }
+
+  round2.push(
+    lookupMusixmatch({
+      title: musixTitleHint,
+      artist: musixArtistHint,
+      album: "",
+      duration: query.duration,
+    }, secondaryTimeout).catch(() => null)
+  )
+  round2.push(
+    lookupMusixmatchMobile({
+      title: musixTitleHint,
+      artist: musixArtistHint,
+      album: "",
+      duration: query.duration,
+    }, secondaryTimeout).catch(() => null)
+  )
+  round2.push(
+    lookupGenius({
+      title: musixTitleHint,
+      artist: musixArtistHint,
+      album: "",
+      duration: query.duration,
+    }, secondaryTimeout).catch(() => null)
+  )
+
+  if (
+    normalizeToken(musixTitleHint) !== normalizeToken(query.title) ||
+    normalizeToken(musixArtistHint) !== normalizeToken(query.artist)
+  ) {
+    round2.push(
+      lookupMusixmatch(query, secondaryTimeout).catch(() => null)
+    )
+    round2.push(
+      lookupMusixmatchMobile(query, secondaryTimeout).catch(() => null)
+    )
+    round2.push(
+      lookupGenius(query, secondaryTimeout).catch(() => null)
     )
   }
 
@@ -266,22 +241,81 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
     lookupLyricsOvh({
       ...query,
       title: reversedTitle || cleanTitle,
-      artist: reversedArtist || artist,
+      artist: reversedArtist || dashLeftArtistCandidates[0] || firstArtist || artist,
     }, secondaryTimeout).catch(() => null)
   )
 
   const round2Result = await firstNonNull(round2)
-  if (round2Result) return round2Result
+  if (round2Result) {
+    appendLyricsSearchLog("lookup_end", { title, artist, provider: "round2", found: true })
+    return round2Result
+  }
 
   // --- Round 3: title-only search as last resort (no artist filter) ---
   if (artist) {
-    return lookupLrcLib({
-      title: reversedTitle || cleanTitle,
+    const round3Titles = uniqueByNormalized([
+      dashRightTitle,
+      reversedTitle,
+      cleanTitle,
+      segmentedCleanTitle,
+    ])
+    const round3 = round3Titles.map((titleVariant) =>
+      lookupLrcLib({
+        title: titleVariant,
+        artist: "",
+        album: "",
+        duration: query.duration,
+      }, tertiaryTimeout).catch(() => null)
+    )
+    round3.push(
+      lookupMusixmatch({
+        title: round3Titles[0] || musixTitleHint || query.title,
+        artist: "",
+        album: "",
+        duration: query.duration,
+      }, tertiaryTimeout).catch(() => null)
+    )
+    round3.push(
+      lookupMusixmatchMobile({
+        title: round3Titles[0] || musixTitleHint || query.title,
+        artist: "",
+        album: "",
+        duration: query.duration,
+      }, tertiaryTimeout).catch(() => null)
+    )
+    round3.push(
+      lookupGenius({
+        title: round3Titles[0] || musixTitleHint || query.title,
+        artist: "",
+        album: "",
+        duration: query.duration,
+      }, tertiaryTimeout).catch(() => null)
+    )
+    const round3Result = await firstNonNull(round3)
+    appendLyricsSearchLog("lookup_end", { title, artist, provider: round3Result ? "round3" : "none", found: Boolean(round3Result) })
+    return round3Result
+  }
+
+  const finalResult = await firstNonNull([
+    lookupGenius({
+      title: musixTitleHint || query.title,
       artist: "",
       album: "",
       duration: query.duration,
-    }, tertiaryTimeout).catch(() => null)
-  }
-
-  return null
+    }, tertiaryTimeout).catch(() => null),
+    lookupMusixmatch({
+      title: musixTitleHint || query.title,
+      artist: "",
+      album: "",
+      duration: query.duration,
+    }, tertiaryTimeout).catch(() => null),
+    lookupMusixmatchMobile({
+      title: musixTitleHint || query.title,
+      artist: "",
+      album: "",
+      duration: query.duration,
+    }, tertiaryTimeout).catch(() => null),
+  ])
+  appendLyricsSearchLog("lookup_end", { title, artist, provider: finalResult ? "final_fallback" : "none", found: Boolean(finalResult) })
+  return finalResult
 }
