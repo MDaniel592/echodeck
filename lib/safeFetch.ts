@@ -41,12 +41,6 @@ const ALLOWED_HOSTS = new Set([
   // Lyrics
   "lrclib.net",
   "www.lrclib.net",
-  "api.lyrics.ovh",
-  "musixmatch.com",
-  "www.musixmatch.com",
-  "mxmcdn.net",
-  "s.mxmcdn.net",
-  "apic-appmobile.musixmatch.com",
   "api.genius.com",
   "genius.com",
   "www.genius.com",

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi, afterEach } from "vitest"
 
 const safeFetchMock = vi.hoisted(() => vi.fn())
 
@@ -14,13 +14,13 @@ describe("lookupLyrics", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
-    process.env.MUSIXMATCH_LYRICS_ENABLED = "1"
-    process.env.MUSIXMATCH_MOBILE_LYRICS_ENABLED = "1"
     process.env.GENIUS_LYRICS_ENABLED = "1"
-    delete process.env.MUSIXMATCH_MOBILE_USERTOKEN
-    delete process.env.MUSIXMATCH_TOKENS_JSON
     delete process.env.GENIUS_ACCESS_TOKEN
     delete process.env.GENIUS_CLIENT_ACCESS_TOKEN
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it("returns null when title is empty", async () => {
@@ -58,25 +58,50 @@ describe("lookupLyrics", () => {
     expect(result).toBe("synced")
   })
 
-  it("falls back to lyrics.ovh when lrclib has no matches", async () => {
+  it("falls back to Genius when lrclib has no matches", async () => {
+    process.env.GENIUS_ACCESS_TOKEN = "genius-token"
+
+    const preloadedState = JSON.stringify({
+      songPage: { lyricsData: { body: { html: "<p>Genius fallback</p>" } } },
+    })
+
     safeFetchMock.mockImplementation(async (url: string) => {
-      if (url.includes("api.lyrics.ovh")) {
+      if (url.includes("lrclib.net")) {
+        return { ok: true, json: async () => [] }
+      }
+      if (url.includes("api.genius.com/search")) {
         return {
           ok: true,
-          json: async () => ({ lyrics: "fallback lyrics" }),
+          json: async () => ({
+            response: {
+              hits: [{
+                type: "song",
+                result: {
+                  id: 1,
+                  title: "Song",
+                  primary_artist: { name: "Artist" },
+                  url: "https://genius.com/artist-song-lyrics",
+                },
+              }],
+            },
+          }),
         }
       }
-      return {
-        ok: true,
-        json: async () => [],
+      if (url.includes("genius.com/artist-song-lyrics")) {
+        return {
+          ok: true,
+          text: async () =>
+            `<html><script>window.__PRELOADED_STATE__ = JSON.parse('${preloadedState}');</script></html>`,
+        }
       }
+      return { ok: true, json: async () => [] }
     })
 
     const { lookupLyrics } = await import("../lib/lyricsProvider")
     const result = await lookupLyrics({ title: "Song", artist: "Artist" })
 
-    expect(result).toBe("fallback lyrics")
-    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("api.lyrics.ovh"))).toBe(true)
+    expect(result).toBe("Genius fallback")
+    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("api.genius.com"))).toBe(true)
   })
 
   it("matches lrclib lyrics for non-latin title/artist without forcing fallback", async () => {
@@ -135,47 +160,27 @@ describe("lookupLyrics", () => {
     expect(init.headers["User-Agent"]).not.toContain("github.com")
   })
 
-  it("passes secondary/fallback timeout as 30% of budget", async () => {
-    // Primary returns no match, so round 2 fires.
-    // Musixmatch endpoints are mocked as empty so lyrics.ovh still handles fallback.
+  it("gives LrcLib the full remaining budget in round2 (not capped at 30%)", async () => {
+    // Primary LrcLib returns nothing; round2 fires. The LrcLib round2 call should
+    // get budget - primaryTimeout (60% for budget=10000) not just 30%.
     safeFetchMock.mockImplementation(async (url: string) => {
-      if (url.includes("api.lyrics.ovh")) {
-        return {
-          ok: true,
-          json: async () => ({ lyrics: "fallback" }),
-        }
+      if (url.includes("lrclib.net")) {
+        return { ok: true, json: async () => [] }
       }
-      if (url.includes("musixmatch.com/search")) {
-        return {
-          ok: true,
-          text: async () => `<script src="/_next/static/chunks/pages/_app-test.js"></script>`,
-        }
-      }
-      if (url.includes("_app-test.js")) {
-        const encoded = Buffer.from("test-secret").toString("base64").split("").reverse().join("")
-        return {
-          ok: true,
-          text: async () => `from("${encoded}".split(""));`,
-        }
-      }
-      if (url.includes("/ws/1.1/track.search") || url.includes("/ws/1.1/track.lyrics.get")) {
-        return {
-          ok: true,
-          json: async () => ({ message: { body: { track_list: [] } } }),
-        }
-      }
-      return {
-        ok: true,
-        json: async () => [],
-      }
+      return { ok: true, json: async () => [] }
     })
 
     const { lookupLyrics } = await import("../lib/lyricsProvider")
     await lookupLyrics({ title: "Song", artist: "Artist", timeoutMs: 10000 })
 
-    // Round 2 calls should get 30% of 10000 = 3000ms
-    const hasSecondaryTimeout = safeFetchMock.mock.calls.some((call) => call[2]?.timeoutMs === 3000)
-    expect(hasSecondaryTimeout).toBe(true)
+    // The second lrclib call (round2) should get 10000 - 4000 = 6000ms, not 3000ms.
+    const lrclibCalls = safeFetchMock.mock.calls.filter((call) =>
+      String(call[0] || "").includes("lrclib.net")
+    )
+    // Primary gets 4000ms (40%), round2+ LrcLib variants get 6000ms (remaining).
+    expect(lrclibCalls[0]?.[2]?.timeoutMs).toBe(4000)
+    const hasLrcRound2Timeout = lrclibCalls.slice(1).some((call) => call[2]?.timeoutMs === 6000)
+    expect(hasLrcRound2Timeout).toBe(true)
   })
 
   it("tries segmented title fallback with artist when the full title fails", async () => {
@@ -191,9 +196,6 @@ describe("lookupLyrics", () => {
       }
       if (url.includes("track_name=Song+Part+1&artist_name=Retrowave")) {
         return { ok: true, json: async () => [] }
-      }
-      if (url.includes("api.lyrics.ovh")) {
-        return { ok: false, json: async () => ({}) }
       }
       return { ok: true, json: async () => [] }
     })
@@ -211,9 +213,6 @@ describe("lookupLyrics", () => {
       }
       if (url.includes("track_name=Song&artist_name=Artist")) {
         return { ok: true, json: async () => [] }
-      }
-      if (url.includes("api.lyrics.ovh")) {
-        return { ok: false, json: async () => ({}) }
       }
       if (url.includes("track_name=Song") && !url.includes("artist_name=")) {
         return {
@@ -296,6 +295,37 @@ describe("lookupLyrics", () => {
     expect(result).toBe("channel mismatch recovered")
   })
 
+  it("strips trailing channel suffixes from artist metadata", async () => {
+    safeFetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("track_name=After+Dark&artist_name=Mr.Kitty+Official")) {
+        return { ok: true, json: async () => [] }
+      }
+      if (url.includes("track_name=After+Dark&artist_name=Mr.Kitty")) {
+        return {
+          ok: true,
+          json: async () => [{ trackName: "After Dark", artistName: "Mr.Kitty", plainLyrics: "official suffix cleaned" }],
+        }
+      }
+      return { ok: true, json: async () => [] }
+    })
+
+    const { lookupLyrics } = await import("../lib/lyricsProvider")
+    const result = await lookupLyrics({
+      title: "After Dark",
+      artist: "Mr.Kitty Official",
+      duration: 257,
+    })
+
+    expect(result).toBe("official suffix cleaned")
+    const usedSanitizedArtist = safeFetchMock.mock.calls.some((call) => {
+      const url = String(call[0] || "")
+      return url.includes("track_name=After+Dark") &&
+        url.includes("artist_name=Mr.Kitty") &&
+        !url.includes("artist_name=Mr.Kitty+Official")
+    })
+    expect(usedSanitizedArtist).toBe(true)
+  })
+
   it("tries individual collaborator artists when artist metadata is a combined string", async () => {
     safeFetchMock.mockImplementation(async (url: string) => {
       if (url.includes("track_name=THIS+FEELING&artist_name=DJ+Anemia+%26+Crier+%2B+sixnite")) {
@@ -319,209 +349,7 @@ describe("lookupLyrics", () => {
     expect(result).toBe("collab resolved")
   })
 
-  it("falls back to Musixmatch signed API when lrclib and lyrics.ovh miss", async () => {
-    const secret = "mxm-secret"
-    const encoded = Buffer.from(secret).toString("base64").split("").reverse().join("")
-
-    safeFetchMock.mockImplementation(async (url: string) => {
-      if (url.includes("lrclib.net")) {
-        return { ok: true, json: async () => [] }
-      }
-      if (url.includes("api.lyrics.ovh")) {
-        return { ok: false, json: async () => ({}) }
-      }
-      if (url.endsWith("musixmatch.com/search")) {
-        return {
-          ok: true,
-          text: async () => `<script src="/_next/static/chunks/pages/_app-test.js"></script>`,
-        }
-      }
-      if (url.includes("_app-test.js")) {
-        return {
-          ok: true,
-          text: async () => `foo=from("${encoded}".split(""));`,
-        }
-      }
-      if (url.includes("/ws/1.1/track.search")) {
-        return {
-          ok: true,
-          json: async () => ({
-            message: {
-              body: {
-                track_list: [
-                  {
-                    track: {
-                      track_id: 123,
-                      track_name: "Song",
-                      artist_name: "Artist",
-                      track_length: 181,
-                      has_lyrics: 1,
-                    },
-                  },
-                ],
-              },
-            },
-          }),
-        }
-      }
-      if (url.includes("/ws/1.1/track.lyrics.get")) {
-        return {
-          ok: true,
-          json: async () => ({
-            message: {
-              body: {
-                lyrics: {
-                  lyrics_body: "Line one\n******* This Lyrics is NOT for Commercial use *******",
-                },
-              },
-            },
-          }),
-        }
-      }
-      return { ok: true, json: async () => [] }
-    })
-
-    const { lookupLyrics } = await import("../lib/lyricsProvider")
-    const result = await lookupLyrics({ title: "Song", artist: "Artist", duration: 181 })
-
-    expect(result).toBe("Line one")
-    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("/ws/1.1/track.search"))).toBe(true)
-    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("/ws/1.1/track.lyrics.get"))).toBe(true)
-  })
-
-  it("falls back to Musixmatch mobile opensearch using token.get when desktop fallback misses", async () => {
-    process.env.MUSIXMATCH_LYRICS_ENABLED = "0"
-    process.env.MUSIXMATCH_MOBILE_LYRICS_ENABLED = "1"
-
-    safeFetchMock.mockImplementation(async (url: string) => {
-      if (url.includes("lrclib.net")) {
-        return { ok: true, json: async () => [] }
-      }
-      if (url.includes("api.lyrics.ovh")) {
-        return { ok: false, json: async () => ({}) }
-      }
-      if (url.includes("/ws/1.1/token.get")) {
-        return {
-          ok: true,
-          json: async () => ({ message: { body: { user_token: "mobile-token" } } }),
-        }
-      }
-      if (url.includes("/ws/1.1/community/opensearch/tracks")) {
-        return {
-          ok: true,
-          json: async () => ({
-            message: {
-              body: {
-                track_list: [
-                  {
-                    track: {
-                      track_id: 999,
-                      track_name: "Hard Better Faster Stronger",
-                      artist_name: "Daft Punk",
-                      track_length: 224,
-                      has_lyrics: 1,
-                    },
-                  },
-                ],
-              },
-            },
-          }),
-        }
-      }
-      if (url.includes("/ws/1.1/track.lyrics.get")) {
-        return {
-          ok: true,
-          json: async () => ({
-            message: {
-              body: {
-                lyrics: {
-                  lyrics_body: "Work it, make it\n******* This Lyrics is NOT for Commercial use *******",
-                },
-              },
-            },
-          }),
-        }
-      }
-      return { ok: true, json: async () => [] }
-    })
-
-    const { lookupLyrics } = await import("../lib/lyricsProvider")
-    const result = await lookupLyrics({ title: "Hard Better Faster Stronger", artist: "Daft Punk", duration: 224 })
-
-    expect(result).toBe("Work it, make it")
-    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("/ws/1.1/token.get"))).toBe(true)
-    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("/ws/1.1/community/opensearch/tracks"))).toBe(true)
-  })
-
-  it("uses token bundle JSON in MUSIXMATCH_MOBILE_USERTOKEN before token.get", async () => {
-    process.env.MUSIXMATCH_LYRICS_ENABLED = "0"
-    process.env.MUSIXMATCH_MOBILE_LYRICS_ENABLED = "1"
-    process.env.MUSIXMATCH_MOBILE_USERTOKEN = JSON.stringify({
-      tokens: {
-        "web-desktop-app-v1.0": "bundle-token",
-      },
-    })
-
-    safeFetchMock.mockImplementation(async (url: string) => {
-      if (url.includes("lrclib.net")) {
-        return { ok: true, json: async () => [] }
-      }
-      if (url.includes("api.lyrics.ovh")) {
-        return { ok: false, json: async () => ({}) }
-      }
-      if (url.includes("/ws/1.1/community/opensearch/tracks")) {
-        return {
-          ok: true,
-          json: async () => ({
-            message: {
-              body: {
-                track_list: [
-                  {
-                    track: {
-                      track_id: 777,
-                      track_name: "One More Time",
-                      artist_name: "Daft Punk",
-                      track_length: 320,
-                      has_lyrics: 1,
-                    },
-                  },
-                ],
-              },
-            },
-          }),
-        }
-      }
-      if (url.includes("/ws/1.1/track.lyrics.get")) {
-        return {
-          ok: true,
-          json: async () => ({
-            message: {
-              body: {
-                lyrics: {
-                  lyrics_body: "One more time",
-                },
-              },
-            },
-          }),
-        }
-      }
-      return { ok: true, json: async () => [] }
-    })
-
-    const { lookupLyrics } = await import("../lib/lyricsProvider")
-    const result = await lookupLyrics({ title: "One More Time", artist: "Daft Punk", duration: 320 })
-
-    expect(result).toBe("One more time")
-    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("/ws/1.1/token.get"))).toBe(false)
-    const opensearchCall = safeFetchMock.mock.calls.find((call) =>
-      String(call[0]).includes("/ws/1.1/community/opensearch/tracks")
-    )
-    expect(String(opensearchCall?.[0])).toContain("usertoken=bundle-token")
-  })
-
-  it("falls back to Genius search + song page parsing when others miss", async () => {
-    process.env.MUSIXMATCH_LYRICS_ENABLED = "0"
-    process.env.MUSIXMATCH_MOBILE_LYRICS_ENABLED = "0"
+  it("falls back to Genius search + song page parsing when lrclib misses", async () => {
     process.env.GENIUS_ACCESS_TOKEN = "genius-token"
 
     const preloadedState = JSON.stringify({
@@ -537,9 +365,6 @@ describe("lookupLyrics", () => {
     safeFetchMock.mockImplementation(async (url: string) => {
       if (url.includes("lrclib.net")) {
         return { ok: true, json: async () => [] }
-      }
-      if (url.includes("api.lyrics.ovh")) {
-        return { ok: false, json: async () => ({}) }
       }
       if (url.includes("api.genius.com/search")) {
         return {
@@ -578,5 +403,90 @@ describe("lookupLyrics", () => {
     expect(result).toBe("[Verse 1]\nWe are here\nTo sing\n[Chorus]\nForever now")
     expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("api.genius.com/search"))).toBe(true)
     expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("genius.com/artist-song-lyrics"))).toBe(true)
+  })
+})
+
+describe("lookupLrcLibSynced", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    process.env.GENIUS_LYRICS_ENABLED = "0"
+  })
+
+  it("returns synced LRC lyrics when LrcLib has them", async () => {
+    const lrcContent = "[00:01.00]First line\n[00:05.50]Second line"
+    safeFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { trackName: "After Dark", artistName: "Mr.Kitty", syncedLyrics: lrcContent, duration: 257 },
+      ],
+    })
+
+    const { lookupLrcLibSynced } = await import("../lib/lyricsProvider")
+    const result = await lookupLrcLibSynced({ title: "After Dark", artist: "Mr.Kitty Official", duration: 257 })
+
+    expect(result).toBe(lrcContent)
+  })
+
+  it("returns null when LrcLib only has plain lyrics", async () => {
+    safeFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { trackName: "After Dark", artistName: "Mr.Kitty", plainLyrics: "plain only", duration: 257 },
+      ],
+    })
+
+    const { lookupLrcLibSynced } = await import("../lib/lyricsProvider")
+    const result = await lookupLrcLibSynced({ title: "After Dark", artist: "Mr.Kitty", duration: 257 })
+
+    expect(result).toBeNull()
+  })
+
+  it("returns null when LrcLib has no results", async () => {
+    safeFetchMock.mockResolvedValue({ ok: true, json: async () => [] })
+
+    const { lookupLrcLibSynced } = await import("../lib/lyricsProvider")
+    const result = await lookupLrcLibSynced({ title: "Unknown Song", artist: "Unknown Artist" })
+
+    expect(result).toBeNull()
+  })
+
+  it("tries cleaned artist variant when raw artist includes channel suffix", async () => {
+    const lrcContent = "[00:01.00]Synced line"
+    safeFetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("artist_name=Mr.Kitty+Official")) {
+        return { ok: true, json: async () => [] }
+      }
+      if (url.includes("artist_name=Mr.Kitty")) {
+        return {
+          ok: true,
+          json: async () => [
+            { trackName: "After Dark", artistName: "Mr.Kitty", syncedLyrics: lrcContent, duration: 257 },
+          ],
+        }
+      }
+      return { ok: true, json: async () => [] }
+    })
+
+    const { lookupLrcLibSynced } = await import("../lib/lyricsProvider")
+    const result = await lookupLrcLibSynced({ title: "After Dark", artist: "Mr.Kitty Official", duration: 257 })
+
+    expect(result).toBe(lrcContent)
+  })
+
+  it("uses the provided timeoutMs for LrcLib requests", async () => {
+    const lrcContent = "[00:01.00]Line"
+    safeFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [{ trackName: "Song", artistName: "Artist", syncedLyrics: lrcContent }],
+    })
+
+    const { lookupLrcLibSynced } = await import("../lib/lyricsProvider")
+    await lookupLrcLibSynced({ title: "Song", artist: "Artist", timeoutMs: 8000 })
+
+    const lrclibCall = safeFetchMock.mock.calls.find((call) =>
+      String(call[0] || "").includes("lrclib.net")
+    )
+    expect(lrclibCall?.[2]?.timeoutMs).toBe(8000)
   })
 })

@@ -124,6 +124,7 @@ export function cleanYouTubeTitle(rawTitle: string, artist: string): string {
  * Aggressively strip ALL parenthetical/bracket tags for search purposes (e.g., lyrics lookup).
  * This removes both YouTube noise AND musical variants (Slowed + Reverb, Remix, etc.)
  * because the underlying content (lyrics) is the same regardless of the variant.
+ * Also strips unparenthesized YouTube noise phrases like "Official video" without brackets.
  */
 export function stripAllTags(value: string): string {
   return value
@@ -131,6 +132,27 @@ export function stripAllTags(value: string): string {
     .replace(/\[[^\]]+\]/g, " ")
     .replace(/\b(feat\.?|ft\.?|featuring)\b.+$/i, " ")
     .replace(/\b(visual|visuals|prod\.?)\s+by\b.+$/i, " ")
+    // Strip unparenthesized YouTube noise trailing phrases (e.g. "Official video", "Music Video")
+    .replace(/\s+\b(?:official\s+(?:video|audio|music\s*video|lyric\s*video|visuali[sz]er|clip)|music\s+video|lyric\s+video|visuali[sz]er|premiere)\s*$/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim()
+}
+
+/**
+ * Extract a song title enclosed in single or double quotes within a YouTube-style title.
+ * Handles straight quotes and Unicode curly quotes. Requires at least 3 chars inside
+ * the quotes to avoid matching possessives or contractions.
+ *
+ * Examples:
+ *   "M83 'Midnight City' Official video" → "Midnight City"
+ *   'Daft Punk "Get Lucky" (Official Audio)' → "Get Lucky"
+ */
+export function extractQuotedTitle(value: string): string | null {
+  // Single quotes: straight ' or curly ' '
+  const single = value.match(/(?:^|[ ,])['\u2018\u2019]([^'\u2018\u2019]{3,})['\u2018\u2019](?:[ ,]|$)/)
+  if (single?.[1]) return single[1].trim() || null
+  // Double quotes: straight " or curly " "
+  const double = value.match(/(?:^|[ ,])["\u201C\u201D]([^"\u201C\u201D]{3,})["\u201C\u201D](?:[ ,]|$)/)
+  if (double?.[1]) return double[1].trim() || null
+  return null
 }

@@ -1,17 +1,14 @@
-import { normalizeToken, extractTitleFromArtistDash, stripAllTags } from "./songTitle"
+import { normalizeToken, extractTitleFromArtistDash, extractQuotedTitle, stripAllTags } from "./songTitle"
+import { isLrcFormat } from "./lyricsParser"
 import {
   DEFAULT_BUDGET_MS,
   appendLyricsSearchLog,
   firstNonNull,
   lookupGenius,
   lookupLrcLib,
-  lookupLyricsOvh,
-  lookupMusixmatch,
-  lookupMusixmatchMobile,
   segmentTitle,
   splitArtistTokens,
   trimDanglingSeparators,
-  uniqueByNormalized,
   type LookupQuery,
 } from "./lyricsProviders"
 
@@ -38,9 +35,7 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
   })
 
   const budget = input.timeoutMs ?? DEFAULT_BUDGET_MS
-  // Primary gets 40% of budget, fallback rounds share remaining 60%
-  const primaryTimeout = Math.round(budget * 0.4)
-  const secondaryTimeout = Math.round(budget * 0.3)
+  const primaryTimeout = Math.round(budget* 0.8)
   const tertiaryTimeout = Math.round(budget * 0.3)
 
   const query: LookupQuery = {
@@ -84,8 +79,12 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
   // Extract first artist from multi-artist strings ("Øneheart, reidenshi" → "Øneheart")
   const artistCandidates = splitArtistTokens(artist)
   const firstArtist = artistCandidates[0] || null
-  const musixTitleHint = dashRightTitle || reversedTitle || segmentedCleanTitle || cleanTitle
-  const musixArtistHint = reversedArtist || dashLeftArtistCandidates[0] || firstArtist || artist
+
+  // Extract title from single/double-quoted patterns: "M83 'Midnight City' Official video" → "Midnight City"
+  const quotedTitle = extractQuotedTitle(cleanTitle) || extractQuotedTitle(title) || null
+
+  const geniusTitleHint = dashRightTitle || reversedTitle || quotedTitle || segmentedCleanTitle || cleanTitle
+  const geniusArtistHint = reversedArtist || dashLeftArtistCandidates[0] || firstArtist || artist
 
   // --- Round 1: primary search with original metadata ---
   const primary = await lookupLrcLib(query, primaryTimeout).catch(() => null)
@@ -94,228 +93,68 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
     return primary
   }
 
-  // --- Round 2: cleaned title, reversed interpretation, first-artist, Musixmatch, lyrics.ovh (parallel) ---
-  const round2: Array<Promise<string | null>> = []
 
-  if (cleanTitle !== title) {
-    round2.push(
-      lookupLrcLib({
-        ...query,
-        title: cleanTitle,
-        album: "",
-      }, secondaryTimeout).catch(() => null)
-    )
-  }
-
-  if (
-    dashRightTitle &&
-    normalizeToken(dashRightTitle) !== normalizeToken(cleanTitle) &&
-    normalizeToken(dashRightTitle) !== normalizeToken(title)
-  ) {
-    round2.push(
-      lookupLrcLib({
-        ...query,
-        title: dashRightTitle,
-        album: "",
-      }, secondaryTimeout).catch(() => null)
-    )
-  }
-
-  if (
-    dashRightTitle &&
-    dashLeftArtist &&
-    normalizeToken(dashLeftArtist) !== normalizeToken(artist)
-  ) {
-    round2.push(
-      lookupLrcLib({
-        title: dashRightTitle,
-        artist: dashLeftArtist,
-        album: "",
-        duration: query.duration,
-      }, secondaryTimeout).catch(() => null)
-    )
-  }
-
-  if (
-    dashRightTitle &&
-    dashLeftArtistCandidates[0] &&
-    normalizeToken(dashLeftArtistCandidates[0]) !== normalizeToken(dashLeftArtist)
-  ) {
-    round2.push(
-      lookupLrcLib({
-        title: dashRightTitle,
-        artist: dashLeftArtistCandidates[0],
-        album: "",
-        duration: query.duration,
-      }, secondaryTimeout).catch(() => null)
-    )
-  }
-
-  if (segmentedCleanTitle && segmentedCleanTitle !== cleanTitle) {
-    round2.push(
-      lookupLrcLib({
-        ...query,
-        title: segmentedCleanTitle,
-        album: "",
-      }, secondaryTimeout).catch(() => null)
-    )
-  }
-
-  // Try reversed "TITLE - REAL_ARTIST" interpretation
-  if (reversedTitle && reversedArtist) {
-    round2.push(
-      lookupLrcLib({
-        title: reversedTitle,
-        artist: reversedArtist,
-        album: "",
-        duration: query.duration,
-      }, secondaryTimeout).catch(() => null)
-    )
-  }
-
-  // Try with just the first artist from a multi-artist field
-  if (firstArtist) {
-    round2.push(
-      lookupLrcLib({
-        ...query,
-        title: segmentedCleanTitle || cleanTitle,
-        artist: firstArtist,
-        album: "",
-      }, secondaryTimeout).catch(() => null)
-    )
-  }
-
-  for (const artistVariant of artistCandidates.slice(1, 3)) {
-    if (normalizeToken(artistVariant) === normalizeToken(firstArtist || "")) continue
-    round2.push(
-      lookupLrcLib({
-        ...query,
-        title: segmentedCleanTitle || cleanTitle,
-        artist: artistVariant,
-        album: "",
-      }, secondaryTimeout).catch(() => null)
-    )
-  }
-
-  round2.push(
-    lookupMusixmatch({
-      title: musixTitleHint,
-      artist: musixArtistHint,
-      album: "",
-      duration: query.duration,
-    }, secondaryTimeout).catch(() => null)
-  )
-  round2.push(
-    lookupMusixmatchMobile({
-      title: musixTitleHint,
-      artist: musixArtistHint,
-      album: "",
-      duration: query.duration,
-    }, secondaryTimeout).catch(() => null)
-  )
-  round2.push(
-    lookupGenius({
-      title: musixTitleHint,
-      artist: musixArtistHint,
-      album: "",
-      duration: query.duration,
-    }, secondaryTimeout).catch(() => null)
-  )
-
-  if (
-    normalizeToken(musixTitleHint) !== normalizeToken(query.title) ||
-    normalizeToken(musixArtistHint) !== normalizeToken(query.artist)
-  ) {
-    round2.push(
-      lookupMusixmatch(query, secondaryTimeout).catch(() => null)
-    )
-    round2.push(
-      lookupMusixmatchMobile(query, secondaryTimeout).catch(() => null)
-    )
-    round2.push(
-      lookupGenius(query, secondaryTimeout).catch(() => null)
-    )
-  }
-
-  round2.push(
-    lookupLyricsOvh({
-      ...query,
-      title: reversedTitle || cleanTitle,
-      artist: reversedArtist || dashLeftArtistCandidates[0] || firstArtist || artist,
-    }, secondaryTimeout).catch(() => null)
-  )
-
-  const round2Result = await firstNonNull(round2)
-  if (round2Result) {
-    appendLyricsSearchLog("lookup_end", { title, artist, provider: "round2", found: true })
-    return round2Result
-  }
-
-  // --- Round 3: title-only search as last resort (no artist filter) ---
-  if (artist) {
-    const round3Titles = uniqueByNormalized([
-      dashRightTitle,
-      reversedTitle,
-      cleanTitle,
-      segmentedCleanTitle,
-    ])
-    const round3 = round3Titles.map((titleVariant) =>
-      lookupLrcLib({
-        title: titleVariant,
-        artist: "",
-        album: "",
-        duration: query.duration,
-      }, tertiaryTimeout).catch(() => null)
-    )
-    round3.push(
-      lookupMusixmatch({
-        title: round3Titles[0] || musixTitleHint || query.title,
-        artist: "",
-        album: "",
-        duration: query.duration,
-      }, tertiaryTimeout).catch(() => null)
-    )
-    round3.push(
-      lookupMusixmatchMobile({
-        title: round3Titles[0] || musixTitleHint || query.title,
-        artist: "",
-        album: "",
-        duration: query.duration,
-      }, tertiaryTimeout).catch(() => null)
-    )
-    round3.push(
-      lookupGenius({
-        title: round3Titles[0] || musixTitleHint || query.title,
-        artist: "",
-        album: "",
-        duration: query.duration,
-      }, tertiaryTimeout).catch(() => null)
-    )
-    const round3Result = await firstNonNull(round3)
-    appendLyricsSearchLog("lookup_end", { title, artist, provider: round3Result ? "round3" : "none", found: Boolean(round3Result) })
-    return round3Result
-  }
-
-  const finalResult = await firstNonNull([
-    lookupGenius({
-      title: musixTitleHint || query.title,
-      artist: "",
-      album: "",
-      duration: query.duration,
-    }, tertiaryTimeout).catch(() => null),
-    lookupMusixmatch({
-      title: musixTitleHint || query.title,
-      artist: "",
-      album: "",
-      duration: query.duration,
-    }, tertiaryTimeout).catch(() => null),
-    lookupMusixmatchMobile({
-      title: musixTitleHint || query.title,
-      artist: "",
-      album: "",
-      duration: query.duration,
-    }, tertiaryTimeout).catch(() => null),
-  ])
+  const finalResult = await lookupGenius({
+    title: geniusTitleHint || query.title,
+    artist: "",
+    album: "",
+    duration: query.duration,
+  }, tertiaryTimeout).catch(() => null)
   appendLyricsSearchLog("lookup_end", { title, artist, provider: finalResult ? "final_fallback" : "none", found: Boolean(finalResult) })
   return finalResult
+}
+
+/**
+ * Queries LrcLib with several artist/title variants using the full timeout budget, and
+ * returns the result ONLY if it is in synced LRC format. Returns null if only plain-text
+ * lyrics are found. Intended for background upgrades when a non-synced result was already
+ * returned to the caller.
+ */
+export async function lookupLrcLibSynced(input: LyricsLookupInput): Promise<string | null> {
+  const title = input.title.trim()
+  const artist = (input.artist || "").trim()
+  if (!title) return null
+
+  const budget = input.timeoutMs ?? DEFAULT_BUDGET_MS
+  const duration = input.duration ?? null
+
+  const artistCandidates = splitArtistTokens(artist)
+  const firstArtist = artistCandidates[0] || null
+  const cleanTitle = trimDanglingSeparators(stripAllTags(title)) || title
+  const segCleanTitle = segmentTitle(cleanTitle)
+
+  const seen = new Set<string>()
+  const variants: LookupQuery[] = []
+  const add = (q: LookupQuery) => {
+    const key = `${normalizeToken(q.title)}|${normalizeToken(q.artist)}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      variants.push(q)
+    }
+  }
+
+  add({ title, artist, album: "", duration })
+  if (firstArtist && normalizeToken(firstArtist) !== normalizeToken(artist)) {
+    add({ title, artist: firstArtist, album: "", duration })
+  }
+  if (normalizeToken(cleanTitle) !== normalizeToken(title)) {
+    add({ title: cleanTitle, artist: firstArtist || artist, album: "", duration })
+  }
+  if (segCleanTitle) {
+    add({ title: segCleanTitle, artist: firstArtist || artist, album: "", duration })
+  }
+  for (const variant of artistCandidates.slice(1, 3)) {
+    add({ title: cleanTitle || title, artist: variant, album: "", duration })
+  }
+
+  const results = await Promise.allSettled(
+    variants.map((q) => lookupLrcLib(q, budget).catch(() => null))
+  )
+
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value && isLrcFormat(r.value)) {
+      return r.value
+    }
+  }
+  return null
 }
