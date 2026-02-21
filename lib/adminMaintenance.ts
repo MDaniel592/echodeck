@@ -63,7 +63,7 @@ const ORIGIN_LOOKUP_TIMEOUT_MS = 15_000
 const SPOTIFY_LOOKUP_TIMEOUT_MS = 7_000
 const LYRICS_LOOKUP_TIMEOUT_MS = Math.max(
   1_500,
-  Math.min(20_000, Number.parseInt(process.env.LYRICS_LOOKUP_TIMEOUT_MS || "6000", 10) || 6_000)
+  Math.min(20_000, Number.parseInt(process.env.LYRICS_LOOKUP_TIMEOUT_MS || "15000", 10) || 15_000)
 )
 const ORIGIN_METADATA_CONCURRENCY = Math.max(
   1,

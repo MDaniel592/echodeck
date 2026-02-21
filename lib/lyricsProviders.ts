@@ -4,7 +4,7 @@ import { safeFetch } from "./safeFetch"
 import { normalizeToken, stripAllTags, toAscii } from "./songTitle"
 
 const MAX_LYRICS_LENGTH = 20_000
-export const DEFAULT_BUDGET_MS = 10_000
+export const DEFAULT_BUDGET_MS = 15_000
 const FETCH_MAX_BYTES = 512_000
 const GENIUS_LYRICS_ENABLED = !/^(0|false|no|off)$/i.test(
   (process.env.GENIUS_LYRICS_ENABLED || "1").trim()

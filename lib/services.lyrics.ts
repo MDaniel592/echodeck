@@ -4,13 +4,13 @@ import { isLrcFormat } from "./lyricsParser"
 
 const SUBSONIC_LYRICS_LOOKUP_TIMEOUT_MS = Math.max(
   1500,
-  Math.min(15000, Number.parseInt(process.env.SUBSONIC_LYRICS_LOOKUP_TIMEOUT_MS || "10000", 10) || 10000)
+  Math.min(15000, Number.parseInt(process.env.SUBSONIC_LYRICS_LOOKUP_TIMEOUT_MS || "15000", 10) || 15000)
 )
 
 // Extended timeout for background LrcLib synced-lyrics upgrades.
 const LRCLIB_UPGRADE_TIMEOUT_MS = Math.max(
   SUBSONIC_LYRICS_LOOKUP_TIMEOUT_MS,
-  Math.min(20000, Number.parseInt(process.env.LRCLIB_UPGRADE_TIMEOUT_MS || "10000", 10) || 10000)
+  Math.min(20000, Number.parseInt(process.env.LRCLIB_UPGRADE_TIMEOUT_MS || "15000", 10) || 15000)
 )
 
 /**
