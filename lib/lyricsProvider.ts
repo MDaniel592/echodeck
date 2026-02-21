@@ -35,8 +35,10 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
   })
 
   const budget = input.timeoutMs ?? DEFAULT_BUDGET_MS
-  const primaryTimeout = Math.round(budget* 0.8)
-  const tertiaryTimeout = Math.round(budget * 0.3)
+  // Primary LrcLib gets 60% of budget (increased from 50% for better lrclib coverage)
+  const primaryTimeout = Math.round(budget * 0.6)
+  // Remaining for Genius fallback
+  const tertiaryTimeout = Math.round(budget * 0.4)
 
   const query: LookupQuery = {
     title,

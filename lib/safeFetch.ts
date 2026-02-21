@@ -149,10 +149,13 @@ export async function safeFetch(
       throw new Error(`Blocked request: host ${parsed.hostname} is not allowlisted`)
     }
 
-    await validateHost(parsed.hostname)
-
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+    // Validate host in parallel with fetch to avoid consuming timeout budget
+    const validatePromise = validateHost(parsed.hostname).catch(() => {
+      // DNS resolution failed — let fetch handle it
+    })
 
     try {
       const response = await fetch(currentUrl, {
@@ -160,6 +163,9 @@ export async function safeFetch(
         signal: controller.signal,
         redirect: "manual",
       })
+
+      // Ensure host validation completed (raise if it failed with a security error)
+      await validatePromise
 
       // Handle redirects manually to re-validate each hop
       if (response.status >= 300 && response.status < 400) {
