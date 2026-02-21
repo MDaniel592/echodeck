@@ -3,6 +3,8 @@ import prisma from "../../../../../lib/prisma"
 import {
   appendTaskEvent,
   enqueueDownloadTask,
+  normalizeFormat,
+  normalizeQuality,
   startDownloadTaskWorker,
   isTerminalTaskStatus,
 } from "../../../../../lib/downloadTasks"
@@ -60,9 +62,8 @@ export async function POST(
       userId,
       source: task.source as "youtube" | "soundcloud" | "spotify",
       sourceUrl: task.sourceUrl,
-      format: task.format as "mp3" | "flac" | "wav" | "ogg",
-      quality: (task.quality as "best" | "320" | "256" | "192" | "128") ?? undefined,
-      bestAudioPreference: (task.bestAudioPreference as "auto" | "opus" | "aac") ?? undefined,
+      format: normalizeFormat(task.format),
+      quality: task.format === "flac" ? null : normalizeQuality(task.quality),
       playlistId: task.playlistId,
     })
 

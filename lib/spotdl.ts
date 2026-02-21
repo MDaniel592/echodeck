@@ -66,7 +66,7 @@ type ProviderName = "tidal" | "deezer" | "qobuz" | "amazon"
 
 export interface SpotdlDownloadOptions {
   url: string
-  format: "mp3" | "flac" | "wav" | "ogg"
+  format: "opus" | "flac"
   concurrency?: number
   shouldDownloadTrack?: (
     track: {
@@ -89,7 +89,7 @@ export interface SpotdlDownloadResult {
   isrc: string | null
   duration: number | null
   fileSize: number | null
-  format: "mp3" | "flac" | "wav" | "ogg"
+  format: "opus" | "flac"
   thumbnail: string | null
   sourceUrl: string | null
   quality: string | null
@@ -1832,16 +1832,10 @@ async function resolveProviderMatch(
 }
 
 function transcodeArgsForFormat(format: SpotdlDownloadOptions["format"]): string[] {
-  if (format === "mp3") {
-    return ["-codec:a", "libmp3lame", "-q:a", "2"]
-  }
   if (format === "flac") {
     return ["-codec:a", "flac", "-compression_level", "8"]
   }
-  if (format === "wav") {
-    return ["-codec:a", "pcm_s16le"]
-  }
-  return ["-codec:a", "libvorbis", "-q:a", "6"]
+  return ["-codec:a", "libopus", "-b:a", "192k"]
 }
 
 function transcodeAudio(

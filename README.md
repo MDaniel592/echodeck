@@ -67,13 +67,6 @@ npm run db:migrate:baseline:init
 | `DOWNLOAD_TASK_FILE_LOGGING` | No | Set `0`/`false` to disable task event file logging (default: enabled) |
 | `DOWNLOAD_TASK_LOG_DIR` | No | Directory for JSONL task logs (default: `./logs/download-tasks`) |
 | `EXPORT_LRC_SIDECAR` | No | Set `1`/`true` to export `.lrc` lyrics sidecar files next to downloaded audio |
-| `MUSIXMATCH_LYRICS_ENABLED` | No | Set `0`/`false` to disable Musixmatch signed fallback in lyrics lookup (default: enabled) |
-| `MUSIXMATCH_MOBILE_LYRICS_ENABLED` | No | Set `0`/`false` to disable Musixmatch mobile fallback (`apic-appmobile`) for lyrics lookup (default: enabled) |
-| `MUSIXMATCH_MOBILE_USERTOKEN` | No | Optional user token override for mobile Musixmatch fallback. If omitted, EchoDeck tries `token.get` automatically. |
-| `MUSIXMATCH_TOKENS_JSON` | No | Optional JSON token bundle fallback. EchoDeck tries to extract a token for `MUSIXMATCH_MOBILE_APP_ID` before calling `token.get`. |
-| `GENIUS_LYRICS_ENABLED` | No | Set `0`/`false` to disable Genius fallback in lyrics lookup (default: enabled) |
-| `GENIUS_ACCESS_TOKEN` | No | Genius API bearer token used for search before scraping song page lyrics |
-| `GENIUS_CLIENT_ACCESS_TOKEN` | No | Alias for `GENIUS_ACCESS_TOKEN` |
 | `LYRICS_SEARCH_FILE_LOGGING` | No | Set `0`/`false` to disable file logging for lyrics search attempts (default: enabled except in tests) |
 | `LYRICS_SEARCH_LOG_PATH` | No | Path for lyrics search JSONL log file (default: `./logs/lyrics-search.jsonl`) |
 | `DOWNLOAD_ASCII_FILENAMES` | No | Set `1`/`true` to normalize new downloaded folder/file names to ASCII |

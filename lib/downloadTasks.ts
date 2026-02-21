@@ -25,9 +25,8 @@ export const AMAZON_MUSIC_HOSTS = new Set([
   "www.amazon.com",
 ])
 
-export const AUDIO_FORMATS = new Set(["mp3", "flac", "wav", "ogg"])
-export const AUDIO_QUALITIES = new Set(["best", "320", "256", "192", "128"])
-export const BEST_AUDIO_PREFERENCES = new Set(["auto", "opus", "aac"])
+export const AUDIO_FORMATS = new Set(["opus", "flac"])
+export const AUDIO_QUALITIES = new Set(["256", "192", "128", "96", "64"])
 const DOWNLOAD_TASK_LOG_DIR =
   (process.env.DOWNLOAD_TASK_LOG_DIR || "").trim() ||
   path.join(process.cwd(), "logs", "download-tasks")
@@ -93,19 +92,14 @@ export function detectSourceFromUrl(url: string): DownloadTaskSource | null {
   }
 }
 
-export function normalizeFormat(input: unknown): "mp3" | "flac" | "wav" | "ogg" {
-  const value = String(input || "mp3").toLowerCase()
-  return AUDIO_FORMATS.has(value) ? (value as "mp3" | "flac" | "wav" | "ogg") : "mp3"
+export function normalizeFormat(input: unknown): "opus" | "flac" {
+  const value = String(input || "opus").toLowerCase()
+  return AUDIO_FORMATS.has(value) ? (value as "opus" | "flac") : "opus"
 }
 
-export function normalizeQuality(input: unknown): "best" | "320" | "256" | "192" | "128" {
-  const value = String(input || "best").toLowerCase()
-  return AUDIO_QUALITIES.has(value) ? (value as "best" | "320" | "256" | "192" | "128") : "best"
-}
-
-export function normalizeBestAudioPreference(input: unknown): "auto" | "opus" | "aac" {
-  const value = String(input || "auto").toLowerCase()
-  return BEST_AUDIO_PREFERENCES.has(value) ? (value as "auto" | "opus" | "aac") : "auto"
+export function normalizeQuality(input: unknown): "256" | "192" | "128" | "96" | "64" {
+  const value = String(input || "192").toLowerCase()
+  return AUDIO_QUALITIES.has(value) ? (value as "256" | "192" | "128" | "96" | "64") : "192"
 }
 
 export async function resolveTaskPlaylistSelection(input: {
@@ -256,9 +250,8 @@ export async function enqueueDownloadTask(input: {
   userId: number
   source: DownloadTaskSource
   sourceUrl: string
-  format: "mp3" | "flac" | "wav" | "ogg"
-  quality?: "best" | "320" | "256" | "192" | "128"
-  bestAudioPreference?: "auto" | "opus" | "aac"
+  format: "opus" | "flac"
+  quality?: "256" | "192" | "128" | "96" | "64" | null
   playlistId?: number | null
 }) {
   const task = await prisma.downloadTask.create({
@@ -268,7 +261,6 @@ export async function enqueueDownloadTask(input: {
       sourceUrl: input.sourceUrl,
       format: input.format,
       quality: input.quality ?? null,
-      bestAudioPreference: input.bestAudioPreference ?? null,
       playlistId: input.playlistId ?? null,
       status: "queued",
     },

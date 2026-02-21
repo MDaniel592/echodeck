@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   appendTaskEvent,
   enqueueDownloadTask,
-  normalizeBestAudioPreference,
   normalizeFormat,
   normalizeQuality,
   PlaylistSelectionError,
@@ -67,7 +66,6 @@ export async function POST(request: NextRequest) {
 
   const quality = normalizeQuality(body.quality)
   const format = normalizeFormat(body.format)
-  const bestAudioPreference = normalizeBestAudioPreference(body.bestAudioPreference)
 
   let playlistSelection: Awaited<ReturnType<typeof resolveTaskPlaylistSelection>>
   try {
@@ -92,8 +90,7 @@ export async function POST(request: NextRequest) {
       source,
       sourceUrl: parsed.toString(),
       format,
-      quality,
-      bestAudioPreference,
+      quality: format === "flac" ? null : quality,
       playlistId: playlistSelection.playlistId,
     })
 

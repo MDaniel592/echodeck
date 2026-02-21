@@ -41,9 +41,6 @@ const ALLOWED_HOSTS = new Set([
   // Lyrics
   "lrclib.net",
   "www.lrclib.net",
-  "api.genius.com",
-  "genius.com",
-  "www.genius.com",
 ])
 
 const ALLOWED_HOST_SUFFIXES = [

@@ -9,7 +9,6 @@ import {
   YOUTUBE_HOSTS,
   normalizeFormat,
   normalizeQuality,
-  normalizeBestAudioPreference,
   updateTaskHeartbeat,
 } from "../lib/downloadTasks"
 import { ensureArtistAlbumRefs } from "../lib/artistAlbumRefs"
@@ -383,16 +382,13 @@ function parsePositiveIntCandidate(value: number | string | null | undefined): n
   return parsed
 }
 
-function shouldReplaceExistingWithOpus(input: {
+function shouldReplaceExisting(input: {
   source: string
-  quality: "best" | "320" | "256" | "192" | "128"
-  bestAudioPreference: "auto" | "opus" | "aac"
+  format: "opus" | "flac"
   existingFormat: string | null | undefined
 }): boolean {
   if (input.source !== "youtube" && input.source !== "soundcloud" && input.source !== "tidal" && input.source !== "amazon") return false
-  if (input.quality !== "best") return false
-  if (input.bestAudioPreference !== "opus") return false
-  return (input.existingFormat || "").toLowerCase() !== "opus"
+  return (input.existingFormat || "").toLowerCase() !== input.format
 }
 
 async function organizeDownloadedAudio(input: {
@@ -533,9 +529,8 @@ async function runVideoTask(taskId: number) {
 
   const userId = task.userId
   const source = task.source
-  const quality = normalizeQuality(task.quality)
   const format = normalizeFormat(task.format)
-  const bestAudioPreference = normalizeBestAudioPreference(task.bestAudioPreference)
+  const quality = normalizeQuality(task.quality)
   const taskPlaylistId = task.playlistId
   const isPlaylist = source === "youtube" && isExplicitYouTubePlaylistUrl(task.sourceUrl)
 
@@ -604,10 +599,9 @@ async function runVideoTask(taskId: number) {
         await ensureTaskRunning(taskId)
         const reusableSong = await findReusableSongBySourceUrl(userId, source, normalizedTrackUrl)
         if (reusableSong) {
-          const shouldReplace = shouldReplaceExistingWithOpus({
+          const shouldReplace = shouldReplaceExisting({
             source,
-            quality,
-            bestAudioPreference,
+            format,
             existingFormat: reusableSong.format,
           })
           if (shouldReplace) {
@@ -615,7 +609,7 @@ async function runVideoTask(taskId: number) {
             await logEvent(
               taskId,
               "status",
-              `${progressPrefix} Existing file is ${reusableSong.format || "unknown"}, replacing with Opus...`
+              `${progressPrefix} Existing file is ${reusableSong.format || "unknown"}, replacing with ${format.toUpperCase()}...`
             )
           } else {
             await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
@@ -641,7 +635,7 @@ async function runVideoTask(taskId: number) {
         }
 
         const result = await downloadAudioWithRetry(
-          { url: normalizedTrackUrl, format, quality, bestAudioPreference },
+          { url: normalizedTrackUrl, format, quality },
           (message) => {
             void logEvent(taskId, "progress", `${progressPrefix} ${message}`)
           }
@@ -701,7 +695,7 @@ async function runVideoTask(taskId: number) {
           year: entryInfo?.year ?? null,
           duration: result.duration ?? entryInfo?.duration ?? entry.duration,
           format: result.format,
-          quality: quality === "best" ? `source:${bestAudioPreference}` : `${quality}kbps`,
+          quality: format === "flac" ? "lossless" : `${quality}kbps`,
           source,
           sourceUrl: normalizedTrackUrl,
           filePath: organized.filePath,
@@ -820,15 +814,14 @@ async function runVideoTask(taskId: number) {
   })
 
   const reusableSong = await findReusableSongBySourceUrl(userId, source, normalizedUrl)
-  const shouldReplaceExisting = reusableSong
-    ? shouldReplaceExistingWithOpus({
+  const replaceExisting = reusableSong
+    ? shouldReplaceExisting({
         source,
-        quality,
-        bestAudioPreference,
+        format,
         existingFormat: reusableSong.format,
       })
     : false
-  if (reusableSong && !shouldReplaceExisting) {
+  if (reusableSong && !replaceExisting) {
     await assignSongToTaskPlaylistIfNeeded(userId, reusableSong, taskPlaylistId)
     await logEvent(taskId, "status", "Song already downloaded. Reusing existing file.")
     await logEvent(taskId, "track", `Reused: ${reusableSong.title}`, {
@@ -839,8 +832,8 @@ async function runVideoTask(taskId: number) {
     await updateTaskCounts(taskId, { processed: 1, successful: 1 })
     return
   }
-  if (reusableSong && shouldReplaceExisting) {
-    await logEvent(taskId, "status", `Existing file is ${reusableSong.format || "unknown"}, replacing with Opus...`)
+  if (reusableSong && replaceExisting) {
+    await logEvent(taskId, "status", `Existing file is ${reusableSong.format || "unknown"}, replacing with ${format.toUpperCase()}...`)
   }
 
   await logEvent(taskId, "status", "Fetching media info...")
@@ -851,7 +844,7 @@ async function runVideoTask(taskId: number) {
 
   await ensureTaskRunning(taskId)
   const result = await downloadAudioWithRetry(
-    { url: normalizedUrl, format, quality, bestAudioPreference },
+    { url: normalizedUrl, format, quality },
     (message) => {
       void logEvent(taskId, "progress", message)
     }
@@ -911,7 +904,7 @@ async function runVideoTask(taskId: number) {
     duration: result.duration || info.duration,
     year: info.year ?? null,
     format: result.format,
-    quality: quality === "best" ? `source:${bestAudioPreference}` : `${quality}kbps`,
+    quality: format === "flac" ? "lossless" : `${quality}kbps`,
     source,
     sourceUrl: normalizedUrl,
     filePath: organized.filePath,
@@ -942,7 +935,7 @@ async function runVideoTask(taskId: number) {
   )
 
   let song: Awaited<ReturnType<typeof prisma.song.create>> | null = null
-  if (reusableSong && shouldReplaceExisting) {
+  if (reusableSong && replaceExisting) {
     const previousFilePath = reusableSong.filePath
     song = await prisma.song.update({
       where: { id: reusableSong.id },

@@ -27,9 +27,8 @@ interface DownloadFormProps {
 export default function DownloadForm({ onDownloadStart, onDownloadComplete }: DownloadFormProps) {
   const TASKS_PAGE_SIZE = 3
   const [url, setUrl] = useState("")
-  const [format, setFormat] = useState("mp3")
-  const [quality, setQuality] = useState("best")
-  const [bestAudioPreference, setBestAudioPreference] = useState<"auto" | "opus" | "aac">("opus")
+  const [format, setFormat] = useState("opus")
+  const [quality, setQuality] = useState("192")
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [queueMessage, setQueueMessage] = useState<string | null>(null)
@@ -358,15 +357,12 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
           ? "/api/download/amazon"
           : "/api/download/youtube"
 
-    const payload = isSpotify
-      ? { url, format, ...playlistPayload }
-      : {
-          url,
-          quality,
-          bestAudioPreference,
-          format: quality === "best" ? undefined : format,
-          ...playlistPayload,
-        }
+    const payload = {
+      url,
+      format,
+      quality: format === "flac" ? undefined : quality,
+      ...playlistPayload,
+    }
 
     try {
       const res = await fetch(endpoint, {
@@ -441,15 +437,12 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
       playlistPayload = { playlistId: parsedPlaylistId }
     }
 
-    const payload = info.isSpotify
-      ? { url: result.url, format, ...playlistPayload }
-      : {
-          url: result.url,
-          quality,
-          bestAudioPreference,
-          format: quality === "best" ? undefined : format,
-          ...playlistPayload,
-        }
+    const payload = {
+      url: result.url,
+      format,
+      quality: format === "flac" ? undefined : quality,
+      ...playlistPayload,
+    }
 
     setSubmitting(true)
     setSourceSearchError(null)
@@ -487,7 +480,6 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
       setSubmitting(false)
     }
   }, [
-    bestAudioPreference,
     creatingPlaylist,
     fetchPlaylists,
     fetchTaskDetail,
@@ -706,17 +698,15 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
                   value={format}
                   onChange={(e) => setFormat(e.target.value)}
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={submitting || (!isSpotify && quality === "best")}
+                  disabled={submitting}
                   aria-label="Audio format"
                 >
-                  <option value="mp3">MP3</option>
+                  <option value="opus">OPUS (default)</option>
                   <option value="flac">FLAC (lossless)</option>
-                  <option value="wav">WAV (lossless)</option>
-                  <option value="ogg">OGG Vorbis</option>
                 </select>
               </div>
 
-              {!isSpotify && (
+              {format !== "flac" && (
                 <div>
                   <label htmlFor="download-quality" className="mb-1.5 block text-xs text-zinc-400">
                     Quality
@@ -729,42 +719,15 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
                     disabled={submitting}
                     aria-label="Audio quality"
                   >
-                    <option value="best">Best Available</option>
-                    <option value="320">320 kbps</option>
                     <option value="256">256 kbps</option>
-                    <option value="192">192 kbps</option>
+                    <option value="192">192 kbps (recommended)</option>
                     <option value="128">128 kbps</option>
+                    <option value="96">96 kbps</option>
+                    <option value="64">64 kbps</option>
                   </select>
                 </div>
               )}
             </div>
-
-            {/* Best Audio Preference (YouTube/SoundCloud only) */}
-            {!isSpotify && quality === "best" && (
-              <div className="rounded-lg border border-zinc-700/50 bg-zinc-800/50 p-2">
-                <label htmlFor="best-audio-pref" className="mb-1.5 block text-xs text-zinc-400">
-                  Best Audio Preference
-                </label>
-                <select
-                  id="best-audio-pref"
-                  value={bestAudioPreference}
-                  onChange={(e) => setBestAudioPreference(e.target.value as "auto" | "opus" | "aac")}
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[13px] text-white transition-shadow focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={submitting}
-                  aria-label="Preferred audio codec for best quality"
-                >
-                  <option value="opus">Prefer Opus (recommended)</option>
-                  <option value="auto">Auto (highest quality)</option>
-                  <option value="aac">Prefer AAC/M4A</option>
-                </select>
-                <p className="mt-1.5 flex items-start gap-1.5 text-xs text-zinc-500">
-                  <InfoIcon />
-                  <span>
-                    Opus is prioritized. If unavailable, audio is converted to Opus at 48 kHz.
-                  </span>
-                </p>
-              </div>
-            )}
 
             <div>
               <div className="rounded-lg border border-zinc-700/50 bg-zinc-800/50 p-2">
@@ -811,7 +774,7 @@ export default function DownloadForm({ onDownloadStart, onDownloadComplete }: Do
 
         {!showAdvancedOptions && (
           <p className="text-xs text-zinc-500">
-            Default mode queues the link with best quality, prioritizing Opus.
+            Default mode downloads and transcodes to OPUS at 192 kbps. Choose FLAC for lossless.
           </p>
         )}
 

@@ -4,7 +4,6 @@ import {
   DEFAULT_BUDGET_MS,
   appendLyricsSearchLog,
   firstNonNull,
-  lookupGenius,
   lookupLrcLib,
   segmentTitle,
   splitArtistTokens,
@@ -35,10 +34,7 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
   })
 
   const budget = input.timeoutMs ?? DEFAULT_BUDGET_MS
-  // Primary LrcLib gets 60% of budget (increased from 50% for better lrclib coverage)
-  const primaryTimeout = Math.round(budget * 0.6)
-  // Remaining for Genius fallback
-  const tertiaryTimeout = Math.round(budget * 0.4)
+  const primaryTimeout = Math.round(budget)
 
   const query: LookupQuery = {
     title,
@@ -85,25 +81,16 @@ export async function lookupLyrics(input: LyricsLookupInput): Promise<string | n
   // Extract title from single/double-quoted patterns: "M83 'Midnight City' Official video" → "Midnight City"
   const quotedTitle = extractQuotedTitle(cleanTitle) || extractQuotedTitle(title) || null
 
-  const geniusTitleHint = dashRightTitle || reversedTitle || quotedTitle || segmentedCleanTitle || cleanTitle
-  const geniusArtistHint = reversedArtist || dashLeftArtistCandidates[0] || firstArtist || artist
 
-  // --- Round 1: primary search with original metadata ---
+  // --- Primary search with original metadata ---
   const primary = await lookupLrcLib(query, primaryTimeout).catch(() => null)
   if (primary) {
     appendLyricsSearchLog("lookup_end", { title, artist, provider: "lrclib_primary", found: true })
     return primary
   }
 
-
-  const finalResult = await lookupGenius({
-    title: geniusTitleHint || query.title,
-    artist: "",
-    album: "",
-    duration: query.duration,
-  }, tertiaryTimeout).catch(() => null)
-  appendLyricsSearchLog("lookup_end", { title, artist, provider: finalResult ? "final_fallback" : "none", found: Boolean(finalResult) })
-  return finalResult
+  appendLyricsSearchLog("lookup_end", { title: title, artist: artist, provider: "none", found: false })
+  return null
 }
 
 /**

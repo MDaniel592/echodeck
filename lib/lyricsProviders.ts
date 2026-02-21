@@ -6,15 +6,6 @@ import { normalizeToken, stripAllTags, toAscii } from "./songTitle"
 const MAX_LYRICS_LENGTH = 20_000
 export const DEFAULT_BUDGET_MS = 15_000
 const FETCH_MAX_BYTES = 512_000
-const GENIUS_LYRICS_ENABLED = !/^(0|false|no|off)$/i.test(
-  (process.env.GENIUS_LYRICS_ENABLED || "1").trim()
-)
-const GENIUS_ACCESS_TOKEN = (
-  process.env.GENIUS_ACCESS_TOKEN ||
-  process.env.GENIUS_CLIENT_ACCESS_TOKEN ||
-  ""
-).trim()
-const GENIUS_API_BASE_URL = "https://api.genius.com"
 const LYRICS_SEARCH_FILE_LOGGING = process.env.NODE_ENV !== "test" && !/^(0|false|no|off)$/i.test(
   (process.env.LYRICS_SEARCH_FILE_LOGGING || "1").trim()
 )
@@ -38,26 +29,6 @@ type LrcLibSearchResult = {
   syncedLyrics?: string
 }
 
-type GeniusSongResult = {
-  id?: number
-  title?: string
-  full_title?: string
-  artist_names?: string
-  url?: string
-  path?: string
-  primary_artist?: {
-    name?: string
-  }
-}
-
-type GeniusSearchPayload = {
-  response?: {
-    hits?: Array<{
-      type?: string
-      result?: GeniusSongResult
-    }>
-  }
-}
 
 export type LookupQuery = {
   title: string
@@ -313,151 +284,8 @@ function extractLyricsContainerBlocks(html: string): string[] {
   return blocks
 }
 
-function extractGeniusLyricsFromPage(html: string): string | null {
-  try {
-    const payload = extractJsonFromWindowAssignment(html, "window.__PRELOADED_STATE__")
-    if (payload && typeof payload === "object") {
-      const lyricsHtml = (payload as {
-        songPage?: {
-          lyricsData?: {
-            body?: {
-              html?: unknown
-            }
-          }
-        }
-      }).songPage?.lyricsData?.body?.html
-      if (typeof lyricsHtml === "string" && lyricsHtml.trim()) {
-        return stripHtmlToText(lyricsHtml)
-      }
-    }
-  } catch {
-    // Ignore parse errors and fallback to data-lyrics-container.
-  }
 
-  const blocks = extractLyricsContainerBlocks(html)
-  if (blocks.length === 0) return null
-  return blocks.join("\n").trim()
-}
 
-function normalizeGeniusSong(raw: unknown): GeniusSongResult | null {
-  if (!raw || typeof raw !== "object") return null
-  return raw as GeniusSongResult
-}
-
-export async function lookupGenius(query: LookupQuery, timeoutMs: number): Promise<string | null> {
-  if (!GENIUS_LYRICS_ENABLED || !GENIUS_ACCESS_TOKEN || !query.title) return null
-  appendLyricsSearchLog("provider_attempt", {
-    provider: "genius",
-    title: query.title,
-    artist: query.artist,
-    duration: query.duration,
-  })
-
-  const baseArtist = query.artist.trim()
-  const artistVariants = splitArtistTokens(baseArtist)
-  const searchQueries = uniqueByNormalized([
-    [baseArtist, query.title].filter(Boolean).join(" "),
-    query.title,
-    artistVariants[0] ? `${artistVariants[0]} ${query.title}` : null,
-  ]).slice(0, 3)
-
-  const normalizedQuery = {
-    title: normalizeToken(query.title),
-    artist: normalizeToken(baseArtist),
-    duration: query.duration,
-  }
-
-  const queryAttempts = searchQueries.map(async (searchQuery) => {
-    const response = await safeFetch(
-      `${GENIUS_API_BASE_URL}/search?${new URLSearchParams({ q: searchQuery }).toString()}`,
-      {
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${GENIUS_ACCESS_TOKEN}`,
-          "User-Agent": LYRICS_USER_AGENT,
-        },
-      },
-      {
-        allowedContentTypes: ["application/json"],
-        timeoutMs,
-        maxBytes: FETCH_MAX_BYTES,
-      }
-    ).catch(() => null)
-    if (!response?.ok) return null
-
-    const payload = (await response.json().catch(() => null)) as GeniusSearchPayload | null
-    const hits = payload?.response?.hits
-    if (!Array.isArray(hits)) return null
-
-    let localBestSong: GeniusSongResult | null = null
-    let localBestScore = Number.NEGATIVE_INFINITY
-    for (const hit of hits) {
-      if (hit?.type && hit.type !== "song") continue
-      const song = normalizeGeniusSong(hit?.result)
-      if (!song) continue
-      if (!song.url && !song.path) continue
-      const score = scoreCandidate(
-        {
-          trackName: song.title || song.full_title,
-          artistName: song.primary_artist?.name || song.artist_names,
-          plainLyrics: "has_lyrics",
-        },
-        normalizedQuery
-      )
-      if (!localBestSong || score > localBestScore) {
-        localBestSong = song
-        localBestScore = score
-      }
-    }
-
-    // Require at least a partial title match to avoid returning unrelated lyrics.
-    if (!localBestSong || localBestScore < 2) return null
-
-    const songUrl = (localBestSong.url || (localBestSong.path ? `https://genius.com${localBestSong.path}` : "")).trim()
-    if (!songUrl) return null
-
-    const pageResponse = await safeFetch(
-      songUrl,
-      {
-        headers: {
-          "User-Agent": LYRICS_USER_AGENT,
-        },
-      },
-      {
-        timeoutMs,
-        maxBytes: FETCH_MAX_BYTES,
-      }
-    ).catch(() => null)
-    if (!pageResponse?.ok) return null
-
-    const pageHtml = await pageResponse.text().catch(() => "")
-    const extracted = pageHtml ? extractGeniusLyricsFromPage(pageHtml) : null
-    const cleaned = cleanLyrics(extracted)
-    if (!cleaned) return null
-    return {
-      lyrics: cleaned,
-      songId: localBestSong?.id || null,
-    }
-  })
-
-  const winner = await firstNonNull(queryAttempts)
-  if (!winner) {
-    appendLyricsSearchLog("provider_miss", {
-      provider: "genius",
-      reason: "no_song_or_lyrics_match",
-      title: query.title,
-      artist: query.artist,
-    })
-    return null
-  }
-  appendLyricsSearchLog("provider_hit", {
-    provider: "genius",
-    title: query.title,
-    artist: query.artist,
-    songId: winner.songId,
-  })
-  return winner.lyrics
-}
 
 function scoreCandidate(
   candidate: LrcLibSearchResult,

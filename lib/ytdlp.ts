@@ -37,9 +37,8 @@ export interface PlaylistInfo {
 
 export interface DownloadOptions {
   url: string
-  format: "mp3" | "flac" | "wav" | "ogg"
-  quality: "best" | "320" | "256" | "192" | "128"
-  bestAudioPreference?: "auto" | "opus" | "aac"
+  format: "opus" | "flac"
+  quality: "256" | "192" | "128" | "96" | "64"
 }
 
 export interface DownloadResult {
@@ -65,17 +64,6 @@ interface ThumbnailCandidate {
   url?: string
   width?: number
   height?: number
-}
-
-interface RawAudioFormat {
-  format_id?: string
-  ext?: string
-  vcodec?: string | null
-  acodec?: string | null
-  abr?: number | null
-  tbr?: number | null
-  asr?: number | null
-  audio_channels?: number | null
 }
 
 interface ParsedVideoInfo {
@@ -112,30 +100,6 @@ function resolveYtdlpJsRuntimes(): string {
 
 export function buildYtdlpArgs(baseArgs: string[]): string[] {
   return ["--js-runtimes", resolveYtdlpJsRuntimes(), ...baseArgs]
-}
-
-function codecPreferenceScore(codec: string | null | undefined, preference: "auto" | "opus" | "aac"): number {
-  if (!codec) return 0
-  const normalized = codec.toLowerCase()
-  const isOpus = normalized.includes("opus")
-  const isAac = normalized.includes("aac") || normalized.includes("mp4a")
-
-  if (preference === "opus") {
-    if (isOpus) return 3
-    if (isAac) return 2
-    return 1
-  }
-
-  if (preference === "aac") {
-    if (isAac) return 3
-    if (isOpus) return 2
-    return 1
-  }
-
-  // Auto: lightly prefer opus, then aac, when other metrics are tied.
-  if (isOpus) return 3
-  if (isAac) return 2
-  return 1
 }
 
 function numeric(value: unknown): number {
@@ -210,87 +174,6 @@ function inferYearFromParsedInfo(info: ParsedVideoInfo): number | null {
     parseYearValue(info.upload_date) ||
     parseTimestampYear(info.timestamp)
   )
-}
-
-async function getPreferredAudioFormatId(
-  url: string,
-  preference: "auto" | "opus" | "aac"
-): Promise<{ formatId: string; summary: string; audioCodec: string | null } | null> {
-  return new Promise((resolve, reject) => {
-    const bin = getYtdlpPath()
-    if (!fs.existsSync(bin)) {
-      reject(new Error("yt-dlp not found. Run: npm run setup"))
-      return
-    }
-
-    const proc = spawn(bin, buildYtdlpArgs(["--dump-single-json", "--no-download", "--no-playlist", url]), {
-      env: ytdlpEnv(),
-    })
-
-    let stdout = ""
-    let stderr = ""
-
-    proc.stdout.on("data", (data) => {
-      stdout += data.toString()
-    })
-
-    proc.stderr.on("data", (data) => {
-      stderr += data.toString()
-    })
-
-    proc.on("error", (err) => {
-      reject(new Error(`Failed to start yt-dlp: ${err.message}`))
-    })
-
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`yt-dlp info failed: ${stderr}`))
-        return
-      }
-
-      try {
-        const data = JSON.parse(stdout) as { formats?: RawAudioFormat[] }
-        const formats = Array.isArray(data.formats) ? data.formats : []
-        const audioOnly = formats.filter(
-          (format) =>
-            typeof format.format_id === "string" &&
-            format.format_id.length > 0 &&
-            format.acodec &&
-            format.acodec !== "none" &&
-            (format.vcodec === "none" || format.vcodec === null || format.vcodec === undefined)
-        )
-
-        if (audioOnly.length === 0) {
-          resolve(null)
-          return
-        }
-
-        audioOnly.sort((a, b) => {
-          const bitrateDiff = (numeric(b.abr) || numeric(b.tbr)) - (numeric(a.abr) || numeric(a.tbr))
-          if (bitrateDiff !== 0) return bitrateDiff
-
-          const sampleRateDiff = numeric(b.asr) - numeric(a.asr)
-          if (sampleRateDiff !== 0) return sampleRateDiff
-
-          const channelsDiff = numeric(b.audio_channels) - numeric(a.audio_channels)
-          if (channelsDiff !== 0) return channelsDiff
-
-          return codecPreferenceScore(b.acodec, preference) - codecPreferenceScore(a.acodec, preference)
-        })
-
-        const selected = audioOnly[0]
-        resolve({
-          formatId: selected.format_id as string,
-          audioCodec: typeof selected.acodec === "string" ? selected.acodec : null,
-          summary: `${selected.format_id} ${selected.ext || "audio"} ${selected.acodec || "unknown"} ${Math.round(
-            numeric(selected.abr) || numeric(selected.tbr)
-          )}k`,
-        })
-      } catch {
-        resolve(null)
-      }
-    })
-  })
 }
 
 function ytdlpEnv() {
@@ -678,7 +561,7 @@ export async function getVideoInfo(url: string): Promise<VideoInfo> {
     year: inferYearFromParsedInfo(primaryInfo),
     duration: primaryInfo.duration ? Math.round(primaryInfo.duration) : null,
     thumbnail: pickBestThumbnail(thumbnailCandidates),
-    formats: ["mp3", "flac", "wav", "ogg"],
+    formats: ["opus", "flac"],
   }
 }
 
@@ -695,178 +578,90 @@ export function downloadAudio(
 
     fs.mkdirSync(DOWNLOADS_DIR, { recursive: true })
 
-    const { url, format, quality, bestAudioPreference = "auto" } = options
+    const { url, format, quality } = options
     const downloadId = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
     const outputTemplate = path.join(DOWNLOADS_DIR, `${downloadId}-%(title).100s.%(ext)s`)
-
     const ffmpegLocation = getFfmpegDir()
 
-    const runDownload = (
-      formatSelector: string,
-      transcode?: {
-        format: "mp3" | "flac" | "wav" | "ogg" | "opus"
-        quality?: "best" | "320" | "256" | "192" | "128"
-        sampleRate?: number
-      }
-    ) => {
-      const args = [
-        "--output", outputTemplate,
-        "--no-playlist",
-        "--newline",
-      ]
+    const args = [
+      "--output", outputTemplate,
+      "--no-playlist",
+      "--newline",
+      "-f", "bestaudio/best",
+      "-x",
+      "--audio-format", format,
+      "--ffmpeg-location", ffmpegLocation,
+    ]
 
-      if (quality === "best" && !transcode) {
-        // Download source audio directly without transcoding.
-        args.push("-f", formatSelector)
-      } else {
-        const targetFormat = transcode?.format || format
-        const targetQuality = transcode?.quality || quality
-        args.push(
-          "-f", formatSelector,
-          "-x",
-          "--audio-format", targetFormat,
-          "--ffmpeg-location", ffmpegLocation
-        )
-
-        if (targetFormat === "mp3" && targetQuality !== "best") {
-          args.push("--audio-quality", `${targetQuality}k`)
-        }
-
-        if (transcode?.sampleRate && Number.isFinite(transcode.sampleRate) && transcode.sampleRate > 0) {
-          args.push("--postprocessor-args", `ExtractAudio+ffmpeg_o:-ar ${Math.round(transcode.sampleRate)}`)
-        }
-      }
-
-      args.push(url)
-
-      const proc = spawn(bin, buildYtdlpArgs(args), { env: ytdlpEnv() })
-      let stderr = ""
-
-      proc.stdout.on("data", (data) => {
-        const text = data.toString()
-        const lines = text.split("\n").filter((l: string) => l.trim())
-        for (const line of lines) {
-          onProgress(line.trim())
-        }
-      })
-
-      proc.stderr.on("data", (data) => {
-        const text = data.toString()
-        stderr += text
-        const lines = text.split("\n").filter((l: string) => l.trim())
-        for (const line of lines) {
-          onProgress(line.trim())
-        }
-      })
-
-      proc.on("error", (err) => {
-        reject(new Error(`Failed to start yt-dlp: ${err.message}`))
-      })
-
-      proc.on("close", (code) => {
-        if (code !== 0) {
-          reject(new Error(`yt-dlp download failed: ${stderr}`))
-          return
-        }
-
-        // Find the downloaded file by this invocation's unique prefix.
-        try {
-          const files = fs.readdirSync(DOWNLOADS_DIR)
-            .filter((f) => f.startsWith(`${downloadId}-`))
-            .map((f) => path.join(DOWNLOADS_DIR, f))
-            .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
-
-          if (files.length === 0) {
-            reject(new Error("Could not find downloaded file"))
-            return
-          }
-
-          const filePath = files[0]
-          const stats = fs.statSync(filePath)
-          const parsed = path.parse(filePath)
-          const title = parsed.name.startsWith(`${downloadId}-`)
-            ? parsed.name.slice(downloadId.length + 1)
-            : parsed.name
-          const detectedFormat = parsed.ext.replace(/^\./, "").toLowerCase() || format
-
-          resolve({
-            filePath,
-            format: detectedFormat,
-            title,
-            artist: null,
-            duration: null,
-            thumbnail: null,
-            fileSize: stats.size,
-          })
-        } catch {
-          reject(new Error("Failed to locate downloaded file"))
-        }
-      })
+    if (format === "opus") {
+      args.push("--audio-quality", `${quality}k`)
     }
 
-    if (quality === "best") {
-      if (bestAudioPreference === "auto") {
-        onProgress("Using bestaudio/best")
-        runDownload("bestaudio/best")
+    args.push(url)
+
+    onProgress(`Downloading as ${format.toUpperCase()}${format === "opus" ? ` at ${quality} kbps` : " (lossless)"}`)
+
+    const proc = spawn(bin, buildYtdlpArgs(args), { env: ytdlpEnv() })
+    let stderr = ""
+
+    proc.stdout.on("data", (data) => {
+      const text = data.toString()
+      const lines = text.split("\n").filter((l: string) => l.trim())
+      for (const line of lines) {
+        onProgress(line.trim())
+      }
+    })
+
+    proc.stderr.on("data", (data) => {
+      const text = data.toString()
+      stderr += text
+      const lines = text.split("\n").filter((l: string) => l.trim())
+      for (const line of lines) {
+        onProgress(line.trim())
+      }
+    })
+
+    proc.on("error", (err) => {
+      reject(new Error(`Failed to start yt-dlp: ${err.message}`))
+    })
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`yt-dlp download failed: ${stderr}`))
         return
       }
 
-      const formatSelectionTimeoutMs = 12000
-      Promise.race([
-        getPreferredAudioFormatId(url, bestAudioPreference).then((selection) => ({
-          kind: "selection" as const,
-          selection,
-        })),
-        new Promise<{ kind: "timeout" }>((resolve) => {
-          setTimeout(() => resolve({ kind: "timeout" }), formatSelectionTimeoutMs)
-        }),
-      ])
-        .then((result) => {
-          if (result.kind === "timeout") {
-            if (bestAudioPreference === "opus") {
-              onProgress("Format selection timed out, downloading and converting to Opus (48 kHz)")
-              runDownload("bestaudio/best", { format: "opus", sampleRate: 48000 })
-            } else {
-              onProgress("Format selection timed out, falling back to bestaudio/best")
-              runDownload("bestaudio/best")
-            }
-            return
-          }
+      try {
+        const files = fs.readdirSync(DOWNLOADS_DIR)
+          .filter((f) => f.startsWith(`${downloadId}-`))
+          .map((f) => path.join(DOWNLOADS_DIR, f))
+          .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
 
-          if (result.selection) {
-            const codec = (result.selection.audioCodec || "").toLowerCase()
-            const selectedIsOpus = codec.includes("opus")
-            if (bestAudioPreference === "opus" && !selectedIsOpus) {
-              onProgress(`Selected ${result.selection.summary}; converting to Opus (48 kHz)`)
-              runDownload(result.selection.formatId, { format: "opus", sampleRate: 48000 })
-            } else {
-              onProgress(`Selected audio format: ${result.selection.summary}`)
-              runDownload(result.selection.formatId)
-            }
-            return
-          }
+        if (files.length === 0) {
+          reject(new Error("Could not find downloaded file"))
+          return
+        }
 
-          if (bestAudioPreference === "opus") {
-            onProgress("Could not rank formats, downloading and converting to Opus (48 kHz)")
-            runDownload("bestaudio/best", { format: "opus", sampleRate: 48000 })
-          } else {
-            onProgress("Could not rank audio formats, falling back to bestaudio/best")
-            runDownload("bestaudio/best")
-          }
+        const filePath = files[0]
+        const stats = fs.statSync(filePath)
+        const parsed = path.parse(filePath)
+        const title = parsed.name.startsWith(`${downloadId}-`)
+          ? parsed.name.slice(downloadId.length + 1)
+          : parsed.name
+        const detectedFormat = parsed.ext.replace(/^\./, "").toLowerCase() || format
+
+        resolve({
+          filePath,
+          format: detectedFormat,
+          title,
+          artist: null,
+          duration: null,
+          thumbnail: null,
+          fileSize: stats.size,
         })
-        .catch((error) => {
-          const reason = error instanceof Error ? error.message : "unknown error"
-          if (bestAudioPreference === "opus") {
-            onProgress(`Format selection failed (${reason}), downloading and converting to Opus (48 kHz)`)
-            runDownload("bestaudio/best", { format: "opus", sampleRate: 48000 })
-          } else {
-            onProgress(`Format selection failed (${reason}), falling back`)
-            runDownload("bestaudio/best")
-          }
-        })
-      return
-    }
-
-    runDownload("bestaudio/best")
+      } catch {
+        reject(new Error("Failed to locate downloaded file"))
+      }
+    })
   })
 }

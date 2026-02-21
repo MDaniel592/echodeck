@@ -14,9 +14,6 @@ describe("lookupLyrics", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
-    process.env.GENIUS_LYRICS_ENABLED = "1"
-    delete process.env.GENIUS_ACCESS_TOKEN
-    delete process.env.GENIUS_CLIENT_ACCESS_TOKEN
   })
 
   afterEach(() => {
@@ -58,51 +55,6 @@ describe("lookupLyrics", () => {
     expect(result).toBe("synced")
   })
 
-  it("falls back to Genius when lrclib has no matches", async () => {
-    process.env.GENIUS_ACCESS_TOKEN = "genius-token"
-
-    const preloadedState = JSON.stringify({
-      songPage: { lyricsData: { body: { html: "<p>Genius fallback</p>" } } },
-    })
-
-    safeFetchMock.mockImplementation(async (url: string) => {
-      if (url.includes("lrclib.net")) {
-        return { ok: true, json: async () => [] }
-      }
-      if (url.includes("api.genius.com/search")) {
-        return {
-          ok: true,
-          json: async () => ({
-            response: {
-              hits: [{
-                type: "song",
-                result: {
-                  id: 1,
-                  title: "Song",
-                  primary_artist: { name: "Artist" },
-                  url: "https://genius.com/artist-song-lyrics",
-                },
-              }],
-            },
-          }),
-        }
-      }
-      if (url.includes("genius.com/artist-song-lyrics")) {
-        return {
-          ok: true,
-          text: async () =>
-            `<html><script>window.__PRELOADED_STATE__ = JSON.parse('${preloadedState}');</script></html>`,
-        }
-      }
-      return { ok: true, json: async () => [] }
-    })
-
-    const { lookupLyrics } = await import("../lib/lyricsProvider")
-    const result = await lookupLyrics({ title: "Song", artist: "Artist" })
-
-    expect(result).toBe("Genius fallback")
-    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("api.genius.com"))).toBe(true)
-  })
 
   it("matches lrclib lyrics for non-latin title/artist without forcing fallback", async () => {
     safeFetchMock.mockResolvedValue({
@@ -349,68 +301,12 @@ describe("lookupLyrics", () => {
     expect(result).toBe("collab resolved")
   })
 
-  it("falls back to Genius search + song page parsing when lrclib misses", async () => {
-    process.env.GENIUS_ACCESS_TOKEN = "genius-token"
-
-    const preloadedState = JSON.stringify({
-      songPage: {
-        lyricsData: {
-          body: {
-            html: "<p>[Verse 1]<br>We are here<br>To sing</p><p>[Chorus]<br>Forever now</p>",
-          },
-        },
-      },
-    })
-
-    safeFetchMock.mockImplementation(async (url: string) => {
-      if (url.includes("lrclib.net")) {
-        return { ok: true, json: async () => [] }
-      }
-      if (url.includes("api.genius.com/search")) {
-        return {
-          ok: true,
-          json: async () => ({
-            response: {
-              hits: [
-                {
-                  type: "song",
-                  result: {
-                    id: 42,
-                    title: "Song",
-                    full_title: "Song by Artist",
-                    primary_artist: { name: "Artist" },
-                    url: "https://genius.com/artist-song-lyrics",
-                  },
-                },
-              ],
-            },
-          }),
-        }
-      }
-      if (url.includes("genius.com/artist-song-lyrics")) {
-        return {
-          ok: true,
-          text: async () =>
-            `<html><script>window.__PRELOADED_STATE__ = JSON.parse('${preloadedState}');</script></html>`,
-        }
-      }
-      return { ok: true, json: async () => [] }
-    })
-
-    const { lookupLyrics } = await import("../lib/lyricsProvider")
-    const result = await lookupLyrics({ title: "Song", artist: "Artist" })
-
-    expect(result).toBe("[Verse 1]\nWe are here\nTo sing\n[Chorus]\nForever now")
-    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("api.genius.com/search"))).toBe(true)
-    expect(safeFetchMock.mock.calls.some((call) => String(call[0]).includes("genius.com/artist-song-lyrics"))).toBe(true)
-  })
 })
 
 describe("lookupLrcLibSynced", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
-    process.env.GENIUS_LYRICS_ENABLED = "0"
   })
 
   it("returns synced LRC lyrics when LrcLib has them", async () => {
